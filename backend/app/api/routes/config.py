@@ -15,7 +15,8 @@ async def config() -> ConfigResponse:
         api_key_configured=bool(settings.ai_api_key),
         default_model=settings.ai_default_model,
         allow_client_provider_config=settings.allow_client_provider_config,
-        system_prompt_template=settings.ai_system_prompt_template,
+        prompt_profile=settings.ai_prompt_profile,
+        prompt_dynamic_modules_enabled=settings.ai_prompt_enable_dynamic_modules,
         system_prompt_language=settings.ai_system_prompt_language,
         allow_user_extra_instructions=settings.allow_user_extra_instructions,
     )

@@ -1,4 +1,4 @@
-import type { ChatMessage, ChatTurn } from "../types";
+import type { AnalysisStatus, ChatMessage, ChatTurn } from "../types";
 
 export function uid() {
   return Math.random().toString(36).slice(2, 10);
@@ -17,13 +17,18 @@ export function appendToTurn(turns: ChatTurn[], id: string, content: string) {
   return turns.map((turn) => (turn.id === id ? { ...turn, content: turn.content + content } : turn));
 }
 
-export function appendReasoningToTurn(turns: ChatTurn[], id: string, content: string) {
+export function updateAnalysisStatus(
+  turns: ChatTurn[],
+  id: string,
+  status: AnalysisStatus,
+  label?: string,
+) {
   return turns.map((turn) =>
     turn.id === id
       ? {
           ...turn,
-          reasoning: `${turn.reasoning ?? ""}${content}`,
-          reasoningParts: [...(turn.reasoningParts ?? []), content],
+          analysisStatus: status,
+          analysisLabel: label,
         }
       : turn,
   );

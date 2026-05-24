@@ -4,8 +4,6 @@ from app.lib.ai.config import ResolvedAIConfig
 from app.lib.ai.reasoning import split_think_blocks
 from app.schemas.chat import ChatResponse, Usage
 
-REASONING_FIELDS = ("reasoning_content", "reasoning", "thinking", "thought")
-
 
 def _read(value: Any, name: str, default: Any = None) -> Any:
     if isinstance(value, dict):
@@ -18,9 +16,7 @@ def normalize_chat_response(response: Any, config: ResolvedAIConfig) -> ChatResp
     first_choice = choices[0] if choices else None
     message = _read(first_choice, "message", {}) if first_choice else {}
     content = _read(message, "content", "") or ""
-    reasoning = next((_read(message, field, None) for field in REASONING_FIELDS if _read(message, field, None)), None)
-    tag_reasoning, content = split_think_blocks(content)
-    reasoning = reasoning or tag_reasoning
+    _, content = split_think_blocks(content)
     usage = _read(response, "usage", None)
 
     normalized_usage = None
@@ -33,7 +29,6 @@ def normalize_chat_response(response: Any, config: ResolvedAIConfig) -> ChatResp
 
     return ChatResponse(
         content=content,
-        reasoning=reasoning,
         model=_read(response, "model", None) or config.model,
         provider=config.provider,
         usage=normalized_usage,

@@ -11,10 +11,12 @@ export type Usage = {
   total_tokens?: number;
 };
 
+export type AnalysisStatus = "analyzing" | "preparing" | "answering" | "complete";
+
 export type ChatTurn = ChatMessage & {
   id: string;
-  reasoning?: string;
-  reasoningParts?: string[];
+  analysisStatus?: AnalysisStatus;
+  analysisLabel?: string;
   model?: string;
   provider?: string;
   usage?: Usage;
@@ -24,7 +26,6 @@ export type ChatTurn = ChatMessage & {
 
 export type ChatResponse = {
   content: string;
-  reasoning?: string;
   model: string;
   provider: string;
   usage?: Usage;
@@ -37,7 +38,8 @@ export type ConfigResponse = {
   api_key_configured: boolean;
   default_model?: string;
   allow_client_provider_config: boolean;
-  system_prompt_template: string;
+  prompt_profile: string;
+  prompt_dynamic_modules_enabled: boolean;
   system_prompt_language: string;
   allow_user_extra_instructions: boolean;
 };

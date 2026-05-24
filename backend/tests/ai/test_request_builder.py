@@ -1,13 +1,13 @@
 import pytest
 
-from app.lib.ai.request_builder import build_provider_messages
+from app.lib.ai.request_builder import build_provider_context, build_provider_messages
 from app.schemas.chat import ChatRequest
 from app.shared.settings import get_settings
 
 
 def test_build_provider_messages_uses_settings_boundaries(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("AI_MAX_HISTORY_MESSAGES", "2")
-    monkeypatch.setenv("AI_MAX_CONTEXT_CHARS", "100")
+    monkeypatch.setenv("AI_CONTEXT_MAX_RECENT_MESSAGES", "2")
+    monkeypatch.setenv("AI_CONTEXT_MAX_TOTAL_CHARS", "10000")
     get_settings.cache_clear()
 
     request = ChatRequest(
@@ -22,18 +22,22 @@ def test_build_provider_messages_uses_settings_boundaries(monkeypatch: pytest.Mo
     result = build_provider_messages(request)
 
     assert result[0]["role"] == "system"
-    assert "模板版本：system_chatbot_v1" in result[0]["content"]
-    assert "system rules" in result[0]["content"]
+    assert "模块版本：core_identity_v1" in result[0]["content"]
+    assert "模块版本：context_priority_v1" in result[0]["content"]
     assert "默认必须使用中文回复" in result[0]["content"]
-    assert result[1:] == [
+    assert result[1]["role"] == "system"
+    assert "## 会话额外要求" in result[1]["content"]
+    assert "system rules" in result[1]["content"]
+    assert result[2:] == [
         {"role": "assistant", "content": "middle"},
         {"role": "user", "content": "latest"},
     ]
 
 
 def test_build_provider_messages_uses_context_char_budget(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("AI_MAX_HISTORY_MESSAGES", "10")
-    monkeypatch.setenv("AI_MAX_CONTEXT_CHARS", str(len("middle") + len("latest")))
+    monkeypatch.setenv("AI_CONTEXT_MAX_TOTAL_CHARS", "10000")
+    monkeypatch.setenv("AI_CONTEXT_MAX_RECENT_MESSAGES", "10")
+    monkeypatch.setenv("AI_CONTEXT_MAX_RECENT_CHARS", str(len("middle") + len("latest")))
     get_settings.cache_clear()
 
     request = ChatRequest(
@@ -53,6 +57,40 @@ def test_build_provider_messages_uses_context_char_budget(monkeypatch: pytest.Mo
     ]
 
 
+def test_build_provider_messages_dynamically_adds_prompt_modules(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AI_CONTEXT_MAX_TOTAL_CHARS", "10000")
+    get_settings.cache_clear()
+
+    request = ChatRequest(
+        messages=[{"role": "user", "content": "请总结这份文档，并用 JSON 输出字段"}],
+    )
+
+    result = build_provider_messages(request)
+
+    assert "文档处理规则" in result[0]["content"]
+    assert "输出格式规则" in result[0]["content"]
+
+
+def test_build_provider_context_tracks_included_prompt_modules(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AI_CONTEXT_MAX_TOTAL_CHARS", "10000")
+    get_settings.cache_clear()
+
+    request = ChatRequest(
+        messages=[{"role": "user", "content": "请用表格总结这份文档"}],
+    )
+
+    result = build_provider_context(request)
+
+    assert "prompt:core_identity_v1" in result.included_blocks
+    assert "prompt:context_priority_v1" in result.included_blocks
+    assert "prompt:document_task_v1" in result.included_blocks
+    assert "prompt:output_format_v1" in result.included_blocks
+
+
 def test_build_provider_messages_can_disable_user_extra_instructions(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -66,5 +104,6 @@ def test_build_provider_messages_can_disable_user_extra_instructions(
 
     result = build_provider_messages(request)
 
-    assert "ignore the base rules" not in result[0]["content"]
-    assert "无额外要求。" in result[0]["content"]
+    assert all("ignore the base rules" not in message["content"] for message in result)
+    assert len(result) == 2
+    assert result[1] == {"role": "user", "content": "hello"}

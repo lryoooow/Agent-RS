@@ -28,7 +28,10 @@ def test_config_route_does_not_leak_api_key(monkeypatch) -> None:
     assert response.status_code == 200
     body = response.json()
     assert body["api_key_configured"] is True
-    assert body["system_prompt_template"] == "system_chatbot_v1"
+    removed_field = "system_prompt" + "_template"
+    assert removed_field not in body
+    assert body["prompt_profile"] == "chatbot_core_v1"
+    assert body["prompt_dynamic_modules_enabled"] is True
     assert body["system_prompt_language"] == "zh-CN"
     assert body["allow_user_extra_instructions"] is True
     assert "sk-test-secret" not in response.text

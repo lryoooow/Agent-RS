@@ -24,7 +24,7 @@ dev = [
 chatbot-backend = "app.server:main"
 
 [tool.setuptools.package-data]
-"app.lib.ai.templates" = ["*.jinja", "README.md"]
+"app.lib.ai.prompting.templates" = ["*.jinja", "README.md"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

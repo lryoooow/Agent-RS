@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 
 class ChatMessage(BaseModel):
@@ -36,10 +36,7 @@ class Usage(BaseModel):
 
 
 class ChatResponse(BaseModel):
-    model_config = ConfigDict(arbitrary_types_allowed=True)
-
     content: str
-    reasoning: str | None = None
     model: str
     provider: str
     usage: Usage | None = None

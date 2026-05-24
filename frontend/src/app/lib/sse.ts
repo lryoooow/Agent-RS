@@ -6,7 +6,7 @@ type ParsedSSEEvent = {
 export type StreamHandlers = {
   onMeta: (data: Record<string, unknown>) => void;
   onDelta: (content: string) => void;
-  onReasoningDelta: (content: string) => void;
+  onAnalysisStatus: (data: Record<string, unknown>) => void;
   onDone: (data: Record<string, unknown>) => void;
 };
 
@@ -26,8 +26,8 @@ export async function readStreamResponse(res: Response, handlers: StreamHandlers
       handlers.onDelta(parsed.data.content);
     }
 
-    if (parsed.event === "reasoning_delta" && typeof parsed.data.content === "string") {
-      handlers.onReasoningDelta(parsed.data.content);
+    if (parsed.event === "analysis_status") {
+      handlers.onAnalysisStatus(parsed.data);
     }
 
     if (parsed.event === "done") {

@@ -43,7 +43,8 @@ export function ConfigStatus({ config, error, hasProviderOverride }: ConfigStatu
       <StatusPill label={config.provider} />
       <StatusPill label={keyStatus} />
       <StatusPill label={config.default_model ?? "model unset"} />
-      <StatusPill label={config.system_prompt_template} />
+      <StatusPill label={config.prompt_profile} />
+      {config.prompt_dynamic_modules_enabled && <StatusPill label="dynamic prompts" />}
       <StatusPill label={config.system_prompt_language} />
       <StatusPill label={extraInstructionsStatus} />
       {config.allow_client_provider_config && (

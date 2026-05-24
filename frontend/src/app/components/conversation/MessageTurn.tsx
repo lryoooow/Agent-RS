@@ -1,11 +1,10 @@
 import { AlertTriangle } from "lucide-react";
 import type { ChatTurn } from "../../types";
-import { ReasoningPanel } from "./ReasoningPanel";
+import { AnalysisStatusLine } from "./AnalysisStatusLine";
 
 export function MessageTurn({ turn }: { turn: ChatTurn }) {
   const isUser = turn.role === "user";
-  const reasoningParts = turn.reasoningParts ?? (turn.reasoning ? [turn.reasoning] : []);
-  const hasReasoning = !isUser && reasoningParts.length > 0;
+  const showAnalysis = !isUser && turn.analysisStatus != null && !turn.content;
 
   if (turn.error) return <ErrorTurn turn={turn} />;
 
@@ -17,7 +16,9 @@ export function MessageTurn({ turn }: { turn: ChatTurn }) {
       >
         {isUser ? "you" : "assistant"}
       </div>
-      {hasReasoning && <ReasoningPanel parts={reasoningParts} />}
+      {showAnalysis && (
+        <AnalysisStatusLine status={turn.analysisStatus!} label={turn.analysisLabel} />
+      )}
       {(isUser || turn.content) && (
         <div
           className={`max-w-[88%] whitespace-pre-wrap break-words leading-relaxed ${

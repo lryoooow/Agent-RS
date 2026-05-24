@@ -89,16 +89,20 @@ async def test_stream_sse_events_outputs_meta_delta_done() -> None:
     events = [event async for event in stream_sse_events(fake_stream(), make_config())]
 
     assert events[0] == 'event: meta\ndata: {"model": "stream-model", "provider": "openai-compatible"}\n\n'
-    assert events[1] == 'event: delta\ndata: {"content": "你"}\n\n'
-    assert events[2] == 'event: delta\ndata: {"content": "好"}\n\n'
-    assert events[3] == (
+    assert events[1] == 'event: analysis_status\ndata: {"status": "analyzing", "label": "正在分析问题…"}\n\n'
+    assert events[2] == 'event: analysis_status\ndata: {"status": "preparing", "label": "正在整理内容…"}\n\n'
+    assert events[3] == 'event: analysis_status\ndata: {"status": "answering", "label": "正在组织回复…"}\n\n'
+    assert events[4] == 'event: analysis_status\ndata: {"status": "complete", "label": "思考完成"}\n\n'
+    assert events[5] == 'event: delta\ndata: {"content": "你"}\n\n'
+    assert events[6] == 'event: delta\ndata: {"content": "好"}\n\n'
+    assert events[7] == (
         'event: done\ndata: {"finish_reason": "stop", '
         '"usage": {"input_tokens": 1, "output_tokens": 2, "total_tokens": 3}}\n\n'
     )
 
 
 @pytest.mark.asyncio
-async def test_stream_sse_events_outputs_reasoning_delta() -> None:
+async def test_stream_sse_events_suppresses_raw_reasoning_event() -> None:
     async def stream():
         yield SimpleNamespace(
             choices=[
@@ -113,8 +117,14 @@ async def test_stream_sse_events_outputs_reasoning_delta() -> None:
     events = [event async for event in stream_sse_events(stream(), make_config())]
 
     assert events[0] == 'event: meta\ndata: {"model": "stream-model", "provider": "openai-compatible"}\n\n'
-    assert events[1] == 'event: reasoning_delta\ndata: {"content": "thinking"}\n\n'
-    assert events[2] == 'event: done\ndata: {"finish_reason": null}\n\n'
+    assert events[1] == 'event: analysis_status\ndata: {"status": "analyzing", "label": "正在分析问题…"}\n\n'
+    assert events[2] == 'event: analysis_status\ndata: {"status": "preparing", "label": "正在整理内容…"}\n\n'
+    assert events[3] == 'event: analysis_status\ndata: {"status": "answering", "label": "正在组织回复…"}\n\n'
+    assert events[4] == 'event: analysis_status\ndata: {"status": "complete", "label": "思考完成"}\n\n'
+    assert events[5] == 'event: done\ndata: {"finish_reason": null}\n\n'
+    raw_reasoning_event = "reasoning" + "_delta"
+    assert all(raw_reasoning_event not in event for event in events)
+    assert all("thinking" not in event for event in events)
 
 
 @pytest.mark.asyncio
@@ -135,6 +145,36 @@ async def test_stream_sse_events_splits_think_tags_across_chunks() -> None:
 
     events = [event async for event in stream_sse_events(stream(), make_config())]
 
-    assert events[1] == 'event: reasoning_delta\ndata: {"content": "reason"}\n\n'
-    assert events[2] == 'event: delta\ndata: {"content": "answer"}\n\n'
-    assert events[3] == 'event: done\ndata: {"finish_reason": "stop"}\n\n'
+    assert events[1] == 'event: analysis_status\ndata: {"status": "analyzing", "label": "正在分析问题…"}\n\n'
+    assert events[2] == 'event: analysis_status\ndata: {"status": "preparing", "label": "正在整理内容…"}\n\n'
+    assert events[3] == 'event: analysis_status\ndata: {"status": "answering", "label": "正在组织回复…"}\n\n'
+    assert events[4] == 'event: analysis_status\ndata: {"status": "complete", "label": "思考完成"}\n\n'
+    assert events[5] == 'event: delta\ndata: {"content": "answer"}\n\n'
+    assert events[6] == 'event: done\ndata: {"finish_reason": "stop"}\n\n'
+    assert all('"content": "reason"' not in event for event in events)
+
+
+@pytest.mark.asyncio
+async def test_stream_sse_events_replays_long_answer_as_multiple_deltas_after_completion() -> None:
+    async def stream():
+        yield SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    delta=SimpleNamespace(content="abcdefghijklmnop"),
+                    finish_reason="stop",
+                )
+            ],
+            usage=None,
+        )
+
+    events = [event async for event in stream_sse_events(stream(), make_config())]
+    complete_index = events.index('event: analysis_status\ndata: {"status": "complete", "label": "思考完成"}\n\n')
+    delta_events = [event for event in events if event.startswith("event: delta\n")]
+    first_delta_index = events.index(delta_events[0])
+
+    assert complete_index < first_delta_index
+    assert delta_events == [
+        'event: delta\ndata: {"content": "abcdefgh"}\n\n',
+        'event: delta\ndata: {"content": "ijklmnop"}\n\n',
+    ]
+    assert "".join(event.split('"content": "')[1].split('"')[0] for event in delta_events) == "abcdefghijklmnop"

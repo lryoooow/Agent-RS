@@ -91,5 +91,9 @@ async def test_chat_service_streams_sse_events(monkeypatch: pytest.MonkeyPatch) 
     events = [event async for event in service.stream_chat(request)]
 
     assert events[0] == 'event: meta\ndata: {"model": "client-model", "provider": "openai-compatible"}\n\n'
-    assert events[1] == 'event: delta\ndata: {"content": "stream"}\n\n'
-    assert events[2] == 'event: done\ndata: {"finish_reason": "stop"}\n\n'
+    assert events[1] == 'event: analysis_status\ndata: {"status": "analyzing", "label": "正在分析问题…"}\n\n'
+    assert events[2] == 'event: analysis_status\ndata: {"status": "preparing", "label": "正在整理内容…"}\n\n'
+    assert events[3] == 'event: analysis_status\ndata: {"status": "answering", "label": "正在组织回复…"}\n\n'
+    assert events[4] == 'event: analysis_status\ndata: {"status": "complete", "label": "思考完成"}\n\n'
+    assert events[5] == 'event: delta\ndata: {"content": "stream"}\n\n'
+    assert events[6] == 'event: done\ndata: {"finish_reason": "stop"}\n\n'

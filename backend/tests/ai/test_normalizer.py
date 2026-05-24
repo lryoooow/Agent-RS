@@ -41,7 +41,7 @@ def test_normalize_openai_compatible_response() -> None:
     assert result.finish_reason == "stop"
 
 
-def test_normalize_response_reads_reasoning_content() -> None:
+def test_normalize_response_does_not_return_reasoning_content() -> None:
     config = ResolvedAIConfig(
         provider="openai-compatible",
         base_url="https://example.com/v1",
@@ -64,8 +64,8 @@ def test_normalize_response_reads_reasoning_content() -> None:
 
     result = normalize_chat_response(response, config)
 
-    assert result.reasoning == "reasoning notes"
     assert result.content == "final answer"
+    assert "reasoning" not in result.model_dump()
 
 
 def test_normalize_response_splits_think_tags() -> None:
@@ -91,5 +91,5 @@ def test_normalize_response_splits_think_tags() -> None:
 
     result = normalize_chat_response(response, config)
 
-    assert result.reasoning == "reasoning notes"
     assert result.content == "final answer"
+    assert "reasoning" not in result.model_dump()

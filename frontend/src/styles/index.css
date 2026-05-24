@@ -2,66 +2,18 @@
 @import './tailwind.css';
 @import './theme.css';
 
-@keyframes reasoningIn {
+@keyframes analysisStatusIn {
   from {
     opacity: 0;
     transform: translateY(4px);
-    filter: blur(1px);
   }
 
   to {
     opacity: 1;
     transform: translateY(0);
-    filter: blur(0);
   }
 }
 
-.reasoning-stream {
-  color: rgba(82, 82, 82, 0.72);
-}
-
-.reasoning-panel {
-  transition:
-    border-color 180ms ease,
-    background-color 180ms ease;
-}
-
-.reasoning-panel:focus-within {
-  border-color: color-mix(in srgb, var(--foreground) 28%, var(--border));
-}
-
-.reasoning-chevron {
-  transition: transform 180ms ease;
-}
-
-.reasoning-panel[data-state="open"] .reasoning-chevron {
-  transform: rotate(180deg);
-}
-
-.reasoning-content {
-  display: grid;
-  grid-template-rows: 0fr;
-  opacity: 0;
-  transform: translateY(-2px);
-  transition:
-    grid-template-rows 220ms ease,
-    opacity 180ms ease,
-    transform 180ms ease;
-}
-
-.reasoning-content[data-state="open"] {
-  grid-template-rows: 1fr;
-  opacity: 1;
-  transform: translateY(0);
-}
-
-.reasoning-content-inner {
-  min-height: 0;
-  overflow: hidden;
-  padding-top: 0.375rem;
-}
-
-.reasoning-piece {
-  display: inline;
-  animation: reasoningIn 180ms ease-out both;
+.analysis-status-line {
+  animation: analysisStatusIn 180ms ease-out both;
 }
