@@ -12,6 +12,20 @@ def build_recent_dialogue_messages(
     max_messages: int | None,
     max_chars: int | None,
 ) -> tuple[list[dict[str, str]], bool]:
+    _, selected, truncated = select_recent_dialogue_messages(
+        messages,
+        max_messages=max_messages,
+        max_chars=max_chars,
+    )
+    return [_to_provider_message(message) for message in selected], truncated
+
+
+def select_recent_dialogue_messages(
+    messages: list[ChatMessage],
+    *,
+    max_messages: int | None,
+    max_chars: int | None,
+) -> tuple[list[ChatMessage], list[ChatMessage], bool]:
     selected = list(messages)
 
     if max_messages and max_messages > 0:
@@ -22,7 +36,8 @@ def build_recent_dialogue_messages(
         selected, char_truncated = _select_by_char_budget(selected, max_chars)
         truncated = truncated or char_truncated
 
-    return [_to_provider_message(message) for message in selected], truncated
+    older_count = max(len(messages) - len(selected), 0)
+    return messages[:older_count], selected, truncated
 
 
 def _select_by_char_budget(

@@ -28,7 +28,10 @@ def test_build_provider_messages_uses_settings_boundaries(monkeypatch: pytest.Mo
     assert result[1]["role"] == "system"
     assert "## 会话额外要求" in result[1]["content"]
     assert "system rules" in result[1]["content"]
-    assert result[2:] == [
+    assert result[2]["role"] == "system"
+    assert "## 历史对话压缩摘要" in result[2]["content"]
+    assert "old" in result[2]["content"]
+    assert result[3:] == [
         {"role": "assistant", "content": "middle"},
         {"role": "user", "content": "latest"},
     ]
@@ -51,7 +54,10 @@ def test_build_provider_messages_uses_context_char_budget(monkeypatch: pytest.Mo
     result = build_provider_messages(request)
 
     assert result[0]["role"] == "system"
-    assert result[1:] == [
+    assert result[1]["role"] == "system"
+    assert "## 历史对话压缩摘要" in result[1]["content"]
+    assert "old-12345" in result[1]["content"]
+    assert result[2:] == [
         {"role": "assistant", "content": "middle"},
         {"role": "user", "content": "latest"},
     ]
@@ -107,3 +113,34 @@ def test_build_provider_messages_can_disable_user_extra_instructions(
     assert all("ignore the base rules" not in message["content"] for message in result)
     assert len(result) == 2
     assert result[1] == {"role": "user", "content": "hello"}
+
+
+def test_build_provider_messages_injects_summary_and_memory_policy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AI_CONTEXT_MAX_RECENT_MESSAGES", "1")
+    monkeypatch.setenv("AI_CONTEXT_MAX_TOTAL_CHARS", "10000")
+    get_settings.cache_clear()
+
+    request = ChatRequest(
+        messages=[
+            {
+                "role": "user",
+                "content": "这个项目必须使用中文回复，并固定版本 stable-analysis-status-pulse-v1",
+            },
+            {"role": "assistant", "content": "已确认这个版本可以作为回退点"},
+            {"role": "user", "content": "继续审查上下文"},
+        ],
+    )
+
+    result = build_provider_messages(request)
+
+    assert "记忆使用规则" in result[0]["content"]
+    assert result[1]["role"] == "system"
+    assert "## 历史对话压缩摘要" in result[1]["content"]
+    assert "fixed" not in result[1]["content"].lower()
+    assert "stable-analysis-status-pulse-v1" in result[1]["content"]
+    assert result[2]["role"] == "system"
+    assert "## 长期记忆摘要" in result[2]["content"]
+    assert "必须使用中文回复" in result[2]["content"]
+    assert result[-1] == {"role": "user", "content": "继续审查上下文"}

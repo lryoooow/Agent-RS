@@ -68,8 +68,9 @@ from user-visible responses. Streaming clients receive only safe
 
 Before sending provider requests, the backend assembles context through
 `app/lib/ai/context/`. The base system prompt, per-chat extra instructions,
-recent dialogue, and future summary/memory/RAG/tool blocks are separate context
-sections with their own budgets. Empty optional blocks are not injected.
+request-local history summary, request-local important memory, recent dialogue,
+and future RAG/tool blocks are separate context sections with their own budgets.
+Empty optional blocks are not injected.
 
 Current context limits:
 
@@ -77,8 +78,8 @@ Current context limits:
 - `AI_CONTEXT_MAX_RECENT_MESSAGES`: latest dialogue message count.
 - `AI_CONTEXT_MAX_RECENT_CHARS`: latest dialogue character budget.
 - `AI_CONTEXT_MAX_USER_EXTRA_CHARS`: per-chat extra instruction budget.
-- `AI_CONTEXT_MAX_SUMMARY_CHARS`: future compressed conversation summary budget.
-- `AI_CONTEXT_MAX_MEMORY_CHARS`: future long-term memory summary budget.
+- `AI_CONTEXT_MAX_SUMMARY_CHARS`: request-local compressed conversation summary budget.
+- `AI_CONTEXT_MAX_MEMORY_CHARS`: request-local important memory summary budget.
 - `AI_CONTEXT_MAX_RAG_CHARS`: future retrieved context budget.
 - `AI_CONTEXT_MAX_TOOL_CHARS`: future tool result summary budget.
 

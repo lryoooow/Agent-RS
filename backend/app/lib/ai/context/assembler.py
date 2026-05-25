@@ -30,17 +30,21 @@ def assemble_context(
     used_chars = len(system_prompt.strip())
     remaining_chars = _remaining(max_total_chars, used_chars)
 
-    for block in _optional_blocks(
-        user_extra_instructions=user_extra_instructions,
-        conversation_summary=conversation_summary,
-        memory=memory,
-        rag_context=rag_context,
-        tool_context=tool_context,
-        max_user_extra_chars=max_user_extra_chars,
-        max_summary_chars=max_summary_chars,
-        max_memory_chars=max_memory_chars,
-        max_rag_chars=max_rag_chars,
-        max_tool_chars=max_tool_chars,
+    for block in sorted(
+        _optional_blocks(
+            user_extra_instructions=user_extra_instructions,
+            conversation_summary=conversation_summary,
+            memory=memory,
+            rag_context=rag_context,
+            tool_context=tool_context,
+            max_user_extra_chars=max_user_extra_chars,
+            max_summary_chars=max_summary_chars,
+            max_memory_chars=max_memory_chars,
+            max_rag_chars=max_rag_chars,
+            max_tool_chars=max_tool_chars,
+        ),
+        key=lambda item: item.priority,
+        reverse=True,
     ):
         content = trim_to_budget(block.content, block.budget_chars)
         if not content:
