@@ -56,6 +56,8 @@ export function MapPanel({ endpoint, geospatialResults }: MapPanelProps) {
     const map = mapRef.current;
     if (!map) return;
 
+    const baseUrl = endpoint.replace(/\/chat\/?$/, "");
+
     geospatialResults.forEach((result, idx) => {
       const sourceId = `ndvi-${result.imagery_id}-${idx}`;
       const layerId = `ndvi-layer-${result.imagery_id}-${idx}`;
@@ -67,7 +69,7 @@ export function MapPanel({ endpoint, geospatialResults }: MapPanelProps) {
 
       if (!result.bounds) return;
       const [west, south, east, north] = result.bounds;
-      const url = result.result_url;
+      const url = `${baseUrl}${result.result_url}`;
 
       map.addSource(sourceId, {
         type: "image",
