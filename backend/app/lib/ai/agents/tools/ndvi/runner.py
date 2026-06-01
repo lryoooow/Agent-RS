@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import subprocess
 from pathlib import Path
 from time import perf_counter
 
@@ -38,7 +39,7 @@ async def run_ndvi(args: NDVIArguments, request: ChatRequest) -> ToolRunResult:
     start = perf_counter()
     try:
         stats = await _run_docker(source_path, output_dir, args, settings)
-    except asyncio.TimeoutError:
+    except (asyncio.TimeoutError, subprocess.TimeoutExpired):
         return ToolRunResult(
             tool_context="NDVI计算超时，请稍后重试。",
             error="docker_timeout",
@@ -93,7 +94,7 @@ class NDVIExecutionError(Exception):
     pass
 
 
-async def _run_docker(source_path: Path, output_dir: Path, args: NDVIArguments, settings) -> dict:
+def _docker_cmd(source_path: Path, output_dir: Path, args: NDVIArguments, settings) -> list[str]:
     source_abs = str(source_path.resolve()).replace("\\", "/")
     output_abs = str(output_dir.resolve()).replace("\\", "/")
 
@@ -107,23 +108,29 @@ async def _run_docker(source_path: Path, output_dir: Path, args: NDVIArguments, 
     if settings.ndvi_docker_gpu:
         cmd.extend(["--gpus", "all"])
     cmd.append(settings.ndvi_docker_image)
+    return cmd
 
-    proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, stderr = await asyncio.wait_for(
-        proc.communicate(),
+
+def _run_docker_sync(source_path: Path, output_dir: Path, args: NDVIArguments, settings) -> dict:
+    """Run Docker in a blocking subprocess — called via asyncio.to_thread."""
+    cmd = _docker_cmd(source_path, output_dir, args, settings)
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
         timeout=settings.ndvi_docker_timeout_seconds,
     )
-
-    if proc.returncode != 0:
-        error_msg = stderr.decode(errors="replace").strip()[:500]
-        raise NDVIExecutionError(error_msg or f"exit code {proc.returncode}")
+    if result.returncode != 0:
+        error_msg = result.stderr.decode(errors="replace").strip()[:500]
+        raise NDVIExecutionError(error_msg or f"exit code {result.returncode}")
 
     stats_path = output_dir / "stats.json"
     if not stats_path.exists():
         raise NDVIExecutionError("容器未生成 stats.json")
 
     return json.loads(stats_path.read_text(encoding="utf-8"))
+
+
+async def _run_docker(source_path: Path, output_dir: Path, args: NDVIArguments, settings) -> dict:
+    return await asyncio.to_thread(
+        _run_docker_sync, source_path, output_dir, args, settings
+    )
