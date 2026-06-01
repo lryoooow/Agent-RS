@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import subprocess
+import sys
 from pathlib import Path
 from time import perf_counter
 
@@ -12,6 +13,8 @@ from app.schemas.chat import ChatRequest
 from app.shared.settings import get_settings
 
 logger = logging.getLogger(__name__)
+
+COMPUTE_SCRIPT = Path(__file__).resolve().parents[6] / "docker" / "ndvi" / "compute_ndvi.py"
 
 
 def _imagery_root() -> Path:
@@ -94,30 +97,22 @@ class NDVIExecutionError(Exception):
     pass
 
 
-def _docker_cmd(source_path: Path, output_dir: Path, args: NDVIArguments, settings) -> list[str]:
-    source_abs = str(source_path.resolve()).replace("\\", "/")
-    output_abs = str(output_dir.resolve()).replace("\\", "/")
+def _run_ndvi_sync(source_path: Path, output_dir: Path, args: NDVIArguments, settings) -> dict:
+    """Run compute_ndvi.py as a local subprocess."""
+    env = {
+        "RED_BAND": str(args.red_band),
+        "NIR_BAND": str(args.nir_band),
+        "INPUT_PATH": str(source_path.resolve()),
+        "OUTPUT_DIR": str(output_dir.resolve()),
+    }
+    import os
+    run_env = {**os.environ, **env}
 
-    cmd = [
-        "docker", "run", "--rm",
-        "-v", f"{source_abs}:/data/input.tif:ro",
-        "-v", f"{output_abs}:/data/output",
-        "-e", f"RED_BAND={args.red_band}",
-        "-e", f"NIR_BAND={args.nir_band}",
-    ]
-    if settings.ndvi_docker_gpu:
-        cmd.extend(["--gpus", "all"])
-    cmd.append(settings.ndvi_docker_image)
-    return cmd
-
-
-def _run_docker_sync(source_path: Path, output_dir: Path, args: NDVIArguments, settings) -> dict:
-    """Run Docker in a blocking subprocess — called via asyncio.to_thread."""
-    cmd = _docker_cmd(source_path, output_dir, args, settings)
     result = subprocess.run(
-        cmd,
+        [sys.executable, str(COMPUTE_SCRIPT)],
         capture_output=True,
         timeout=settings.ndvi_docker_timeout_seconds,
+        env=run_env,
     )
     if result.returncode != 0:
         error_msg = result.stderr.decode(errors="replace").strip()[:500]
@@ -125,12 +120,12 @@ def _run_docker_sync(source_path: Path, output_dir: Path, args: NDVIArguments, s
 
     stats_path = output_dir / "stats.json"
     if not stats_path.exists():
-        raise NDVIExecutionError("容器未生成 stats.json")
+        raise NDVIExecutionError("计算脚本未生成 stats.json")
 
     return json.loads(stats_path.read_text(encoding="utf-8"))
 
 
 async def _run_docker(source_path: Path, output_dir: Path, args: NDVIArguments, settings) -> dict:
     return await asyncio.to_thread(
-        _run_docker_sync, source_path, output_dir, args, settings
+        _run_ndvi_sync, source_path, output_dir, args, settings
     )

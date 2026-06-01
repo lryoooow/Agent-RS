@@ -1,13 +1,8 @@
-FROM nvidia/cuda:11.8.0-runtime-ubuntu22.04
+FROM python:3.11-slim
 
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-    python3 python3-pip gdal-bin libgdal-dev && \
-    rm -rf /var/lib/apt/lists/*
-
-RUN pip3 install --no-cache-dir rasterio numpy matplotlib Pillow
+RUN pip install --no-cache-dir rasterio numpy matplotlib Pillow
 
 COPY compute_ndvi.py /app/compute_ndvi.py
 
 WORKDIR /app
-ENTRYPOINT ["python3", "compute_ndvi.py"]
+ENTRYPOINT ["python", "compute_ndvi.py"]
