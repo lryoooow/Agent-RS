@@ -1,0 +1,177 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/chatbot/evals/chatbot-case.schema.json",
+  "title": "Chatbot Evaluation Case",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "category",
+    "title",
+    "difficulty",
+    "tags",
+    "evaluation_type",
+    "messages",
+    "expected",
+    "must_include",
+    "must_not_include",
+    "manual_check"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(_[a-z0-9]+)*_[0-9]{3}$"
+    },
+    "category": {
+      "type": "string",
+      "enum": [
+        "basic",
+        "streaming",
+        "context",
+        "safety",
+        "errors"
+      ]
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "difficulty": {
+      "type": "string",
+      "enum": [
+        "easy",
+        "medium",
+        "hard"
+      ]
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "evaluation_type": {
+      "type": "string",
+      "enum": [
+        "automatic",
+        "manual",
+        "hybrid"
+      ]
+    },
+    "messages": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "role",
+          "content"
+        ],
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": [
+              "user",
+              "assistant",
+              "system"
+            ]
+          },
+          "content": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "expected": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "language",
+        "format",
+        "behavior"
+      ],
+      "properties": {
+        "language": {
+          "type": "string",
+          "enum": [
+            "zh",
+            "en"
+          ]
+        },
+        "format": {
+          "type": "string",
+          "enum": [
+            "plain",
+            "markdown",
+            "table",
+            "json"
+          ]
+        },
+        "format_mode": {
+          "type": "string",
+          "enum": [
+            "strict",
+            "contains"
+          ]
+        },
+        "stream": {
+          "type": "boolean"
+        },
+        "status_chain": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "analyzing",
+              "preparing",
+              "answering",
+              "complete"
+            ]
+          }
+        },
+        "behavior": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "must_include": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "must_include_any": {
+      "type": "array",
+      "items": {
+        "type": "array",
+        "minItems": 1,
+        "items": {
+          "type": "string"
+        }
+      }
+    },
+    "must_not_include": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "forbidden_patterns": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "manual_check": {
+      "type": "boolean"
+    },
+    "notes": {
+      "type": "string"
+    }
+  }
+}
