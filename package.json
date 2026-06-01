@@ -1,0 +1,11 @@
+{
+  "name": "chatbot",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "dev:frontend": "npm --prefix frontend run dev",
+    "build:frontend": "npm --prefix frontend run build",
+    "dev:backend": "backend/.venv/bin/python -m uvicorn app.main:app --app-dir backend --host 0.0.0.0 --port 3000 --reload",
+    "test:backend": "backend/.venv/bin/python -m pytest backend/tests"
+  }
+}
