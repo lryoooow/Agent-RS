@@ -17,8 +17,8 @@ from rasterio.transform import from_bounds
 
 
 def main():
-    input_path = Path("/data/input.tif")
-    output_dir = Path("/data/output")
+    input_path = Path(os.environ.get("INPUT_PATH", "/data/input.tif"))
+    output_dir = Path(os.environ.get("OUTPUT_DIR", "/data/output"))
     output_dir.mkdir(parents=True, exist_ok=True)
 
     red_band = int(os.environ.get("RED_BAND", "3"))

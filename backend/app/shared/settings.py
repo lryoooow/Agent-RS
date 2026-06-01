@@ -121,7 +121,7 @@ class Settings(BaseSettings):
     imagery_max_file_bytes: int = 500_000_000
     ndvi_docker_image: str = "chatbot-ndvi:latest"
     ndvi_docker_timeout_seconds: int = 120
-    ndvi_docker_gpu: bool = True
+    ndvi_docker_gpu: bool = False
 
     @property
     def cors_origin_list(self) -> list[str]:
