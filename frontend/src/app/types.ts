@@ -19,7 +19,18 @@ export type AgentStatus =
   | "tool_context_ready"
   | "final_answering"
   | "direct_answer"
-  | "tool_unavailable";
+  | "tool_unavailable"
+  | "docker_starting"
+  | "docker_running"
+  | "docker_complete";
+
+export type GeospatialResult = {
+  type: string;
+  imagery_id: string;
+  result_url: string;
+  bounds: [number, number, number, number] | null;
+  stats: { min: number; max: number; mean: number; std: number };
+};
 
 export type ChatTurn = ChatMessage & {
   id: string;
@@ -34,6 +45,7 @@ export type ChatTurn = ChatMessage & {
   agentStatus?: AgentStatus;
   agentLabel?: string;
   agentTrace?: Record<string, unknown> | null;
+  geospatialResult?: GeospatialResult;
   error?: boolean;
 };
 

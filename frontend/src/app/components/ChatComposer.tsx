@@ -1,5 +1,6 @@
 import { useRef, type FormEvent, type KeyboardEvent, type RefObject } from "react";
-import { ArrowUp, Loader2 } from "lucide-react";
+import { ArrowUp, Loader2, Paperclip } from "lucide-react";
+import { useImageryUpload } from "../hooks/useImageryUpload";
 
 type ChatComposerProps = {
   endpoint: string;
@@ -9,6 +10,7 @@ type ChatComposerProps = {
   onInputChange: (value: string) => void;
   onSubmit: (event: FormEvent) => void;
   onKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
+  onImageryUploaded?: (msg: string) => void;
 };
 
 export function ChatComposer({
@@ -19,8 +21,11 @@ export function ChatComposer({
   onInputChange,
   onSubmit,
   onKeyDown,
+  onImageryUploaded,
 }: ChatComposerProps) {
   const isComposingRef = useRef(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const imagery = useImageryUpload(endpoint);
 
   function handleTextareaKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
     if (
@@ -33,10 +38,39 @@ export function ChatComposer({
     onKeyDown(event);
   }
 
+  async function handleFileSelect() {
+    const file = fileInputRef.current?.files?.[0];
+    if (!file) return;
+    const meta = await imagery.upload(file);
+    if (meta && onImageryUploaded) {
+      onImageryUploaded(
+        `已上传影像: ${meta.filename} (${meta.band_count}波段, ${meta.width}x${meta.height}px, ID: ${meta.imagery_id})`,
+      );
+    }
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
   return (
     <div className="border-t border-border bg-background">
       <form onSubmit={onSubmit} className="max-w-3xl mx-auto px-6 md:px-10 py-5">
         <div className="flex items-end gap-3 border border-border rounded-2xl bg-card px-4 py-3 focus-within:border-foreground/40 transition-colors">
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={loading || imagery.uploading}
+            className="shrink-0 inline-flex items-center justify-center size-8 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/50 disabled:opacity-30 transition-colors"
+            aria-label="上传影像"
+            title="上传 GeoTIFF 影像"
+          >
+            <Paperclip className="size-4" />
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".tif,.tiff"
+            className="hidden"
+            onChange={handleFileSelect}
+          />
           <textarea
             ref={textareaRef}
             value={input}
@@ -63,6 +97,12 @@ export function ChatComposer({
             {loading ? <Loader2 className="size-4 animate-spin" /> : <ArrowUp className="size-4" />}
           </button>
         </div>
+        {imagery.uploading && (
+          <p className="mt-1 text-xs text-muted-foreground">正在上传影像...</p>
+        )}
+        {imagery.error && (
+          <p className="mt-1 text-xs text-red-400">{imagery.error}</p>
+        )}
         <p
           className="mt-2 text-[10px] tracking-[0.16em] uppercase text-muted-foreground"
           style={{ fontFamily: "'JetBrains Mono', monospace" }}

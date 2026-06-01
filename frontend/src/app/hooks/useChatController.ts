@@ -124,6 +124,10 @@ export function useChatController({
     setConversationId(null);
   }
 
+  function addSystemNote(content: string) {
+    setTurns((prev) => [...prev, { id: uid(), role: "system", content }]);
+  }
+
   return {
     turns,
     input,
@@ -135,5 +139,6 @@ export function useChatController({
     handleSubmit,
     handleKeyDown,
     resetConversation,
+    addSystemNote,
   };
 }

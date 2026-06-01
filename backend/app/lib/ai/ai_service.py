@@ -256,6 +256,8 @@ class AIService:
                 agent_trace = self._agent_trace_payload(agent_result.trace)
                 if agent_trace:
                     payload["agent_trace"] = agent_trace
+                if agent_result.geospatial_result:
+                    payload["geospatial_result"] = agent_result.geospatial_result
                 yield sse_event("done", payload)
                 await save_streamed_assistant(
                     persistence,
@@ -295,6 +297,8 @@ class AIService:
                     agent_trace = self._agent_trace_payload(agent_result.trace)
                     if agent_trace:
                         payload["agent_trace"] = agent_trace
+                    if agent_result.geospatial_result:
+                        payload["geospatial_result"] = agent_result.geospatial_result
                     event = sse_event("done", payload)
                 yield event
 
