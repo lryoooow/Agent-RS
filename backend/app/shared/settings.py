@@ -117,6 +117,12 @@ class Settings(BaseSettings):
     document_ocr_min_chars_per_page: int = 50
     document_ocr_languages: str = "chi_sim+eng"
 
+    imagery_upload_dir: str = "storage/imagery"
+    imagery_max_file_bytes: int = 500_000_000
+    ndvi_docker_image: str = "chatbot-ndvi:latest"
+    ndvi_docker_timeout_seconds: int = 120
+    ndvi_docker_gpu: bool = True
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]

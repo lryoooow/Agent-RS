@@ -66,3 +66,4 @@ class ToolRunResult:
     result_count: int = 0
     query: str = ""
     error: str | None = None
+    geospatial_result: dict[str, Any] | None = None

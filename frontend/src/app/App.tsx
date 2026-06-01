@@ -5,6 +5,8 @@ import { AppHeader } from "./components/AppHeader";
 import { AuthPanel } from "./components/auth/AuthPanel";
 import { HistoryPanel } from "./components/history/HistoryPanel";
 import { KnowledgePanel } from "./components/knowledge/KnowledgePanel";
+import { MapPanel } from "./components/map/MapPanel";
+import type { GeospatialResult } from "./types";
 import { MemoryPanel } from "./components/memory/MemoryPanel";
 import { SettingsPanel } from "./components/settings/SettingsPanel";
 import { useAutoScroll } from "./hooks/useAutoScroll";
@@ -30,6 +32,10 @@ export default function App() {
   const scrollRef = useAutoScroll<HTMLDivElement>([chat.turns, chat.loading]);
   const textareaRef = useAutosizeTextarea(chat.input);
   const isEmpty = chat.turns.length === 0;
+
+  const geospatialResults: GeospatialResult[] = chat.turns
+    .filter((t) => t.geospatialResult)
+    .map((t) => t.geospatialResult!);
 
   return (
     <div
@@ -114,23 +120,35 @@ export default function App() {
         />
       )}
 
-      <Conversation
-        turns={chat.turns}
-        loading={chat.loading}
-        activeStream={chat.activeStream}
-        scrollRef={scrollRef}
-        onPickSuggestion={chat.sendMessage}
-      />
+      <div className="flex flex-1 min-h-0">
+        <div className="flex flex-col flex-1 min-w-0">
+          <Conversation
+            turns={chat.turns}
+            loading={chat.loading}
+            activeStream={chat.activeStream}
+            scrollRef={scrollRef}
+            onPickSuggestion={chat.sendMessage}
+          />
 
-      <ChatComposer
-        endpoint={settings.endpoint}
-        input={chat.input}
-        loading={chat.loading}
-        textareaRef={textareaRef}
-        onInputChange={chat.setInput}
-        onSubmit={chat.handleSubmit}
-        onKeyDown={chat.handleKeyDown}
-      />
+          <ChatComposer
+            endpoint={settings.endpoint}
+            input={chat.input}
+            loading={chat.loading}
+            textareaRef={textareaRef}
+            onInputChange={chat.setInput}
+            onSubmit={chat.handleSubmit}
+            onKeyDown={chat.handleKeyDown}
+            onImageryUploaded={chat.addSystemNote}
+          />
+        </div>
+
+        <div className="w-[45%] min-w-[360px] max-w-[600px]">
+          <MapPanel
+            endpoint={settings.endpoint}
+            geospatialResults={geospatialResults}
+          />
+        </div>
+      </div>
     </div>
   );
 }

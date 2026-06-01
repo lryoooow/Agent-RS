@@ -29,6 +29,7 @@ class AgentPlanResult:
     final_context: ProviderRequestContext
     trace: AgentTrace
     used_tool: bool = False
+    geospatial_result: dict[str, Any] | None = None
 
 
 class AgentRuntime:
@@ -42,12 +43,14 @@ class AgentRuntime:
             and self.settings.agent_web_search_max_calls > 0
         )
 
+    @property
+    def tools_available(self) -> bool:
+        return True
+
     def trace(self) -> AgentTrace:
-        return AgentTrace(enabled=self.web_search_available)
+        return AgentTrace(enabled=self.tools_available)
 
     def tool_definitions(self) -> list[dict[str, Any]]:
-        if not self.web_search_available:
-            return []
         return list_tool_definitions()
 
     async def complete(
@@ -73,6 +76,26 @@ class AgentRuntime:
             return AgentPlanResult(response=response, final_context=initial_context, trace=trace)
 
         query = _latest_user_query(request)
+
+        ndvi_call = _detect_ndvi_intent(query)
+        if ndvi_call:
+            trace.add("tool_requested", "检测到NDVI计算意图", tool="calculate_ndvi")
+            tool_result = await self.run_tool_call(ndvi_call, request=request, trace=trace)
+            final_context = await build_provider_request_context(
+                request,
+                user_id=user_id,
+                tool_context=tool_result.tool_context,
+                retrieved_context=initial_context.retrieved_context,
+            )
+            trace.add("final_answering", "正在基于NDVI结果生成回答")
+            final_response = await self._create_completion(
+                client=client, config=config, messages=final_context.messages, stream=False,
+            )
+            return AgentPlanResult(
+                response=final_response, final_context=final_context, trace=trace,
+                used_tool=True, geospatial_result=tool_result.geospatial_result,
+            )
+
         intent = classify_search_intent(query, request.messages)
 
         if intent == SearchIntent.SKIP:
@@ -188,6 +211,7 @@ class AgentRuntime:
             final_context=final_context,
             trace=trace,
             used_tool=True,
+            geospatial_result=tool_result.geospatial_result,
         )
 
     async def plan_stream(
@@ -208,6 +232,23 @@ class AgentRuntime:
             return AgentPlanResult(response=None, final_context=initial_context, trace=trace)
 
         query = _latest_user_query(request)
+
+        ndvi_call = _detect_ndvi_intent(query)
+        if ndvi_call:
+            await self._add_event(trace, on_event, "tool_requested", "检测到NDVI计算意图", tool="calculate_ndvi")
+            tool_result = await self.run_tool_call(ndvi_call, request=request, trace=trace, on_event=on_event)
+            final_context = await build_provider_request_context(
+                request,
+                user_id=user_id,
+                tool_context=tool_result.tool_context,
+                retrieved_context=initial_context.retrieved_context,
+            )
+            await self._add_event(trace, on_event, "final_answering", "正在基于NDVI结果生成回答")
+            return AgentPlanResult(
+                response=None, final_context=final_context, trace=trace,
+                used_tool=True, geospatial_result=tool_result.geospatial_result,
+            )
+
         intent = classify_search_intent(query, request.messages)
 
         if intent == SearchIntent.SKIP:
@@ -300,6 +341,7 @@ class AgentRuntime:
             final_context=final_context,
             trace=trace,
             used_tool=True,
+            geospatial_result=tool_result.geospatial_result,
         )
 
     async def run_tool_call(
@@ -327,17 +369,12 @@ class AgentRuntime:
 
         try:
             args = tool.argument_model.model_validate(tool_call.arguments)
-            args = args.clamped(self.settings.agent_web_search_max_results)
         except ValidationError as exc:
-            message = "联网搜索参数无效"
+            message = "工具参数无效"
             await self._add_event(trace, on_event, "tool_context_ready", message, error=str(exc))
-            return ToolRunResult(tool_context=f"{message}，已跳过搜索。", error=str(exc))
-        if len(args.query) > self.settings.agent_web_search_input_max_chars:
-            message = "联网搜索 query 超过长度限制"
-            await self._add_event(trace, on_event, "tool_context_ready", message, query_chars=len(args.query))
-            return ToolRunResult(tool_context=f"{message}，已跳过搜索。", error=message)
+            return ToolRunResult(tool_context=f"{message}，已跳过执行。", error=str(exc))
 
-        await self._add_event(trace, on_event, "child_agent_running", "正在调用联网搜索子 Agent", query=args.query)
+        await self._add_event(trace, on_event, "child_agent_running", f"正在执行工具: {tool_call.name}", tool_name=tool_call.name)
         result = await tool.runner(args, request)
         await self._add_event(
             trace,
@@ -423,3 +460,48 @@ def _latest_user_query(request: ChatRequest) -> str:
         if message.role == "user":
             return message.content.strip()
     return ""
+
+
+import re
+
+_NDVI_PATTERN = re.compile(
+    r"(ndvi|NDVI|植被指数|植被覆盖|计算ndvi|计算NDVI|ndvi计算|ndvi分析|vegetation\s*index)",
+    re.IGNORECASE,
+)
+_IMAGERY_ID_PATTERN = re.compile(r"[a-f0-9]{12}")
+
+
+def _detect_ndvi_intent(query: str) -> RuntimeToolCall | None:
+    """Detect if the user wants NDVI calculation and return a tool call if so."""
+    if not _NDVI_PATTERN.search(query):
+        return None
+
+    imagery_id_match = _IMAGERY_ID_PATTERN.search(query)
+    if imagery_id_match:
+        imagery_id = imagery_id_match.group()
+    else:
+        imagery_id = _find_latest_imagery()
+        if not imagery_id:
+            return None
+
+    return RuntimeToolCall(
+        name="calculate_ndvi",
+        arguments={"imagery_id": imagery_id, "reason": "用户请求计算NDVI"},
+        call_id=None,
+    )
+
+
+def _find_latest_imagery() -> str | None:
+    """Find the most recently uploaded imagery ID."""
+    from pathlib import Path
+    settings = get_settings()
+    root = Path(settings.imagery_upload_dir)
+    if not root.is_absolute():
+        root = Path(__file__).resolve().parents[4] / root
+    if not root.exists():
+        return None
+    entries = [e for e in root.iterdir() if (e / "metadata.json").exists()]
+    if not entries:
+        return None
+    latest = max(entries, key=lambda e: e.stat().st_mtime)
+    return latest.name

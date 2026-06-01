@@ -18,12 +18,15 @@ ANALYSIS_STATUS_LABELS = {
 }
 AGENT_STATUS_LABELS = {
     "planning": "正在判断是否需要联网",
-    "tool_requested": "准备调用联网搜索",
-    "child_agent_running": "正在联网搜索",
-    "tool_context_ready": "已整理联网搜索结果",
+    "tool_requested": "准备调用工具",
+    "child_agent_running": "正在执行工具",
+    "tool_context_ready": "工具结果已整理",
     "final_answering": "正在生成最终回答",
-    "direct_answer": "无需联网搜索",
-    "tool_unavailable": "联网搜索不可用",
+    "direct_answer": "无需调用工具",
+    "tool_unavailable": "工具不可用",
+    "docker_starting": "正在启动计算容器",
+    "docker_running": "正在执行遥感计算",
+    "docker_complete": "计算完成",
 }
 
 

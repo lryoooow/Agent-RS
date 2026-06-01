@@ -6,7 +6,7 @@ import {
   uid,
   updateTurn,
 } from "./turns";
-import type { AgentStatus, AnalysisStatus, ChatResponse, ChatTurn, Usage } from "../types";
+import type { AgentStatus, AnalysisStatus, ChatResponse, ChatTurn, GeospatialResult, Usage } from "../types";
 
 type SetTurns = Dispatch<SetStateAction<ChatTurn[]>>;
 
@@ -50,6 +50,10 @@ export function createStreamHandlers(
       );
     },
     onDone: (data) => {
+      const geospatialResult =
+        data.geospatial_result && typeof data.geospatial_result === "object"
+          ? (data.geospatial_result as GeospatialResult)
+          : undefined;
       setTurns((prev) =>
         updateTurn(prev, assistantId, {
           analysisStatus: "complete",
@@ -66,6 +70,7 @@ export function createStreamHandlers(
             data.agent_trace && typeof data.agent_trace === "object"
               ? (data.agent_trace as Record<string, unknown>)
               : undefined,
+          geospatialResult,
         }),
       );
     },
@@ -105,7 +110,10 @@ function normalizeAgentStatus(value: unknown): AgentStatus | null {
     value === "tool_context_ready" ||
     value === "final_answering" ||
     value === "direct_answer" ||
-    value === "tool_unavailable"
+    value === "tool_unavailable" ||
+    value === "docker_starting" ||
+    value === "docker_running" ||
+    value === "docker_complete"
   ) {
     return value;
   }

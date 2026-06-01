@@ -106,6 +106,7 @@ async def build_provider_request_context(
         memory=memory_context or summaries.memory,
         rag_context=rag_context,
         tool_context=tool_context,
+        imagery_inventory=_build_imagery_inventory(),
         max_total_chars=settings.context_max_total_chars,
         max_recent_chars=settings.ai_context_max_recent_chars,
         max_recent_messages=settings.context_max_recent_messages,
@@ -268,3 +269,32 @@ async def build_planning_context(
     for msg in recent:
         messages.append({"role": msg.role, "content": msg.content[:400]})
     return messages
+
+
+def _build_imagery_inventory() -> str | None:
+    """Build a brief inventory of uploaded imagery for LLM context."""
+    import json
+    from pathlib import Path
+
+    settings = get_settings()
+    root = Path(settings.imagery_upload_dir)
+    if not root.is_absolute():
+        root = Path(__file__).resolve().parents[3] / root
+    if not root.exists():
+        return None
+
+    items: list[str] = []
+    for entry in sorted(root.iterdir()):
+        meta_file = entry / "metadata.json"
+        if not meta_file.exists():
+            continue
+        meta = json.loads(meta_file.read_text(encoding="utf-8"))
+        items.append(
+            f"- ID: {entry.name} | {meta.get('band_count', '?')}波段 "
+            f"| {meta.get('width', '?')}x{meta.get('height', '?')}px "
+            f"| CRS: {meta.get('crs', '未知')}"
+        )
+
+    if not items:
+        return None
+    return "可用影像:\n" + "\n".join(items)
