@@ -14,7 +14,7 @@ from app.shared.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
-COMPUTE_SCRIPT = Path(__file__).resolve().parents[6] / "docker" / "ndvi" / "compute_ndvi.py"
+COMPUTE_SCRIPT = Path(__file__).resolve().parents[7] / "docker" / "ndvi" / "compute_ndvi.py"
 
 
 def _imagery_root() -> Path:
