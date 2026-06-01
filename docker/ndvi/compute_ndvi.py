@@ -72,30 +72,38 @@ def main():
 
 
 def _write_colored_png(ndvi: np.ndarray, out_path: Path):
-    """Apply RdYlGn colormap and save as RGBA PNG."""
+    """Apply RdYlGn colormap and save as RGBA PNG (max 2048px on longest side)."""
     import matplotlib.colors as mcolors
+    from PIL import Image
 
-    norm = np.clip((ndvi + 1) / 2, 0, 1)  # map [-1,1] to [0,1]
+    h, w = ndvi.shape
+    max_dim = 2048
+    if max(h, w) > max_dim:
+        scale = max_dim / max(h, w)
+        new_h, new_w = int(h * scale), int(w * scale)
+    else:
+        new_h, new_w = h, w
+
+    norm = np.clip((ndvi + 1) / 2, 0, 1)
     norm = np.nan_to_num(norm, nan=0.0)
 
-    # RdYlGn-like colormap: red -> yellow -> green
     colors = [
-        (0.0, (0.65, 0.0, 0.15, 1.0)),   # dark red
-        (0.25, (0.84, 0.38, 0.0, 1.0)),   # orange-red
-        (0.5, (1.0, 1.0, 0.6, 1.0)),      # yellow
-        (0.75, (0.4, 0.74, 0.2, 1.0)),    # light green
-        (1.0, (0.0, 0.41, 0.22, 1.0)),    # dark green
+        (0.0, (0.65, 0.0, 0.15, 1.0)),
+        (0.25, (0.84, 0.38, 0.0, 1.0)),
+        (0.5, (1.0, 1.0, 0.6, 1.0)),
+        (0.75, (0.4, 0.74, 0.2, 1.0)),
+        (1.0, (0.0, 0.41, 0.22, 1.0)),
     ]
     cmap = mcolors.LinearSegmentedColormap.from_list("ndvi", colors)
     rgba = (cmap(norm) * 255).astype(np.uint8)
 
-    # Set nodata pixels to transparent
     nodata_mask = np.isnan(ndvi)
     rgba[nodata_mask] = [0, 0, 0, 0]
 
-    from PIL import Image
     img = Image.fromarray(rgba, mode="RGBA")
-    img.save(out_path)
+    if (new_h, new_w) != (h, w):
+        img = img.resize((new_w, new_h), Image.LANCZOS)
+    img.save(out_path, optimize=True)
 
 
 if __name__ == "__main__":
