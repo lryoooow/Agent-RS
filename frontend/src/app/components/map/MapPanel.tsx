@@ -14,6 +14,7 @@ export function MapPanel({ endpoint, geospatialResults }: MapPanelProps) {
   const mapContainer = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const [opacity, setOpacity] = useState(0.8);
+  const [mapReady, setMapReady] = useState(false);
 
   useEffect(() => {
     if (!mapContainer.current || mapRef.current) return;
@@ -44,54 +45,60 @@ export function MapPanel({ endpoint, geospatialResults }: MapPanelProps) {
     });
 
     map.addControl(new maplibregl.NavigationControl(), "top-right");
+    map.on("load", () => setMapReady(true));
     mapRef.current = map;
 
     return () => {
       map.remove();
       mapRef.current = null;
+      setMapReady(false);
     };
   }, []);
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map) return;
-
-    const baseUrl = endpoint.replace(/\/chat\/?$/, "");
+    if (!map || !mapReady) return;
 
     geospatialResults.forEach((result, idx) => {
       const sourceId = `ndvi-${result.imagery_id}-${idx}`;
       const layerId = `ndvi-layer-${result.imagery_id}-${idx}`;
 
-      if (map.getSource(sourceId)) {
-        map.setPaintProperty(layerId, "raster-opacity", opacity);
-        return;
+      try {
+        if (map.getSource(sourceId)) {
+          map.setPaintProperty(layerId, "raster-opacity", opacity);
+          return;
+        }
+
+        if (!result.bounds) return;
+        const [west, south, east, north] = result.bounds;
+        const url = result.result_url.startsWith("http")
+          ? result.result_url
+          : `${window.location.origin}${result.result_url}`;
+
+        map.addSource(sourceId, {
+          type: "image",
+          url,
+          coordinates: [
+            [west, north],
+            [east, north],
+            [east, south],
+            [west, south],
+          ],
+        });
+
+        map.addLayer({
+          id: layerId,
+          type: "raster",
+          source: sourceId,
+          paint: { "raster-opacity": opacity },
+        });
+
+        map.fitBounds([west, south, east, north], { padding: 40 });
+      } catch (err) {
+        console.error(`[MapPanel] Failed to add NDVI layer: ${sourceId}`, err);
       }
-
-      if (!result.bounds) return;
-      const [west, south, east, north] = result.bounds;
-      const url = `${baseUrl}${result.result_url}`;
-
-      map.addSource(sourceId, {
-        type: "image",
-        url,
-        coordinates: [
-          [west, north],
-          [east, north],
-          [east, south],
-          [west, south],
-        ],
-      });
-
-      map.addLayer({
-        id: layerId,
-        type: "raster",
-        source: sourceId,
-        paint: { "raster-opacity": opacity },
-      });
-
-      map.fitBounds([west, south, east, north], { padding: 40 });
     });
-  }, [geospatialResults, opacity, endpoint]);
+  }, [geospatialResults, opacity, mapReady]);
 
   return (
     <div className="flex flex-col h-full bg-[#1a1a2e] border-l border-[#2a2a4a]">
