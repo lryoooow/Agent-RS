@@ -13,7 +13,6 @@ from pathlib import Path
 
 import numpy as np
 import rasterio
-from rasterio.transform import from_bounds
 
 
 def main():
@@ -72,8 +71,7 @@ def main():
 
 
 def _write_colored_png(ndvi: np.ndarray, out_path: Path):
-    """Apply RdYlGn colormap and save as RGBA PNG (max 2048px on longest side)."""
-    import matplotlib.colors as mcolors
+    """Apply an NDVI color ramp and save as RGBA PNG (max 2048px on longest side)."""
     from PIL import Image
 
     h, w = ndvi.shape
@@ -84,25 +82,33 @@ def _write_colored_png(ndvi: np.ndarray, out_path: Path):
     else:
         new_h, new_w = h, w
 
-    norm = np.clip((ndvi + 1) / 2, 0, 1)
-    norm = np.nan_to_num(norm, nan=0.0)
+    norm = np.nan_to_num(np.clip((ndvi + 1) / 2, 0, 1), nan=0.0)
 
-    colors = [
-        (0.0, (0.65, 0.0, 0.15, 1.0)),
-        (0.25, (0.84, 0.38, 0.0, 1.0)),
-        (0.5, (1.0, 1.0, 0.6, 1.0)),
-        (0.75, (0.4, 0.74, 0.2, 1.0)),
-        (1.0, (0.0, 0.41, 0.22, 1.0)),
-    ]
-    cmap = mcolors.LinearSegmentedColormap.from_list("ndvi", colors)
-    rgba = (cmap(norm) * 255).astype(np.uint8)
+    color_positions = np.array([0.0, 0.25, 0.5, 0.75, 1.0], dtype=np.float32)
+    color_values = np.array(
+        [
+            [166, 0, 38, 255],
+            [214, 97, 0, 255],
+            [255, 255, 153, 255],
+            [102, 189, 51, 255],
+            [0, 105, 56, 255],
+        ],
+        dtype=np.float32,
+    )
+    rgba = np.empty((*norm.shape, 4), dtype=np.uint8)
+    for channel in range(4):
+        rgba[..., channel] = np.interp(
+            norm,
+            color_positions,
+            color_values[:, channel],
+        ).astype(np.uint8)
 
     nodata_mask = np.isnan(ndvi)
     rgba[nodata_mask] = [0, 0, 0, 0]
 
     img = Image.fromarray(rgba, mode="RGBA")
     if (new_h, new_w) != (h, w):
-        img = img.resize((new_w, new_h), Image.LANCZOS)
+        img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
     img.save(out_path, optimize=True)
 
 

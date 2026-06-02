@@ -121,7 +121,7 @@ export default function App() {
       )}
 
       <div className="flex flex-1 min-h-0">
-        <div className="flex flex-col flex-1 min-w-0">
+        <div className="flex flex-col min-w-0" style={{ flex: '0 0 40%' }}>
           <Conversation
             turns={chat.turns}
             loading={chat.loading}
@@ -142,7 +142,7 @@ export default function App() {
           />
         </div>
 
-        <div className="w-[45%] min-w-[360px] max-w-[600px]">
+        <div className="min-w-0" style={{ flex: '0 0 60%' }}>
           <MapPanel
             endpoint={settings.endpoint}
             geospatialResults={geospatialResults}
