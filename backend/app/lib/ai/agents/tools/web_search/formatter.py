@@ -35,6 +35,8 @@ def format_search_context(
         if published:
             header += f" ({published})"
         lines.append(header)
+        if url:
+            lines.append(f"   Source: {url}")
         if content:
             lines.append(f"   {content}")
         lines.append("")

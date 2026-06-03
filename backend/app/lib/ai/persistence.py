@@ -186,16 +186,22 @@ def schedule_after_response(
         if message_id and content.strip()
     ]
     if embedding_targets:
-        asyncio.create_task(_embed_messages(embedding_targets))
+        _track_background_task(
+            asyncio.create_task(_embed_messages(embedding_targets)),
+            "message embedding",
+        )
     if persistence.assistant_message_id:
-        asyncio.create_task(
-            maybe_store_memory(
-                user_id=persistence.user_id,
-                conversation_id=persistence.conversation_id,
-                user_content=persistence.user_content,
-                assistant_content=assistant_content,
-                source_message_id=persistence.assistant_message_id,
-            )
+        _track_background_task(
+            asyncio.create_task(
+                maybe_store_memory(
+                    user_id=persistence.user_id,
+                    conversation_id=persistence.conversation_id,
+                    user_content=persistence.user_content,
+                    assistant_content=assistant_content,
+                    source_message_id=persistence.assistant_message_id,
+                )
+            ),
+            "memory extraction",
         )
 
 
@@ -246,9 +252,42 @@ async def _embed_messages(targets: list[EmbeddingTarget]) -> None:
         except Exception:
             logger.exception("Failed to enqueue embedding retry.")
         return
+    if len(vectors) != len(message_ids):
+        logger.error(
+            "Embedding count mismatch; skipping message embedding save. expected=%s actual=%s",
+            len(message_ids),
+            len(vectors),
+        )
+        try:
+            async with pool.acquire() as conn:
+                for message_id in message_ids:
+                    await add_embedding_retry(
+                        conn,
+                        message_id=message_id,
+                        error=f"embedding_count_mismatch:{len(vectors)}",
+                    )
+        except Exception:
+            logger.exception("Failed to enqueue embedding retry after count mismatch.")
+        return
     try:
         async with pool.acquire() as conn:
-            for message_id, vector in zip(message_ids, vectors, strict=False):
+            for message_id, vector in zip(message_ids, vectors, strict=True):
                 await set_embedding(conn, message_id=message_id, embedding=vector)
     except Exception:
         logger.exception("Failed to save message embeddings.")
+
+
+def _track_background_task(task: asyncio.Task, label: str) -> None:
+    if not hasattr(task, "add_done_callback"):
+        logger.debug("Background task handle has no callback support: %s", label)
+        return
+
+    def _log_failure(done: asyncio.Task) -> None:
+        try:
+            done.result()
+        except asyncio.CancelledError:
+            logger.info("Background task cancelled: %s", label)
+        except Exception:
+            logger.exception("Background task failed: %s", label)
+
+    task.add_done_callback(_log_failure)

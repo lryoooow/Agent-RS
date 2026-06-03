@@ -1,5 +1,6 @@
 import logging
 import time
+import asyncio
 from dataclasses import dataclass
 
 from app.lib.ai.context.assembler import assemble_context
@@ -7,6 +8,11 @@ from app.lib.ai.context.summarizer import build_context_summaries
 from app.lib.ai.context.types import ContextAssembly
 from app.lib.ai.embedding.service import get_embedding_service
 from app.lib.ai.prompting.renderer import render_prompt_context
+from app.lib.ai.prompting.scenarios import (
+    WEB_PLANNING_PROMPT,
+    latest_user_text,
+    wants_imagery_context,
+)
 from app.lib.ai.rag.formatter import format_retrieved_blocks
 from app.lib.ai.rag.mmr import mmr_select
 from app.lib.ai.rerank import get_rerank_service
@@ -16,6 +22,7 @@ from app.lib.db.repositories.message import list_recent_messages
 from app.lib.db.repositories.vector_search import search_hybrid_rrf
 from app.schemas.chat import ChatRequest
 from app.shared.logging import log_event
+from app.shared.paths import imagery_root
 from app.shared.settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -52,7 +59,7 @@ async def build_provider_request_context(
 ) -> ProviderRequestContext:
     settings = get_settings()
     messages = await _resolve_context_messages(request, user_id=user_id)
-    query = _latest_user_text(request)
+    query = latest_user_text(request.messages)
     if retrieved_context is None:
         if skip_retrieval:
             retrieved_context = RetrievedContext(
@@ -106,7 +113,7 @@ async def build_provider_request_context(
         memory=memory_context or summaries.memory,
         rag_context=rag_context,
         tool_context=tool_context,
-        imagery_inventory=_build_imagery_inventory(),
+        imagery_inventory=_build_imagery_inventory() if wants_imagery_context(query) else None,
         max_total_chars=settings.context_max_total_chars,
         max_recent_chars=settings.ai_context_max_recent_chars,
         max_recent_messages=settings.context_max_recent_messages,
@@ -188,45 +195,30 @@ async def _resolve_retrieved_context(
         "context_chars": 0,
     }
     try:
-        async with pool.acquire() as conn:
+        can_parallel = bool(
+            request.use_memory
+            and user_id
+            and request.use_rag
+            and settings.database_pool_max_size >= 2
+        )
+        if can_parallel:
+            memory_context, rag_payload = await asyncio.gather(
+                _load_memory_context(pool, user_id=user_id, embedding=embedding),
+                _load_rag_context(pool, query=query, embedding=embedding, rag_trace=rag_trace),
+            )
+            rag_context, retrieved_chunks = rag_payload
+            rag_trace["parallel"] = True
+        else:
             if request.use_memory and user_id:
-                memories = await list_relevant_memories(
-                    conn,
-                    user_id=user_id,
-                    embedding=embedding,
-                    limit=settings.memory_retrieval_limit,
-                )
-                memory_context = format_retrieved_blocks(memories, title="memory")
+                memory_context = await _load_memory_context(pool, user_id=user_id, embedding=embedding)
             if request.use_rag:
-                started = time.perf_counter()
-                chunks = await search_hybrid_rrf(
-                    conn,
+                rag_context, retrieved_chunks = await _load_rag_context(
+                    pool,
+                    query=query,
                     embedding=embedding,
-                    query=query,
-                    limit=max(settings.rag_candidate_limit, settings.rag_retrieval_limit),
-                    k=settings.rag_rrf_k,
+                    rag_trace=rag_trace,
                 )
-                rag_trace["candidates"] = len(chunks)
-                rag_trace["recall_ms"] = int((time.perf_counter() - started) * 1000)
-                started = time.perf_counter()
-                chunks = await get_rerank_service().rerank(
-                    query=query,
-                    items=chunks,
-                    top_n=(settings.rerank_top_n or settings.rag_retrieval_limit) + 3,
-                )
-                rag_trace["rerank_ms"] = int((time.perf_counter() - started) * 1000)
-                if settings.rag_mmr_enabled:
-                    chunks = mmr_select(
-                        candidates=chunks,
-                        query_embedding=embedding,
-                        top_n=settings.rerank_top_n or settings.rag_retrieval_limit,
-                        lambda_mult=settings.rag_mmr_lambda,
-                    )
-                    rag_trace["mmr_selected"] = len(chunks)
-                else:
-                    chunks = chunks[: settings.rerank_top_n or settings.rag_retrieval_limit]
-                retrieved_chunks = sum(1 for chunk in chunks if str(chunk.get("content") or "").strip())
-                rag_context = format_retrieved_blocks(chunks, title="document")
+            rag_trace["parallel"] = False
     except Exception:
         return RetrievedContext(rag_trace=rag_trace)
     log_event(
@@ -245,6 +237,58 @@ async def _resolve_retrieved_context(
     )
 
 
+async def _load_memory_context(pool, *, user_id: str, embedding: list[float]) -> str | None:
+    settings = get_settings()
+    async with pool.acquire() as conn:
+        memories = await list_relevant_memories(
+            conn,
+            user_id=user_id,
+            embedding=embedding,
+            limit=settings.memory_retrieval_limit,
+        )
+    return format_retrieved_blocks(memories, title="memory")
+
+
+async def _load_rag_context(
+    pool,
+    *,
+    query: str,
+    embedding: list[float],
+    rag_trace: dict,
+) -> tuple[str | None, int]:
+    settings = get_settings()
+    started = time.perf_counter()
+    async with pool.acquire() as conn:
+        chunks = await search_hybrid_rrf(
+            conn,
+            embedding=embedding,
+            query=query,
+            limit=max(settings.rag_candidate_limit, settings.rag_retrieval_limit),
+            k=settings.rag_rrf_k,
+        )
+    rag_trace["candidates"] = len(chunks)
+    rag_trace["recall_ms"] = int((time.perf_counter() - started) * 1000)
+    started = time.perf_counter()
+    chunks = await get_rerank_service().rerank(
+        query=query,
+        items=chunks,
+        top_n=(settings.rerank_top_n or settings.rag_retrieval_limit) + 3,
+    )
+    rag_trace["rerank_ms"] = int((time.perf_counter() - started) * 1000)
+    if settings.rag_mmr_enabled:
+        chunks = mmr_select(
+            candidates=chunks,
+            query_embedding=embedding,
+            top_n=settings.rerank_top_n or settings.rag_retrieval_limit,
+            lambda_mult=settings.rag_mmr_lambda,
+        )
+        rag_trace["mmr_selected"] = len(chunks)
+    else:
+        chunks = chunks[: settings.rerank_top_n or settings.rag_retrieval_limit]
+    retrieved_chunks = sum(1 for chunk in chunks if str(chunk.get("content") or "").strip())
+    return format_retrieved_blocks(chunks, title="document"), retrieved_chunks
+
+
 def _latest_user_text(request: ChatRequest) -> str:
     for message in reversed(request.messages):
         if message.role == "user":
@@ -258,11 +302,7 @@ async def build_planning_context(
     messages: list[dict[str, str]] = [
         {
             "role": "system",
-            "content": (
-                "判断用户是否需要联网搜索。只回复YES或NO，不要解释。\n"
-                "YES：需要最新信息、实时数据、新闻、验证事实\n"
-                "NO：闲聊、编程、写作、数学、已有上下文可答"
-            ),
+            "content": WEB_PLANNING_PROMPT,
         }
     ]
     recent = request.messages[-3:] if len(request.messages) > 3 else request.messages
@@ -274,12 +314,8 @@ async def build_planning_context(
 def _build_imagery_inventory() -> str | None:
     """Build a brief inventory of uploaded imagery for LLM context."""
     import json
-    from pathlib import Path
 
-    settings = get_settings()
-    root = Path(settings.imagery_upload_dir)
-    if not root.is_absolute():
-        root = Path(__file__).resolve().parents[3] / root
+    root = imagery_root()
     if not root.exists():
         return None
 
@@ -288,11 +324,15 @@ def _build_imagery_inventory() -> str | None:
         meta_file = entry / "metadata.json"
         if not meta_file.exists():
             continue
-        meta = json.loads(meta_file.read_text(encoding="utf-8"))
+        try:
+            meta = json.loads(meta_file.read_text(encoding="utf-8"))
+        except OSError:
+            logger.warning("Failed to read imagery metadata: %s", meta_file, exc_info=True)
+            continue
         items.append(
             f"- ID: {entry.name} | {meta.get('band_count', '?')}波段 "
             f"| {meta.get('width', '?')}x{meta.get('height', '?')}px "
-            f"| CRS: {meta.get('crs', '未知')}"
+            f"| CRS: {meta.get('crs') or '未知'}"
         )
 
     if not items:

@@ -6,7 +6,15 @@ import {
   uid,
   updateTurn,
 } from "./turns";
-import type { AgentStatus, AnalysisStatus, ChatResponse, ChatTurn, GeospatialResult, Usage } from "../types";
+import type {
+  AgentStatus,
+  AnalysisStatus,
+  ChatResponse,
+  ChatTurn,
+  GeospatialResult,
+  ToolExecutionInfo,
+  Usage,
+} from "../types";
 
 type SetTurns = Dispatch<SetStateAction<ChatTurn[]>>;
 
@@ -50,16 +58,16 @@ export function createStreamHandlers(
       );
     },
     onDone: (data) => {
-      const geospatialResult =
-        data.geospatial_result && typeof data.geospatial_result === "object"
-          ? (data.geospatial_result as GeospatialResult)
-          : undefined;
+      const geospatialResult = parseGeospatialResult(data.geospatial_result);
+      const finishReason = typeof data.finish_reason === "string" ? data.finish_reason : undefined;
+      const failed = finishReason === "error";
       setTurns((prev) =>
         updateTurn(prev, assistantId, {
-          analysisStatus: "complete",
-          analysisLabel: "思考完成",
+          analysisStatus: failed ? "answering" : "complete",
+          analysisLabel: failed ? "回答生成失败" : "思考完成",
+          error: failed,
           usage: data.usage as Usage | undefined,
-          finishReason: typeof data.finish_reason === "string" ? data.finish_reason : undefined,
+          finishReason,
           retrievedChunks:
             typeof data.retrieved_chunks === "number" ? data.retrieved_chunks : undefined,
           ragTrace:
@@ -78,6 +86,7 @@ export function createStreamHandlers(
 }
 
 export function appendAssistantResponse(setTurns: SetTurns, data: ChatResponse) {
+  const geospatialResult = parseGeospatialResult(data.geospatial_result);
   setTurns((prev) => [
     ...prev,
     {
@@ -91,6 +100,7 @@ export function appendAssistantResponse(setTurns: SetTurns, data: ChatResponse) 
       retrievedChunks: data.retrieved_chunks,
       ragTrace: data.rag_trace,
       agentTrace: data.agent_trace,
+      geospatialResult,
     },
   ]);
 }
@@ -104,20 +114,76 @@ function normalizeAnalysisStatus(value: unknown): AnalysisStatus | null {
 
 function normalizeAgentStatus(value: unknown): AgentStatus | null {
   if (
+    value === "context_assembled" ||
     value === "planning" ||
+    value === "planning_fallback" ||
+    value === "classifier_skip" ||
+    value === "classifier_force" ||
+    value === "cache_hit_skip" ||
+    value === "cache_hit_search" ||
     value === "tool_requested" ||
     value === "child_agent_running" ||
+    value === "tool_execution_started" ||
+    value === "tool_execution_completed" ||
+    value === "tool_execution_failed" ||
+    value === "tool_fallback_used" ||
     value === "tool_context_ready" ||
+    value === "geospatial_result_ready" ||
     value === "final_answering" ||
     value === "direct_answer" ||
-    value === "tool_unavailable" ||
-    value === "docker_starting" ||
-    value === "docker_running" ||
-    value === "docker_complete"
+    value === "tool_unavailable"
   ) {
     return value;
   }
   return null;
+}
+
+function parseGeospatialResult(value: unknown): GeospatialResult | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const candidate = value as Record<string, unknown>;
+  if (candidate.type !== "preview" && candidate.type !== "ndvi") return undefined;
+  if (typeof candidate.imagery_id !== "string") return undefined;
+  if (typeof candidate.result_url !== "string") return undefined;
+  const bounds = candidate.bounds;
+  if (bounds !== null && !isBounds(bounds)) return undefined;
+
+  const base = {
+    imagery_id: candidate.imagery_id,
+    result_url: candidate.result_url,
+    bounds,
+  };
+  if (candidate.type === "preview") {
+    return { type: "preview", ...base };
+  }
+  if (!isStats(candidate.stats)) return undefined;
+  return {
+    type: "ndvi",
+    ...base,
+    stats: candidate.stats,
+    execution: isExecution(candidate.execution) ? candidate.execution : undefined,
+  };
+}
+
+function isBounds(value: unknown): value is [number, number, number, number] {
+  return Array.isArray(value) && value.length === 4 && value.every((item) => typeof item === "number");
+}
+
+function isStats(value: unknown): value is { min: number; max: number; mean: number; std: number } {
+  if (!value || typeof value !== "object") return false;
+  const stats = value as Record<string, unknown>;
+  return ["min", "max", "mean", "std"].every((key) => typeof stats[key] === "number");
+}
+
+function isExecution(value: unknown): value is ToolExecutionInfo {
+  if (!value || typeof value !== "object") return false;
+  const execution = value as Record<string, unknown>;
+  return (
+    typeof execution.mode === "string" &&
+    typeof execution.fallback_used === "boolean" &&
+    (execution.error_code === undefined ||
+      execution.error_code === null ||
+      typeof execution.error_code === "string")
+  );
 }
 
 export function applyRequestError(setTurns: SetTurns, assistantId: string, shouldStream: boolean, err: unknown) {

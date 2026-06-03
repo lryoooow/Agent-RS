@@ -1,7 +1,7 @@
 [project]
-name = "chatbot-backend"
+name = "agent-rs-backend"
 version = "0.1.0"
-description = "Python FastAPI backend for an OpenAI-compatible chatbot."
+description = "FastAPI backend for Agent-RS, an AI Agent system for remote-sensing workflows."
 requires-python = ">=3.11"
 dependencies = [
   "fastapi>=0.115.0",
@@ -32,7 +32,7 @@ dev = [
 ]
 
 [project.scripts]
-chatbot-backend = "app.server:main"
+agent-rs-backend = "app.server:main"
 
 [tool.setuptools.packages.find]
 include = ["app*"]

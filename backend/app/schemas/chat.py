@@ -38,6 +38,38 @@ class Usage(BaseModel):
     total_tokens: int | None = None
 
 
+class NDVIStats(BaseModel):
+    min: float
+    max: float
+    mean: float
+    std: float
+
+
+class ToolExecutionInfo(BaseModel):
+    mode: Literal["docker_mcp", "local_subprocess", "local_fallback", "failed"]
+    fallback_used: bool = False
+    error_code: str | None = None
+
+
+class GeospatialPreviewResult(BaseModel):
+    type: Literal["preview"]
+    imagery_id: str
+    result_url: str
+    bounds: tuple[float, float, float, float] | None = None
+
+
+class GeospatialNDVIResult(BaseModel):
+    type: Literal["ndvi"]
+    imagery_id: str
+    result_url: str
+    bounds: tuple[float, float, float, float] | None = None
+    stats: NDVIStats
+    execution: ToolExecutionInfo | None = None
+
+
+GeospatialResult = GeospatialPreviewResult | GeospatialNDVIResult
+
+
 class ChatResponse(BaseModel):
     content: str
     model: str
@@ -50,3 +82,4 @@ class ChatResponse(BaseModel):
     retrieved_chunks: int = 0
     rag_trace: dict | None = None
     agent_trace: dict | None = None
+    geospatial_result: GeospatialResult | None = None

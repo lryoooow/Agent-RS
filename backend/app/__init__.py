@@ -1,1 +1,1 @@
-"""Chatbot backend application package."""
+"""Agent-RS backend application package."""

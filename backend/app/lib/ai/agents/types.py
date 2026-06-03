@@ -2,12 +2,25 @@ from dataclasses import dataclass, field
 from time import perf_counter
 from typing import Any, Literal
 
+from app.schemas.chat import GeospatialResult
+
 
 AgentStage = Literal[
+    "context_assembled",
     "planning",
+    "planning_fallback",
+    "classifier_skip",
+    "classifier_force",
+    "cache_hit_skip",
+    "cache_hit_search",
     "tool_requested",
     "child_agent_running",
+    "tool_execution_started",
+    "tool_execution_completed",
+    "tool_execution_failed",
+    "tool_fallback_used",
     "tool_context_ready",
+    "geospatial_result_ready",
     "final_answering",
     "direct_answer",
     "tool_unavailable",
@@ -66,4 +79,5 @@ class ToolRunResult:
     result_count: int = 0
     query: str = ""
     error: str | None = None
-    geospatial_result: dict[str, Any] | None = None
+    geospatial_result: GeospatialResult | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)

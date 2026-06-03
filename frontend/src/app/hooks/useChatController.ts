@@ -1,4 +1,4 @@
-import { useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { postChat } from "../lib/chat-api";
 import {
   appendAssistantResponse,
@@ -11,6 +11,7 @@ import { toModelHistory, uid } from "../lib/turns";
 import type {
   ChatResponse,
   ChatTurn,
+  GeospatialResult,
 } from "../types";
 
 const CONVERSATION_STORAGE_KEY = "chatbot.conversationId";
@@ -37,6 +38,12 @@ export function useChatController({
   );
   const abortRef = useRef<AbortController | null>(null);
 
+  useEffect(() => {
+    return () => {
+      abortRef.current?.abort();
+    };
+  }, []);
+
   function setConversationId(nextConversationId: string | null) {
     setConversationIdState(nextConversationId);
     if (nextConversationId) {
@@ -53,7 +60,9 @@ export function useChatController({
     const userTurn: ChatTurn = { id: uid(), role: "user", content: trimmed };
     const assistantId = uid();
     const shouldStream = streamEnabled;
-    const requestMessages = conversationId ? [{ role: "user" as const, content: trimmed }] : toModelHistory(turns, trimmed);
+    const requestMessages = conversationId
+      ? [...latestGeospatialContext(turns), { role: "user" as const, content: trimmed }]
+      : toModelHistory(turns, trimmed);
     const body = buildChatRequestBody({
       messages: requestMessages,
       systemPrompt,
@@ -128,6 +137,13 @@ export function useChatController({
     setTurns((prev) => [...prev, { id: uid(), role: "system", content }]);
   }
 
+  function addGeospatialResult(content: string, geospatialResult: GeospatialResult) {
+    setTurns((prev) => [
+      ...prev,
+      { id: uid(), role: "system", content, geospatialResult },
+    ]);
+  }
+
   return {
     turns,
     input,
@@ -140,5 +156,18 @@ export function useChatController({
     handleKeyDown,
     resetConversation,
     addSystemNote,
+    addGeospatialResult,
   };
+}
+
+function latestGeospatialContext(turns: ChatTurn[]) {
+  const turn = [...turns].reverse().find((item) => item.geospatialResult);
+  if (!turn?.geospatialResult) return [];
+  const result = turn.geospatialResult;
+  return [
+    {
+      role: "system" as const,
+      content: `当前上传影像：ID=${result.imagery_id}，图层类型=${result.type}。如用户要求计算 NDVI，优先使用该 imagery_id。`,
+    },
+  ];
 }

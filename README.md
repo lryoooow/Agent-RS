@@ -1,160 +1,131 @@
-# Chatbot Python
+# Agent-RS
 
-一个全栈 AI 聊天机器人系统，支持多管道路由、RAG 知识库、联网搜索、用户记忆和流式对话。
+Agent-RS 是一个面向遥感影像分析的 AI Agent 应用。项目由 React 前端、FastAPI 后端、上下文管线、联网搜索 Agent，以及 Docker MCP 封装的 NDVI 工具组成。当前支持普通对话、流式输出、RAG/Memory、GeoTIFF 上传预览、原图/NDVI 双图层展示，以及通过 MCP 工具计算 NDVI。
 
 ## 架构概览
 
-```
-┌─────────────────────────────────────────────────────────┐
-│  Frontend (React + Vite + Tailwind)                     │
-│  SSE Streaming / Chat / Knowledge / Memory / Auth       │
-└────────────────────────┬────────────────────────────────┘
-                         │ /api
-┌────────────────────────▼────────────────────────────────┐
-│  Request Router                                         │
-│  ┌──────────┐  ┌──────────┐  ┌───────────────────────┐ │
-│  │Direct Chat│  │ RAG QA   │  │ Web Search + Agent    │ │
-│  │(短链路)   │  │(检索增强) │  │(联网搜索)             │ │
-│  └──────────┘  └──────────┘  └───────────────────────┘ │
-├─────────────────────────────────────────────────────────┤
-│  Context Assembly / Prompt Engine / Memory / Rerank     │
-├─────────────────────────────────────────────────────────┤
-│  LLM Provider (OpenAI-compatible API)                   │
-└─────────────────────────────────────────────────────────┘
+```text
+frontend/ React + Vite
+  -> /api
+backend/ FastAPI
+  -> request router: direct_chat / full_pipeline
+  -> context: history / memory / rag / imagery_inventory / tool_result
+  -> agent runtime:
+       web_search agent
+       calculate_ndvi tool -> Docker MCP -> docker/ndvi/compute_ndvi.py
+storage/
+  -> imagery/{imagery_id}/source.tif
+  -> imagery/{imagery_id}/working.tif
+  -> imagery/{imagery_id}/metadata.json
+  -> imagery/{imagery_id}/results/preview.png
+  -> imagery/{imagery_id}/results/ndvi_colored.png
 ```
 
-## 核心特性
+NDVI 计算当前按工具形态运行：后端优先通过 Docker 启动 MCP 服务并调用 `calculate_ndvi`，工具本身无状态；联网搜索是当前主要的子 Agent 能力。
 
-- **多管道路由** — 请求前置分类，简单对话走短链路（跳过 RAG/Memory），复杂问题走完整管线
-- **联网搜索** — Tavily API 集成，规则分类 + 轻量模型决策 + 决策缓存 + 结果缓存
-- **RAG 知识库** — 文档上传（PDF/DOCX/TXT + OCR）、分块、向量嵌入、混合检索、Rerank、MMR
-- **用户记忆** — 自动提取对话中的关键信息，后续对话中召回
-- **流式响应** — SSE 实时推送，支持 thinking 状态、搜索状态、逐字输出
-- **认证系统** — JWT + Session，多用户隔离
-- **Thinking Budget** — 主模型推理预算控制，平衡质量与速度
-
-## 技术栈
-
-| 层级 | 技术 |
-|------|------|
-| 前端 | React 18 + Vite + Tailwind CSS + Lucide Icons |
-| 后端 | FastAPI + Uvicorn + Pydantic |
-| LLM | OpenAI-compatible API (Qwen3.7-Max / Qwen3.6-Flash) |
-| 向量检索 | PostgreSQL + pgvector + 混合 RRF |
-| 嵌入 | text-embedding-v4 (DashScope) |
-| 重排 | gte-rerank-v2 (DashScope) |
-| 联网搜索 | Tavily API |
-| 文档解析 | pypdf + python-docx + pytesseract (OCR) |
-
-## 快速开始
-
-### 环境要求
+## 环境要求
 
 - Python 3.11+
 - Node.js 18+
-- PostgreSQL 15+ (可选，启用 RAG/Memory 时需要)
+- Docker Desktop：计算 NDVI 时需要
+- PostgreSQL 15+：仅在启用 RAG/Memory 数据库能力时需要
 
-### 安装
+## 后端启动
 
-```bash
-# 后端
-cd backend
-pip install -e ".[dev]"
-cp .env.example .env
-# 编辑 .env 填入 API Key
+推荐在项目根目录运行，后端固定使用 3000 端口：
 
-# 前端
-cd ../frontend
-npm install
-```
-
-### 启动
-
-```bash
-# 后端 (端口 3000)
-cd backend
-uvicorn app.main:app --host 0.0.0.0 --port 3000 --reload
-
-# 前端 (端口 5173，自动代理 /api 到后端)
-cd frontend
-npm run dev
-```
-
-### 使用 Conda
-
-```bash
+```powershell
 conda activate chatbot
-cd backend
-uvicorn app.main:app --host 0.0.0.0 --port 3000 --reload
+python -m uvicorn app.main:app --app-dir backend --host 0.0.0.0 --port 3000 --reload --reload-exclude storage/* --reload-exclude storage/**/*
 ```
 
-## 关键配置 (.env)
+也可以进入 `backend` 后运行：
+
+```powershell
+conda activate chatbot
+python -m uvicorn app.main:app --host 0.0.0.0 --port 3000 --reload
+```
+
+说明：这里的 Conda 环境名仍可继续使用原来的 `chatbot`，它只是本机环境名称，不影响项目对外名称。
+
+## 前端启动
+
+```powershell
+npm --prefix frontend install
+npm --prefix frontend run dev
+```
+
+前端默认 Vite 端口为 `5173`。
+
+## NDVI Docker MCP 工具
+
+构建镜像：
+
+```powershell
+docker build -t ndvi-mcp:0.1.0 docker/ndvi
+```
+
+关键配置：
 
 ```env
-# LLM 主模型
+NDVI_MCP_IMAGE=ndvi-mcp:0.1.0
+NDVI_MCP_USE_DOCKER=true
+NDVI_MCP_ALLOW_LOCAL_FALLBACK=true
+NDVI_MCP_MEMORY_LIMIT=2g
+NDVI_MCP_CPUS=2
+NDVI_MCP_NETWORK=none
+```
+
+生产环境建议：
+
+```env
+NDVI_MCP_ALLOW_LOCAL_FALLBACK=false
+```
+
+这样 Docker MCP 失败时会明确报错，不会静默回退到后端本地 Python 环境。
+
+## 关键环境变量
+
+```env
 AI_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 AI_API_KEY=your_key
 AI_DEFAULT_MODEL=qwen3.7-max
 AI_THINKING_BUDGET=1024
 
-# 联网搜索
 TAVILY_API_KEY=your_key
 AGENT_PLANNING_MODEL=qwen3.6-flash
 
-# 数据库 (启用 RAG/Memory)
-DATABASE_ENABLED=true
+DATABASE_ENABLED=false
 DATABASE_URL=postgresql://user:pass@localhost:5432/chatbot
 
-# 嵌入 & 重排
-EMBEDDING_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
-EMBEDDING_MODEL=text-embedding-v4
-RERANK_MODEL=gte-rerank-v2
+IMAGERY_UPLOAD_DIR=storage/imagery
+IMAGERY_MAX_FILE_BYTES=500000000
+IMAGERY_WORKING_MAX_DIMENSION=4096
+IMAGERY_PREVIEW_MAX_DIMENSION=2048
 ```
 
-## 项目结构
+`DATABASE_URL` 中的 `chatbot` 可以只是本地数据库名；如需更名，需要同步迁移数据库 schema 与连接配置。
 
-```
-├── frontend/                  React 前端
-│   └── src/app/
-│       ├── components/        UI 组件
-│       ├── hooks/             状态管理
-│       └── lib/               API 客户端
-├── backend/                   FastAPI 后端
-│   └── app/
-│       ├── api/routes/        API 端点
-│       ├── lib/ai/
-│       │   ├── router.py      请求路由（短链路/完整管线）
-│       │   ├── ai_service.py  AI 服务编排
-│       │   ├── agents/        Agent Runtime + Web Search
-│       │   ├── context/       上下文组装 + 预算管理
-│       │   ├── prompting/     Jinja2 模板化提示词
-│       │   ├── rag/           RAG 检索 + MMR
-│       │   ├── embedding/     向量嵌入服务
-│       │   └── rerank.py      重排服务
-│       ├── lib/db/            数据库 + 向量检索
-│       ├── lib/documents/     文档解析 + 分块
-│       └── lib/auth/          认证
-└── tests/                     测试套件
-```
-
-## API 端点
+## 常用接口
 
 | 方法 | 路径 | 说明 |
-|------|------|------|
-| POST | `/api/chat` | 聊天（支持 stream: true/false） |
-| GET | `/api/conversations` | 对话列表 |
-| POST | `/api/documents/upload` | 上传文档 |
-| GET | `/api/memories` | 用户记忆 |
-| GET | `/api/health` | 健康检查 |
+| --- | --- | --- |
+| POST | `/api/chat` | 对话，支持 `stream: true/false` |
+| GET | `/api/config` | 前端运行配置 |
+| GET | `/api/health` | 后端健康检查与关键运行配置状态 |
+| POST | `/api/imagery/upload` | 上传 GeoTIFF |
+| GET | `/api/imagery` | 影像列表 |
+| GET | `/api/imagery/{imagery_id}` | 影像元数据 |
+| DELETE | `/api/imagery/{imagery_id}` | 删除影像及结果 |
+| POST | `/api/imagery/cleanup` | 清理过期影像残留目录 |
+| GET | `/api/imagery/{imagery_id}/results/{filename}` | 获取预览图或 NDVI 结果图 |
 
-## 性能优化设计
+## 验证命令
 
-1. **请求路由分流** — 简单消息跳过 RAG/Memory/Agent，直接 LLM 回答
-2. **联网搜索决策** — 规则优先 → 缓存 → 轻量模型(thinking=off, max_tokens=3) → 大模型兜底
-3. **Thinking Budget** — 限制主模型内部推理 token 数，减少等待时间
-4. **搜索结果 Rerank** — 提升注入 LLM 的搜索内容相关性
-5. **决策缓存 + 结果缓存** — 相同/相似问题不重复调用模型和搜索 API
+```powershell
+python -m compileall -q backend/app docker/ndvi
+python -m pytest backend/tests -q
+npm --prefix frontend run build
+```
 
-## License
-
-MIT
+当前 `MapPanel` 构建 chunk 较大主要来自 `maplibre-gl`。它已经被拆到独立 chunk；如果后续首屏性能成为问题，再进一步做地图区域按需加载。

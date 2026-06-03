@@ -12,7 +12,7 @@ def render_prompt_context(
     messages: list[ChatMessage],
     profile: str = DEFAULT_PROMPT_PROFILE,
     language: str = "zh-CN",
-    assistant_name: str = "Chatbot AI Assistant",
+    assistant_name: str = "Agent-RS Assistant",
     current_date: date | None = None,
     enable_dynamic_modules: bool = True,
     include_reasoning_boundary: bool = True,
@@ -64,4 +64,3 @@ def render_prompt_context(
         used_chars=len(content),
         profile=profile,
     )
-

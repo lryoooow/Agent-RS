@@ -21,11 +21,19 @@ export function loadConfig(): StoredConfig {
 }
 
 export function saveConfig(config: StoredConfig) {
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
+  try {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
+  } catch (err) {
+    console.warn("Failed to save local config", err);
+  }
 }
 
 export function clearStoredConfig() {
-  window.localStorage.removeItem(STORAGE_KEY);
+  try {
+    window.localStorage.removeItem(STORAGE_KEY);
+  } catch (err) {
+    console.warn("Failed to clear local config", err);
+  }
 }
 
 export function getConfigEndpoint(chatEndpoint: string) {

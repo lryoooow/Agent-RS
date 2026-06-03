@@ -12,6 +12,7 @@ from app.shared.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
+MEMORY_JUDGE_INPUT_MAX_CHARS = 3000
 
 MEMORY_JUDGE_PROMPT = """你负责判断对话片段是否值得长期记忆。
 只记录用户稳定偏好、长期事实、项目约束、反复需要遵守的工作方式。
@@ -57,6 +58,9 @@ async def maybe_store_memory(
     if pool is None:
         return
 
+    clipped_user_content = user_content[:MEMORY_JUDGE_INPUT_MAX_CHARS]
+    clipped_assistant_content = assistant_content[:MEMORY_JUDGE_INPUT_MAX_CHARS]
+
     try:
         config = resolve_ai_config(request_model=settings.memory_judge_model or None)
         client = create_chat_client(config)
@@ -68,7 +72,7 @@ async def maybe_store_memory(
                     "role": "user",
                     "content": (
                         "用户消息：\n"
-                        f"{user_content}\n\n助手回复：\n{assistant_content[:3000]}"
+                        f"{clipped_user_content}\n\n助手回复：\n{clipped_assistant_content}"
                     ),
                 },
             ],

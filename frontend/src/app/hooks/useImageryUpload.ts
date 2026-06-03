@@ -9,6 +9,11 @@ export type ImageryMeta = {
   width: number;
   height: number;
   band_count: number;
+  preview_url?: string | null;
+  working_width?: number;
+  working_height?: number;
+  compressed?: boolean;
+  compression_ratio?: number | null;
 };
 
 export function useImageryUpload(endpoint: string) {

@@ -9,3 +9,5 @@ __pycache__/
 *.pyc
 *.egg-info/
 backend/storage/
+/storage/
+~$*.docx

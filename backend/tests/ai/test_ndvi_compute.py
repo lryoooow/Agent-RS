@@ -70,3 +70,40 @@ def test_compute_ndvi_script_writes_raster_preview_and_stats(tmp_path: Path) -> 
         data[3].astype(np.float32) + data[2].astype(np.float32)
     )
     np.testing.assert_allclose(ndvi, expected)
+
+
+def test_compute_ndvi_rejects_zero_band_index(tmp_path: Path) -> None:
+    input_path = tmp_path / "input.tif"
+    output_dir = tmp_path / "output"
+    script_path = Path(__file__).resolve().parents[3] / "docker" / "ndvi" / "compute_ndvi.py"
+
+    data = np.ones((4, 2, 2), dtype=np.uint16)
+    with rasterio.open(
+        input_path,
+        "w",
+        driver="GTiff",
+        height=2,
+        width=2,
+        count=4,
+        dtype="uint16",
+        transform=from_origin(0, 2, 1, 1),
+    ) as dst:
+        dst.write(data)
+
+    env = {
+        **os.environ,
+        "INPUT_PATH": str(input_path),
+        "OUTPUT_DIR": str(output_dir),
+        "RED_BAND": "0",
+        "NIR_BAND": "4",
+    }
+    result = subprocess.run(
+        [sys.executable, str(script_path)],
+        capture_output=True,
+        env=env,
+        text=True,
+        timeout=30,
+    )
+
+    assert result.returncode == 1
+    assert "1-based positive" in result.stderr

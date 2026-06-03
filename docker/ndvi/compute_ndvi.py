@@ -1,9 +1,7 @@
-"""NDVI calculation container entry point.
+"""NDVI calculation module.
 
-Reads a multispectral GeoTIFF, computes NDVI, outputs:
-  /data/output/ndvi.tif          - float32 NDVI raster
-  /data/output/ndvi_colored.png  - RGBA colorized preview
-  /data/output/stats.json        - statistics
+Core function: compute(input_path, output_dir, red_band, nir_band) -> dict
+Also runnable standalone via environment variables for legacy compatibility.
 """
 
 import json
@@ -15,43 +13,40 @@ import numpy as np
 import rasterio
 
 
-def main():
-    input_path = Path(os.environ.get("INPUT_PATH", "/data/input.tif"))
-    output_dir = Path(os.environ.get("OUTPUT_DIR", "/data/output"))
-    output_dir.mkdir(parents=True, exist_ok=True)
+def compute(input_path: str, output_dir: str, red_band: int = 3, nir_band: int = 4) -> dict:
+    """Compute NDVI from a multispectral GeoTIFF.
 
-    red_band = int(os.environ.get("RED_BAND", "3"))
-    nir_band = int(os.environ.get("NIR_BAND", "4"))
+    Returns stats dict with min, max, mean, std, nodata_pct.
+    Outputs: ndvi.tif, ndvi_colored.png, stats.json in output_dir.
+    """
+    inp = Path(input_path)
+    out = Path(output_dir)
+    out.mkdir(parents=True, exist_ok=True)
 
-    if not input_path.exists():
-        print("ERROR: /data/input.tif not found", file=sys.stderr)
-        sys.exit(1)
+    if not inp.exists():
+        raise FileNotFoundError(f"Input file not found: {input_path}")
 
-    with rasterio.open(input_path) as src:
-        if red_band > src.count or nir_band > src.count:
-            print(
-                f"ERROR: requested bands ({red_band}, {nir_band}) "
-                f"exceed available bands ({src.count})",
-                file=sys.stderr,
+    with rasterio.open(inp) as src:
+        if red_band < 1 or nir_band < 1:
+            raise ValueError(
+                f"Band indexes must be 1-based positive integers: red={red_band}, nir={nir_band}"
             )
-            sys.exit(1)
-
+        if red_band > src.count or nir_band > src.count:
+            raise ValueError(
+                f"Requested bands ({red_band}, {nir_band}) exceed available bands ({src.count})"
+            )
         red = src.read(red_band).astype(np.float32)
         nir = src.read(nir_band).astype(np.float32)
         profile = src.profile.copy()
-        bounds = src.bounds
 
     denominator = nir + red
     with np.errstate(divide="ignore", invalid="ignore"):
         ndvi = np.where(denominator == 0, np.nan, (nir - red) / denominator)
 
-    # Write NDVI GeoTIFF
     profile.update(dtype="float32", count=1, nodata=np.nan)
-    ndvi_path = output_dir / "ndvi.tif"
-    with rasterio.open(ndvi_path, "w", **profile) as dst:
+    with rasterio.open(out / "ndvi.tif", "w", **profile) as dst:
         dst.write(ndvi, 1)
 
-    # Compute statistics
     valid = ndvi[~np.isnan(ndvi)]
     total_pixels = ndvi.size
     nodata_count = total_pixels - valid.size
@@ -62,12 +57,10 @@ def main():
         "std": float(np.std(valid)) if valid.size > 0 else None,
         "nodata_pct": round(nodata_count / total_pixels * 100, 2),
     }
-    (output_dir / "stats.json").write_text(json.dumps(stats), encoding="utf-8")
+    (out / "stats.json").write_text(json.dumps(stats), encoding="utf-8")
 
-    # Generate colorized PNG preview
-    _write_colored_png(ndvi, output_dir / "ndvi_colored.png")
-
-    print(f"NDVI computed: mean={stats['mean']:.4f}, range=[{stats['min']:.4f}, {stats['max']:.4f}]")
+    _write_colored_png(ndvi, out / "ndvi_colored.png")
+    return stats
 
 
 def _write_colored_png(ndvi: np.ndarray, out_path: Path):
@@ -113,4 +106,16 @@ def _write_colored_png(ndvi: np.ndarray, out_path: Path):
 
 
 if __name__ == "__main__":
-    main()
+    input_path = os.environ.get("INPUT_PATH", "/data/input.tif")
+    output_dir = os.environ.get("OUTPUT_DIR", "/data/output")
+    red_band = int(os.environ.get("RED_BAND", "3"))
+    nir_band = int(os.environ.get("NIR_BAND", "4"))
+    try:
+        result = compute(input_path, output_dir, red_band, nir_band)
+        print(
+            f"NDVI computed: mean={result['mean']:.4f}, "
+            f"range=[{result['min']:.4f}, {result['max']:.4f}]"
+        )
+    except Exception as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        sys.exit(1)

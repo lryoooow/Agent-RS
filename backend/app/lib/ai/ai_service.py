@@ -60,6 +60,7 @@ class AIService:
                 )
                 final_context = provider_context
                 agent_trace = None
+                geospatial_result = None
             else:
                 runtime = AgentRuntime()
                 agent_result = await runtime.complete(
@@ -72,6 +73,7 @@ class AIService:
                 response = agent_result.response
                 final_context = agent_result.final_context
                 agent_trace = self._agent_trace_payload(agent_result.trace)
+                geospatial_result = agent_result.geospatial_result
         except Exception as exc:
             await mark_assistant_failed(persistence, exc)
             raise map_provider_error(exc) from exc
@@ -82,6 +84,7 @@ class AIService:
         result.retrieved_chunks = final_context.retrieved_chunks
         result.rag_trace = final_context.rag_trace
         result.agent_trace = agent_trace
+        result.geospatial_result = geospatial_result
         persistence.assistant_message_id = await save_assistant_response(
             persistence,
             content=result.content,

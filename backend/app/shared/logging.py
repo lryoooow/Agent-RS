@@ -6,6 +6,15 @@ from typing import Any
 
 from app.shared.settings import get_settings
 
+SENSITIVE_KEY_PARTS = (
+    "key",
+    "token",
+    "secret",
+    "password",
+    "authorization",
+    "cookie",
+)
+
 
 def configure_logging() -> None:
     settings = get_settings()
@@ -29,9 +38,16 @@ def log_event(logger: logging.Logger, stage: str, **fields: Any) -> None:
 
 
 def _format_field(key: str, value: Any) -> str:
+    if _is_sensitive_key(key):
+        value = "***"
     if isinstance(value, float):
         value = round(value, 4)
     text = str(value).replace("\n", "\\n")
     if not text or any(char.isspace() for char in text):
         text = '"' + text.replace('"', '\\"') + '"'
     return f"{key}={text}"
+
+
+def _is_sensitive_key(key: str) -> bool:
+    lowered = key.lower()
+    return any(part in lowered for part in SENSITIVE_KEY_PARTS)

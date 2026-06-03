@@ -34,7 +34,7 @@ async def lifespan(_: FastAPI):
 def create_app() -> FastAPI:
     settings = get_settings()
     configure_logging()
-    app = FastAPI(title="Chatbot API", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="Agent-RS API", version="0.1.0", lifespan=lifespan)
 
     app.add_middleware(
         CORSMiddleware,
@@ -48,11 +48,33 @@ def create_app() -> FastAPI:
 
     @app.middleware("http")
     async def bind_current_user(request, call_next):
+        content_type = request.headers.get("content-type", "")
+        content_length = request.headers.get("content-length")
+        try:
+            request_size = int(content_length) if content_length else 0
+        except ValueError:
+            request_size = 0
+        if (
+            request_size
+            and "multipart/form-data" not in content_type
+            and request_size > settings.max_json_body_bytes
+        ):
+            return JSONResponse(
+                status_code=413,
+                content={"error": {"code": "REQUEST_TOO_LARGE", "message": "Request body is too large."}},
+            )
         session_token = request.cookies.get(settings.auth_session_cookie_name)
         user = await get_session_user(session_token)
         context_token = set_current_user_id(user["id"] if user else settings.default_user_id)
         try:
-            return await call_next(request)
+            response = await call_next(request)
+            response.headers.setdefault("X-Content-Type-Options", "nosniff")
+            response.headers.setdefault("X-Frame-Options", "DENY")
+            response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+            response.headers.setdefault("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+            if settings.auth_cookie_secure:
+                response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+            return response
         finally:
             reset_current_user_id(context_token)
 

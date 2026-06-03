@@ -1,11 +1,11 @@
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import { ChatComposer } from "./components/ChatComposer";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Conversation } from "./components/conversation/Conversation";
 import { AppHeader } from "./components/AppHeader";
 import { AuthPanel } from "./components/auth/AuthPanel";
 import { HistoryPanel } from "./components/history/HistoryPanel";
 import { KnowledgePanel } from "./components/knowledge/KnowledgePanel";
-import { MapPanel } from "./components/map/MapPanel";
 import type { GeospatialResult } from "./types";
 import { MemoryPanel } from "./components/memory/MemoryPanel";
 import { SettingsPanel } from "./components/settings/SettingsPanel";
@@ -14,6 +14,10 @@ import { useAutosizeTextarea } from "./hooks/useAutosizeTextarea";
 import { useAuth } from "./hooks/useAuth";
 import { useChatController } from "./hooks/useChatController";
 import { useSettings } from "./hooks/useSettings";
+
+const MapPanel = lazy(() =>
+  import("./components/map/MapPanel").then((module) => ({ default: module.MapPanel })),
+);
 
 export default function App() {
   const settings = useSettings();
@@ -122,31 +126,43 @@ export default function App() {
 
       <div className="flex flex-1 min-h-0">
         <div className="flex flex-col min-w-0" style={{ flex: '0 0 40%' }}>
-          <Conversation
-            turns={chat.turns}
-            loading={chat.loading}
-            activeStream={chat.activeStream}
-            scrollRef={scrollRef}
-            onPickSuggestion={chat.sendMessage}
-          />
+          <ErrorBoundary>
+            <Conversation
+              turns={chat.turns}
+              loading={chat.loading}
+              activeStream={chat.activeStream}
+              scrollRef={scrollRef}
+              onPickSuggestion={chat.sendMessage}
+            />
 
-          <ChatComposer
-            endpoint={settings.endpoint}
-            input={chat.input}
-            loading={chat.loading}
-            textareaRef={textareaRef}
-            onInputChange={chat.setInput}
-            onSubmit={chat.handleSubmit}
-            onKeyDown={chat.handleKeyDown}
-            onImageryUploaded={chat.addSystemNote}
-          />
+            <ChatComposer
+              endpoint={settings.endpoint}
+              input={chat.input}
+              loading={chat.loading}
+              textareaRef={textareaRef}
+              onInputChange={chat.setInput}
+              onSubmit={chat.handleSubmit}
+              onKeyDown={chat.handleKeyDown}
+              onImageryUploaded={(content, result) => {
+                if (result) {
+                  chat.addGeospatialResult(content, result);
+                  return;
+                }
+                chat.addSystemNote(content);
+              }}
+            />
+          </ErrorBoundary>
         </div>
 
         <div className="min-w-0" style={{ flex: '0 0 60%' }}>
-          <MapPanel
-            endpoint={settings.endpoint}
-            geospatialResults={geospatialResults}
-          />
+          <ErrorBoundary>
+            <Suspense fallback={<div className="h-full bg-[#1a1a2e] p-4 text-sm text-[#a0a0c0]">地图加载中...</div>}>
+              <MapPanel
+                endpoint={settings.endpoint}
+                geospatialResults={geospatialResults}
+              />
+            </Suspense>
+          </ErrorBoundary>
         </div>
       </div>
     </div>

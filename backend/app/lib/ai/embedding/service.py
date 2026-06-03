@@ -46,7 +46,7 @@ class EmbeddingService:
         vectors: list[list[float]] = []
         batch_size = max(1, self.settings.embedding_batch_size)
         for cursor in range(0, len(cleaned), batch_size):
-            vectors.extend(await self._embed_batch_once(cleaned[cursor : cursor + batch_size]))
+            vectors.extend(await self._embed_batch_with_retry(cleaned[cursor : cursor + batch_size]))
         log_event(
             logger,
             "embedding.batch",
@@ -57,6 +57,29 @@ class EmbeddingService:
             elapsed_ms=int((time.perf_counter() - started) * 1000),
         )
         return vectors
+
+    async def _embed_batch_with_retry(self, texts: list[str]) -> list[list[float]]:
+        max_retries = max(0, self.settings.embedding_max_retries)
+        delay = max(0.0, self.settings.embedding_retry_base_delay_seconds)
+        last_exc: Exception | None = None
+        for attempt in range(max_retries + 1):
+            try:
+                return await self._embed_batch_once(texts)
+            except EmbeddingUnavailableError:
+                raise
+            except Exception as exc:
+                last_exc = exc
+                if attempt >= max_retries:
+                    break
+                sleep_seconds = delay * (2 ** attempt)
+                logger.warning(
+                    "Embedding batch failed; retrying.",
+                    extra={"attempt": attempt + 1, "sleep_seconds": sleep_seconds},
+                    exc_info=True,
+                )
+                if sleep_seconds:
+                    await asyncio.sleep(sleep_seconds)
+        raise EmbeddingUnavailableError(f"Embedding batch failed after retries: {last_exc}") from last_exc
 
     async def _embed_batch_once(self, texts: list[str]) -> list[list[float]]:
         async with self._semaphore:

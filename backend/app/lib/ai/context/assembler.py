@@ -1,4 +1,4 @@
-from app.lib.ai.context.budget import trim_to_budget
+from app.lib.ai.context.budget import estimate_tokens, trim_to_budget
 from app.lib.ai.context.history import build_recent_dialogue_messages
 from app.lib.ai.context.types import ContextAssembly, ContextBlock
 from app.schemas.chat import ChatMessage
@@ -28,8 +28,8 @@ def assemble_context(
     payload = [{"role": "system", "content": system_prompt.strip()}]
     included_blocks = system_prompt_blocks or ["system"]
     dropped_blocks: list[str] = list(dropped_prompt_blocks or [])
-    used_chars = len(system_prompt.strip())
-    remaining_chars = _remaining(max_total_chars, used_chars)
+    used_tokens = estimate_tokens(system_prompt.strip())
+    remaining_tokens = _remaining(max_total_chars, used_tokens)
 
     for block in sorted(
         _optional_blocks(
@@ -52,17 +52,17 @@ def assemble_context(
         if not content:
             continue
 
-        content = trim_to_budget(content, remaining_chars)
+        content = trim_to_budget(content, remaining_tokens)
         if not content:
             dropped_blocks.append(block.name)
             continue
 
         payload.append({"role": block.role, "content": content})
         included_blocks.append(block.name)
-        used_chars += len(content)
-        remaining_chars = _remaining(max_total_chars, used_chars)
+        used_tokens += estimate_tokens(content)
+        remaining_tokens = _remaining(max_total_chars, used_tokens)
 
-    recent_budget = _recent_budget(max_recent_chars, remaining_chars)
+    recent_budget = _recent_budget(max_recent_chars, remaining_tokens)
     recent_messages, recent_truncated = build_recent_dialogue_messages(
         messages,
         max_messages=max_recent_messages,
@@ -71,7 +71,7 @@ def assemble_context(
     if recent_messages:
         payload.extend(recent_messages)
         included_blocks.append("recent_dialogue")
-        used_chars += sum(len(message["content"]) for message in recent_messages)
+        used_tokens += sum(estimate_tokens(message["content"]) for message in recent_messages)
     if recent_truncated:
         dropped_blocks.append("recent_dialogue:truncated")
 
@@ -79,7 +79,7 @@ def assemble_context(
         messages=payload,
         included_blocks=included_blocks,
         dropped_blocks=dropped_blocks,
-        used_chars=used_chars,
+        used_chars=used_tokens,
     )
 
 

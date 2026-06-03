@@ -43,10 +43,10 @@ async def test_build_provider_messages_uses_settings_boundaries(monkeypatch: pyt
 
 
 @pytest.mark.asyncio
-async def test_build_provider_messages_uses_context_char_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_build_provider_messages_uses_context_token_budget(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AI_CONTEXT_MAX_TOTAL_CHARS", "10000")
     monkeypatch.setenv("AI_CONTEXT_MAX_RECENT_MESSAGES", "10")
-    monkeypatch.setenv("AI_CONTEXT_MAX_RECENT_CHARS", str(len("middle") + len("latest")))
+    monkeypatch.setenv("AI_CONTEXT_MAX_RECENT_CHARS", "4")
     get_settings.cache_clear()
 
     request = ChatRequest(

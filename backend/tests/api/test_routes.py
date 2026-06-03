@@ -10,13 +10,19 @@ def make_client() -> TestClient:
     return TestClient(create_app())
 
 
-def test_health_route() -> None:
+def test_health_route(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("IMAGERY_UPLOAD_DIR", str(tmp_path / "imagery"))
     client = make_client()
 
     response = client.get("/api/health")
 
     assert response.status_code == 200
-    assert response.json() == {"ok": True}
+    body = response.json()
+    assert body["ok"] is True
+    assert body["storage_writable"] is True
+    assert "api_key_configured" in body
+    assert "docker_available" in body
+    assert body["ndvi_mcp"]["image"] == "ndvi-mcp:0.1.0"
 
 
 def test_config_route_does_not_leak_api_key(monkeypatch) -> None:
