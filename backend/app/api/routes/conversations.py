@@ -5,15 +5,15 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from app.lib.auth import get_current_user_id
-from app.lib.db.pool import fetch_optional_pool
-from app.lib.db.repositories.conversation import (
+from app.auth import get_current_user_id
+from app.db.pool import fetch_optional_pool
+from app.db.repositories.conversation import (
     delete_conversation,
     get_conversation,
     list_conversations,
     update_conversation_title,
 )
-from app.lib.db.repositories.message import list_conversation_messages
+from app.db.repositories.message import list_conversation_messages
 
 router = APIRouter(tags=["conversations"])
 

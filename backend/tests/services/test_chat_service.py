@@ -4,10 +4,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.lib.ai.persistence import PersistenceContext
+from app.agent.persistence import PersistenceContext
 from app.schemas.chat import ChatRequest, ProviderConfig
 from app.services.chat_service import ChatService
-from app.shared.settings import get_settings
+from app.core.settings import get_settings
 
 
 class FakeCompletions:
@@ -67,7 +67,7 @@ async def test_chat_service_uses_ai_service_boundary(monkeypatch: pytest.MonkeyP
     monkeypatch.setenv("ALLOW_CLIENT_PROVIDER_CONFIG", "true")
     monkeypatch.setenv("TAVILY_API_KEY", "")
     get_settings.cache_clear()
-    monkeypatch.setattr("app.lib.ai.ai_service.create_chat_client", lambda _: FakeClient())
+    monkeypatch.setattr("app.agent.ai_service.create_chat_client", lambda _: FakeClient())
 
     service = ChatService()
     request = ChatRequest(
@@ -94,7 +94,7 @@ async def test_chat_service_streams_sse_events(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setenv("ALLOW_CLIENT_PROVIDER_CONFIG", "true")
     monkeypatch.setenv("TAVILY_API_KEY", "")
     get_settings.cache_clear()
-    monkeypatch.setattr("app.lib.ai.ai_service.create_chat_client", lambda _: FakeClient())
+    monkeypatch.setattr("app.agent.ai_service.create_chat_client", lambda _: FakeClient())
 
     service = ChatService()
     request = ChatRequest(
@@ -128,7 +128,7 @@ async def test_chat_service_streams_initial_status_before_provider_error(
     monkeypatch.setenv("ALLOW_CLIENT_PROVIDER_CONFIG", "true")
     monkeypatch.setenv("TAVILY_API_KEY", "")
     get_settings.cache_clear()
-    monkeypatch.setattr("app.lib.ai.ai_service.create_chat_client", lambda _: FailingStreamClient())
+    monkeypatch.setattr("app.agent.ai_service.create_chat_client", lambda _: FailingStreamClient())
 
     service = ChatService()
     request = ChatRequest(
@@ -177,10 +177,10 @@ async def test_chat_service_stream_meta_includes_persistence_ids(
     monkeypatch.setenv("ALLOW_CLIENT_PROVIDER_CONFIG", "true")
     monkeypatch.setenv("TAVILY_API_KEY", "")
     get_settings.cache_clear()
-    monkeypatch.setattr("app.lib.ai.ai_service.create_chat_client", lambda _: FakeClient())
-    monkeypatch.setattr("app.lib.ai.ai_service.prepare_persistence", fake_prepare_persistence)
-    monkeypatch.setattr("app.lib.ai.ai_service.save_streamed_assistant", fake_save_streamed_assistant)
-    monkeypatch.setattr("app.lib.ai.ai_service.schedule_after_response", lambda *_, **__: None)
+    monkeypatch.setattr("app.agent.ai_service.create_chat_client", lambda _: FakeClient())
+    monkeypatch.setattr("app.agent.ai_service.prepare_persistence", fake_prepare_persistence)
+    monkeypatch.setattr("app.agent.ai_service.save_streamed_assistant", fake_save_streamed_assistant)
+    monkeypatch.setattr("app.agent.ai_service.schedule_after_response", lambda *_, **__: None)
 
     service = ChatService()
     request = ChatRequest(
@@ -223,9 +223,9 @@ async def test_chat_service_marks_streaming_message_failed_on_client_abort(
     monkeypatch.setenv("ALLOW_CLIENT_PROVIDER_CONFIG", "true")
     monkeypatch.setenv("TAVILY_API_KEY", "")
     get_settings.cache_clear()
-    monkeypatch.setattr("app.lib.ai.ai_service.create_chat_client", lambda _: FakeClient())
-    monkeypatch.setattr("app.lib.ai.ai_service.prepare_persistence", fake_prepare_persistence)
-    monkeypatch.setattr("app.lib.ai.ai_service.mark_assistant_failed", fake_mark_assistant_failed)
+    monkeypatch.setattr("app.agent.ai_service.create_chat_client", lambda _: FakeClient())
+    monkeypatch.setattr("app.agent.ai_service.prepare_persistence", fake_prepare_persistence)
+    monkeypatch.setattr("app.agent.ai_service.mark_assistant_failed", fake_mark_assistant_failed)
 
     service = ChatService()
     request = ChatRequest(

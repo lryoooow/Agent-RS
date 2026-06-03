@@ -38,8 +38,8 @@ agent-rs-backend = "app.server:main"
 include = ["app*"]
 
 [tool.setuptools.package-data]
-"app.lib.ai.prompting.templates" = ["*.jinja", "README.md"]
-"app.lib.ai.agents.tools.web_search" = ["*.jinja"]
+"app.agent.prompting.templates" = ["*.jinja", "README.md"]
+"app.agent.tools.web_search" = ["*.jinja"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

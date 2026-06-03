@@ -1,8 +1,8 @@
 import pytest
 
-from app.lib.auth.current_user import get_current_user_id, reset_current_user_id, set_current_user_id
-from app.lib.auth.security import hash_password, hash_session_token, verify_password
-from app.shared.settings import get_settings
+from app.auth.current_user import get_current_user_id, reset_current_user_id, set_current_user_id
+from app.auth.security import hash_password, hash_session_token, verify_password
+from app.core.settings import get_settings
 
 
 @pytest.mark.asyncio

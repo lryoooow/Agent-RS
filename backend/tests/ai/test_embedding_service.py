@@ -1,7 +1,7 @@
 import pytest
 
-from app.lib.ai.embedding.service import EmbeddingService
-from app.shared.settings import get_settings
+from app.agent.embedding.service import EmbeddingService
+from app.core.settings import get_settings
 
 
 @pytest.mark.asyncio
@@ -35,7 +35,7 @@ async def test_embedding_service_batches_requests(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setenv("EMBEDDING_DIMENSIONS", "3")
     monkeypatch.setenv("EMBEDDING_BATCH_SIZE", "10")
     get_settings.cache_clear()
-    monkeypatch.setattr("app.lib.ai.embedding.service.create_embedding_client", lambda _: FakeClient())
+    monkeypatch.setattr("app.agent.embedding.service.create_embedding_client", lambda _: FakeClient())
 
     try:
         vectors = await EmbeddingService().embed_batch([f"text-{index}" for index in range(25)])

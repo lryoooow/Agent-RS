@@ -1,4 +1,4 @@
-from app.lib.db.sanitize import sanitize_json, sanitize_text
+from app.db.sanitize import sanitize_json, sanitize_text
 
 
 def test_sanitize_text_removes_nul_and_control_characters() -> None:

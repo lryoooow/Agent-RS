@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 
-from app.lib.ai.config import ResolvedAIConfig
-from app.lib.ai.normalizer import normalize_chat_response
+from app.agent.config import ResolvedAIConfig
+from app.agent.normalizer import normalize_chat_response
 
 
 def test_normalize_openai_compatible_response() -> None:

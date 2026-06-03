@@ -1,4 +1,4 @@
-from app.lib.ai.router import RequestRoute, classify_request_route
+from app.agent.router import RequestRoute, classify_request_route
 from app.schemas.chat import ChatRequest
 
 

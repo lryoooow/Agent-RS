@@ -6,14 +6,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api.routes import router as api_router
-from app.lib.ai.embedding.service import get_embedding_service
-from app.lib.ai.errors import AIError
-from app.lib.auth import reset_current_user_id, set_current_user_id
-from app.lib.auth.session import get_session_user
-from app.lib.db.pool import close_db_pool, init_db_pool
-from app.lib.documents.task_registry import recover_document_jobs, shutdown_tasks
-from app.shared.logging import configure_logging
-from app.shared.settings import get_settings
+from app.agent.embedding.service import get_embedding_service
+from app.agent.errors import AIError
+from app.auth import reset_current_user_id, set_current_user_id
+from app.auth.session import get_session_user
+from app.db.pool import close_db_pool, init_db_pool
+from app.documents.task_registry import recover_document_jobs, shutdown_tasks
+from app.core.logging import configure_logging
+from app.core.settings import get_settings
 
 
 @asynccontextmanager

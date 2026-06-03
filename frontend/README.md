@@ -1,7 +1,7 @@
 
-# Chatbot Frontend
+# Agent-RS Frontend
 
-Vite React frontend for the Python chatbot backend.
+Vite React frontend for the Agent-RS backend.
 
 ## Running the code
 

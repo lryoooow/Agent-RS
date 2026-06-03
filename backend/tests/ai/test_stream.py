@@ -2,8 +2,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.lib.ai.config import ResolvedAIConfig
-from app.lib.ai.stream import normalize_stream_chunk, stream_initial_sse_events, stream_sse_events
+from app.agent.config import ResolvedAIConfig
+from app.agent.stream import normalize_stream_chunk, stream_initial_sse_events, stream_sse_events
 
 
 def make_config() -> ResolvedAIConfig:

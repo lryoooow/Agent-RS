@@ -2,8 +2,8 @@ import shutil
 
 from fastapi import APIRouter
 
-from app.shared.paths import imagery_root
-from app.shared.settings import get_settings
+from app.core.paths import imagery_root
+from app.core.settings import get_settings
 
 router = APIRouter(tags=["health"])
 

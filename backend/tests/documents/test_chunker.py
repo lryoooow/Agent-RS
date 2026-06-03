@@ -1,4 +1,4 @@
-from app.lib.documents.chunker import chunk_text
+from app.documents.chunker import chunk_text
 
 
 def test_chunk_text_keeps_short_text_as_one_chunk() -> None:

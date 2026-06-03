@@ -5,17 +5,17 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
-from app.lib.auth import get_current_user_id
-from app.lib.auth.security import (
+from app.auth import get_current_user_id
+from app.auth.security import (
     hash_password,
     hash_session_token,
     issue_session_token,
     verify_password,
 )
-from app.lib.db.errors import is_missing_schema_error
-from app.lib.db.pool import fetch_optional_pool
-from app.lib.db.repositories.identity import ensure_default_identity
-from app.lib.db.repositories.auth import (
+from app.db.errors import is_missing_schema_error
+from app.db.pool import fetch_optional_pool
+from app.db.repositories.identity import ensure_default_identity
+from app.db.repositories.auth import (
     create_session,
     create_user,
     delete_session,
@@ -24,7 +24,7 @@ from app.lib.db.repositories.auth import (
     get_user_by_id,
     prune_expired_sessions,
 )
-from app.shared.settings import get_settings
+from app.core.settings import get_settings
 
 router = APIRouter(tags=["auth"])
 

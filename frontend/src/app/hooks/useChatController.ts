@@ -14,7 +14,8 @@ import type {
   GeospatialResult,
 } from "../types";
 
-const CONVERSATION_STORAGE_KEY = "chatbot.conversationId";
+const CONVERSATION_STORAGE_KEY = "agent-rs.conversationId";
+const LEGACY_CONVERSATION_STORAGE_KEY = "chatbot.conversationId";
 
 type ChatControllerSettings = {
   endpoint: string;
@@ -34,7 +35,8 @@ export function useChatController({
   const [loading, setLoading] = useState(false);
   const [activeStream, setActiveStream] = useState(false);
   const [conversationId, setConversationIdState] = useState<string | null>(() =>
-    window.localStorage.getItem(CONVERSATION_STORAGE_KEY),
+    window.localStorage.getItem(CONVERSATION_STORAGE_KEY) ??
+    window.localStorage.getItem(LEGACY_CONVERSATION_STORAGE_KEY),
   );
   const abortRef = useRef<AbortController | null>(null);
 
@@ -48,9 +50,11 @@ export function useChatController({
     setConversationIdState(nextConversationId);
     if (nextConversationId) {
       window.localStorage.setItem(CONVERSATION_STORAGE_KEY, nextConversationId);
+      window.localStorage.removeItem(LEGACY_CONVERSATION_STORAGE_KEY);
       return;
     }
     window.localStorage.removeItem(CONVERSATION_STORAGE_KEY);
+    window.localStorage.removeItem(LEGACY_CONVERSATION_STORAGE_KEY);
   }
 
   async function sendMessage(text: string) {

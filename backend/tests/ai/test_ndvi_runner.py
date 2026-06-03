@@ -4,9 +4,9 @@ import numpy as np
 import pytest
 import rasterio
 
-from app.lib.ai.agents.tools.ndvi.runner import NDVIExecutionError, _handle_docker_failure, run_ndvi
-from app.lib.ai.agents.tools.ndvi.schema import NDVIArguments
-from app.shared.settings import get_settings
+from app.agent.tools.ndvi.runner import NDVIExecutionError, _handle_docker_failure, run_ndvi
+from app.agent.tools.ndvi.schema import NDVIArguments
+from app.core.settings import get_settings
 
 
 def _write_test_tif(path: Path, *, count: int = 4) -> None:
@@ -48,7 +48,7 @@ async def test_ndvi_runner_prefers_working_tif(monkeypatch, tmp_path: Path) -> N
 
     monkeypatch.setenv("IMAGERY_UPLOAD_DIR", str(tmp_path))
     get_settings.cache_clear()
-    monkeypatch.setattr("app.lib.ai.agents.tools.ndvi.runner._run_ndvi_execution", fake_run_ndvi_execution)
+    monkeypatch.setattr("app.agent.tools.ndvi.runner._run_ndvi_execution", fake_run_ndvi_execution)
 
     result = await run_ndvi(NDVIArguments(imagery_id=imagery_id))
 
@@ -72,7 +72,7 @@ async def test_ndvi_runner_rejects_invalid_band_before_execution(monkeypatch, tm
 
     monkeypatch.setenv("IMAGERY_UPLOAD_DIR", str(tmp_path))
     get_settings.cache_clear()
-    monkeypatch.setattr("app.lib.ai.agents.tools.ndvi.runner._run_ndvi_execution", fail_if_called)
+    monkeypatch.setattr("app.agent.tools.ndvi.runner._run_ndvi_execution", fail_if_called)
 
     result = await run_ndvi(
         NDVIArguments.model_construct(imagery_id=imagery_id, red_band=0, nir_band=4, reason="test")

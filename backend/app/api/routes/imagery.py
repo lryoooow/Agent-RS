@@ -15,8 +15,8 @@ from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from app.shared.paths import imagery_root
-from app.shared.settings import get_settings
+from app.core.paths import imagery_root
+from app.core.settings import get_settings
 
 router = APIRouter(prefix="/imagery", tags=["imagery"])
 logger = logging.getLogger(__name__)

@@ -2,8 +2,8 @@ import logging
 
 import pytest
 
-from app.lib.ai.memory_judge import maybe_store_memory
-from app.shared.settings import get_settings
+from app.agent.memory_judge import maybe_store_memory
+from app.core.settings import get_settings
 
 
 @pytest.mark.asyncio
@@ -40,9 +40,9 @@ async def test_memory_judge_non_json_response_logs_warning(
     monkeypatch.setenv("MEMORY_JUDGE_ENABLED", "true")
     monkeypatch.setenv("MEMORY_JUDGE_MIN_USER_CHARS", "1")
     get_settings.cache_clear()
-    monkeypatch.setattr("app.lib.ai.memory_judge.fetch_optional_pool", fake_fetch_optional_pool)
-    monkeypatch.setattr("app.lib.ai.memory_judge.resolve_ai_config", lambda **_: FakeConfig())
-    monkeypatch.setattr("app.lib.ai.memory_judge.create_chat_client", lambda _: FakeClient())
+    monkeypatch.setattr("app.agent.memory_judge.fetch_optional_pool", fake_fetch_optional_pool)
+    monkeypatch.setattr("app.agent.memory_judge.resolve_ai_config", lambda **_: FakeConfig())
+    monkeypatch.setattr("app.agent.memory_judge.create_chat_client", lambda _: FakeClient())
 
     try:
         with caplog.at_level(logging.WARNING):

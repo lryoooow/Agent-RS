@@ -1,6 +1,6 @@
 import pytest
 
-from app.lib.db.repositories.vector_search import search_hybrid_rrf
+from app.db.repositories.vector_search import search_hybrid_rrf
 
 
 class FakeConn:
