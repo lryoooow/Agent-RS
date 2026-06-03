@@ -2,18 +2,20 @@ import type { StoredConfig } from "./types";
 
 export const DEFAULT_ENDPOINT = "/api/chat";
 export const DEFAULT_SYSTEM_PROMPT = "";
-export const STORAGE_KEY = "chatbot.config.v1";
+export const STORAGE_KEY = "agent-rs.config.v1";
+const LEGACY_STORAGE_KEY = "chatbot.config.v1";
 
 export const SUGGESTIONS = [
-  "用三句话解释一下 Transformer 的注意力机制。",
+  "用三句话解释 Transformer 的注意力机制。",
   "帮我写一段关于秋天清晨的散文。",
-  "Node.js 中 EventLoop 的阶段有哪些？",
+  "Node.js 中 Event Loop 的阶段有哪些？",
   "What should I cook with eggs, miso, and rice?",
 ];
 
 export function loadConfig(): StoredConfig {
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
+    const raw =
+      window.localStorage.getItem(STORAGE_KEY) ?? window.localStorage.getItem(LEGACY_STORAGE_KEY);
     return raw ? JSON.parse(raw) : {};
   } catch {
     return {};
@@ -23,6 +25,7 @@ export function loadConfig(): StoredConfig {
 export function saveConfig(config: StoredConfig) {
   try {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
+    window.localStorage.removeItem(LEGACY_STORAGE_KEY);
   } catch (err) {
     console.warn("Failed to save local config", err);
   }
@@ -31,6 +34,7 @@ export function saveConfig(config: StoredConfig) {
 export function clearStoredConfig() {
   try {
     window.localStorage.removeItem(STORAGE_KEY);
+    window.localStorage.removeItem(LEGACY_STORAGE_KEY);
   } catch (err) {
     console.warn("Failed to clear local config", err);
   }

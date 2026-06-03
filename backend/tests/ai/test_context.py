@@ -1,6 +1,6 @@
-from app.lib.ai.context.assembler import assemble_context
-from app.lib.ai.context.history import build_recent_dialogue_messages
-from app.lib.ai.context.summarizer import build_context_summaries
+from app.agent.context.assembler import assemble_context
+from app.agent.context.history import build_recent_dialogue_messages
+from app.agent.context.summarizer import build_context_summaries
 from app.schemas.chat import ChatMessage
 
 

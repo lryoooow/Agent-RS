@@ -2,7 +2,7 @@ from fastapi.testclient import TestClient
 
 from app.api.deps import get_chat_service
 from app.main import create_app
-from app.shared.settings import get_settings
+from app.core.settings import get_settings
 
 
 def make_client() -> TestClient:

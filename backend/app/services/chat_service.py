@@ -1,6 +1,6 @@
 from typing import AsyncIterator
 
-from app.lib.ai.ai_service import AIService
+from app.agent.ai_service import AIService
 from app.schemas.chat import ChatRequest, ChatResponse
 
 

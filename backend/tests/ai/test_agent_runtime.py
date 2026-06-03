@@ -1,14 +1,14 @@
-﻿from types import SimpleNamespace
+from types import SimpleNamespace
 
 import pytest
 
-import app.lib.ai.agents.runtime as runtime_module
-from app.lib.ai.agents.runtime import AgentRuntime
-from app.lib.ai.agents.types import AgentTrace, RuntimeToolCall, ToolRunResult
-from app.lib.ai.config import resolve_ai_config
-from app.lib.ai.request_builder import build_provider_request_context
+import app.agent.runtime as runtime_module
+from app.agent.runtime import AgentRuntime
+from app.agent.types import AgentTrace, RuntimeToolCall, ToolRunResult
+from app.agent.config import resolve_ai_config
+from app.agent.request_builder import build_provider_request_context
 from app.schemas.chat import ChatRequest
-from app.shared.settings import get_settings
+from app.core.settings import get_settings
 
 
 def reset_settings() -> None:
@@ -140,11 +140,11 @@ async def test_agent_runtime_uses_tool_call_and_injects_tool_context(monkeypatch
     monkeypatch.setenv("AI_DEFAULT_MODEL", "test-model")
     monkeypatch.setenv("TAVILY_API_KEY", "test-key")
     reset_settings()
-    from app.lib.ai.agents.tool_registry import RegisteredTool
-    from app.lib.ai.agents.tools.web_search.schema import WEB_SEARCH_TOOL, WebSearchArguments
+    from app.agent.tool_registry import RegisteredTool
+    from app.agent.tools.web_search.schema import WEB_SEARCH_TOOL, WebSearchArguments
 
     monkeypatch.setattr(
-        "app.lib.ai.agents.tool_registry.TOOLS",
+        "app.agent.tool_registry.TOOLS",
         {
             "web_search": RegisteredTool(
                 name="web_search",

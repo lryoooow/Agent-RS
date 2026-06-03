@@ -1,9 +1,9 @@
 import pytest
 
-from app.lib.ai.config import resolve_ai_config
-from app.lib.ai.errors import ConfigError
+from app.agent.config import resolve_ai_config
+from app.agent.errors import ConfigError
 from app.schemas.chat import ProviderConfig
-from app.shared.settings import get_settings
+from app.core.settings import get_settings
 
 
 def reset_settings() -> None:

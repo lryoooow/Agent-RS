@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 
 from app.schemas.config import ConfigResponse
-from app.shared.settings import get_settings
+from app.core.settings import get_settings
 
 router = APIRouter(tags=["config"])
 

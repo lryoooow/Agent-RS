@@ -1,4 +1,4 @@
-from app.lib.ai.rag.mmr import mmr_select
+from app.agent.rag.mmr import mmr_select
 
 
 def test_mmr_select_removes_near_duplicate_vectors() -> None:

@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from app.shared.paths import imagery_root, project_root
-from app.shared.settings import get_settings
+from app.core.paths import imagery_root, project_root
+from app.core.settings import get_settings
 
 
 def test_imagery_root_resolves_relative_to_project(monkeypatch) -> None:

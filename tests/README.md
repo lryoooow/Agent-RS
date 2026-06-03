@@ -1,6 +1,6 @@
 # Project Test Assets
 
-This directory stores product-level test assets for the chatbot project.
+This directory stores product-level test assets for Agent-RS.
 
 Keep code-level backend tests in `backend/tests/`. Use this directory for reusable
 datasets, fixtures, evaluation definitions, end-to-end scenarios, performance

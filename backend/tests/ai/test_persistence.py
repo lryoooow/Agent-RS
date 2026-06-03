@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.lib.ai.persistence import PersistenceContext, schedule_after_response
+from app.agent.persistence import PersistenceContext, schedule_after_response
 
 
 @pytest.mark.asyncio
@@ -22,9 +22,9 @@ async def test_schedule_after_response_keeps_embedding_ids_and_content_paired(
     async def fake_maybe_store_memory(**_):
         return None
 
-    monkeypatch.setattr("app.lib.ai.persistence.asyncio.create_task", fake_create_task)
-    monkeypatch.setattr("app.lib.ai.persistence._embed_messages", fake_embed_messages)
-    monkeypatch.setattr("app.lib.ai.persistence.maybe_store_memory", fake_maybe_store_memory)
+    monkeypatch.setattr("app.agent.persistence.asyncio.create_task", fake_create_task)
+    monkeypatch.setattr("app.agent.persistence._embed_messages", fake_embed_messages)
+    monkeypatch.setattr("app.agent.persistence.maybe_store_memory", fake_maybe_store_memory)
 
     schedule_after_response(
         PersistenceContext(

@@ -2,8 +2,8 @@ from datetime import date
 
 import pytest
 
-from app.lib.ai.errors import ConfigError
-from app.lib.ai.prompting.renderer import render_prompt_context
+from app.agent.errors import ConfigError
+from app.agent.prompting.renderer import render_prompt_context
 from app.schemas.chat import ChatMessage
 
 

@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from rasterio.transform import from_origin
 
 from app.main import create_app
-from app.shared.settings import get_settings
+from app.core.settings import get_settings
 
 
 def make_client(monkeypatch, tmp_path: Path) -> TestClient:

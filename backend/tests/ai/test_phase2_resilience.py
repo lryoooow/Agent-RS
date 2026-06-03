@@ -1,8 +1,8 @@
 import pytest
 
-from app.lib.ai.agents.tools.web_search.cache import CachedDecision, DecisionCache
-from app.lib.ai.embedding.service import EmbeddingService
-from app.shared.logging import _format_field
+from app.agent.tools.web_search.cache import CachedDecision, DecisionCache
+from app.agent.embedding.service import EmbeddingService
+from app.core.logging import _format_field
 
 
 def test_decision_cache_is_scoped() -> None:

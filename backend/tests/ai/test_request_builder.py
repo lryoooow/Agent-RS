@@ -1,12 +1,12 @@
 import pytest
 
-from app.lib.ai.request_builder import (
+from app.agent.request_builder import (
     build_provider_context,
     build_provider_messages,
     build_provider_request_context,
 )
 from app.schemas.chat import ChatRequest
-from app.shared.settings import get_settings
+from app.core.settings import get_settings
 
 
 @pytest.mark.asyncio
@@ -189,9 +189,9 @@ async def test_build_provider_request_context_tracks_rag_chunk_count(
     monkeypatch.setenv("RERANK_ENABLED", "false")
     monkeypatch.setenv("AI_CONTEXT_MAX_TOTAL_CHARS", "10000")
     get_settings.cache_clear()
-    monkeypatch.setattr("app.lib.ai.request_builder.fetch_optional_pool", fake_fetch_optional_pool)
-    monkeypatch.setattr("app.lib.ai.request_builder.get_embedding_service", lambda: FakeEmbeddingService())
-    monkeypatch.setattr("app.lib.ai.request_builder.search_hybrid_rrf", fake_search_hybrid_rrf)
+    monkeypatch.setattr("app.agent.request_builder.fetch_optional_pool", fake_fetch_optional_pool)
+    monkeypatch.setattr("app.agent.request_builder.get_embedding_service", lambda: FakeEmbeddingService())
+    monkeypatch.setattr("app.agent.request_builder.search_hybrid_rrf", fake_search_hybrid_rrf)
 
     request = ChatRequest(
         messages=[{"role": "user", "content": "查一下知识库"}],
@@ -216,7 +216,7 @@ async def test_build_provider_request_context_skip_retrieval_does_not_call_retri
     monkeypatch.setenv("AI_CONTEXT_MAX_TOTAL_CHARS", "10000")
     get_settings.cache_clear()
     monkeypatch.setattr(
-        "app.lib.ai.request_builder._resolve_retrieved_context",
+        "app.agent.request_builder._resolve_retrieved_context",
         fail_resolve_retrieved_context,
     )
 

@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
 
 from app.main import create_app
-from app.shared.settings import get_settings
+from app.core.settings import get_settings
 
 
 def test_json_body_size_limit(monkeypatch) -> None:

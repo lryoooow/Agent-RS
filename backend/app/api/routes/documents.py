@@ -10,10 +10,10 @@ from typing import Any
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
 
-from app.lib.ai.embedding.service import EmbeddingUnavailableError, get_embedding_service
-from app.lib.db.errors import is_missing_schema_error
-from app.lib.db.pool import fetch_optional_pool
-from app.lib.db.repositories.document import (
+from app.agent.embedding.service import EmbeddingUnavailableError, get_embedding_service
+from app.db.errors import is_missing_schema_error
+from app.db.pool import fetch_optional_pool
+from app.db.repositories.document import (
     delete_document,
     get_document,
     insert_chunks,
@@ -21,16 +21,16 @@ from app.lib.db.repositories.document import (
     list_document_chunks,
     list_documents,
 )
-from app.lib.db.repositories.document_job import create_ingest_job, get_ingest_job, update_ingest_job
-from app.lib.documents import DocumentParseError, parse_uploaded_document
-from app.lib.documents.chunker import chunk_text
-from app.lib.documents.parser import SUPPORTED_EXTENSIONS, TEXT_EXTENSIONS
-from app.lib.documents.task_registry import schedule_task
-from app.lib.ai.rag.mmr import mmr_select
-from app.lib.ai.rerank import get_rerank_service
-from app.lib.db.repositories.vector_search import search_hybrid_rrf
-from app.shared.logging import log_event
-from app.shared.settings import get_settings
+from app.db.repositories.document_job import create_ingest_job, get_ingest_job, update_ingest_job
+from app.documents import DocumentParseError, parse_uploaded_document
+from app.documents.chunker import chunk_text
+from app.documents.parser import SUPPORTED_EXTENSIONS, TEXT_EXTENSIONS
+from app.documents.task_registry import schedule_task
+from app.agent.rag.mmr import mmr_select
+from app.agent.rerank import get_rerank_service
+from app.db.repositories.vector_search import search_hybrid_rrf
+from app.core.logging import log_event
+from app.core.settings import get_settings
 
 router = APIRouter(tags=["documents"])
 logger = logging.getLogger(__name__)

@@ -2,8 +2,8 @@ from io import BytesIO
 
 import pytest
 
-from app.lib.documents.parser import DocumentParseError, parse_uploaded_document
-from app.shared.settings import get_settings
+from app.documents.parser import DocumentParseError, parse_uploaded_document
+from app.core.settings import get_settings
 
 
 def test_parse_markdown_uses_utf8_text_path() -> None:
@@ -125,7 +125,7 @@ def test_parse_pdf_reports_ocr_unavailable_when_text_is_empty(monkeypatch: pytes
             self.pages = [FakePage()]
 
     monkeypatch.setattr("pypdf.PdfReader", FakeReader)
-    monkeypatch.setattr("app.lib.documents.parser.shutil.which", lambda _: None)
+    monkeypatch.setattr("app.documents.parser.shutil.which", lambda _: None)
 
     with pytest.raises(DocumentParseError) as exc_info:
         parse_uploaded_document(
@@ -152,7 +152,7 @@ def test_parse_pdf_keeps_partial_text_when_ocr_is_unavailable(
             self.pages = [FakePage()]
 
     monkeypatch.setattr("pypdf.PdfReader", FakeReader)
-    monkeypatch.setattr("app.lib.documents.parser.shutil.which", lambda _: None)
+    monkeypatch.setattr("app.documents.parser.shutil.which", lambda _: None)
 
     parsed = parse_uploaded_document(
         filename="mixed.pdf",

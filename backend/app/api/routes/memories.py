@@ -5,9 +5,9 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
-from app.lib.auth import get_current_user_id
-from app.lib.db.pool import fetch_optional_pool
-from app.lib.db.repositories.memory import delete_memory, list_memories
+from app.auth import get_current_user_id
+from app.db.pool import fetch_optional_pool
+from app.db.repositories.memory import delete_memory, list_memories
 
 router = APIRouter(tags=["memories"])
 

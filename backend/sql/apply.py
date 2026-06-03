@@ -8,7 +8,7 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
-from app.lib.db.pool import close_db_pool, get_db_pool, init_db_pool
+from app.db.pool import close_db_pool, get_db_pool, init_db_pool
 
 MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"
 
