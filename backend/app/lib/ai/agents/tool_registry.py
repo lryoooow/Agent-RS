@@ -8,11 +8,10 @@ from app.lib.ai.agents.tools.ndvi.schema import NDVI_TOOL, NDVIArguments
 from app.lib.ai.agents.tools.web_search.agent import run_web_search
 from app.lib.ai.agents.tools.web_search.schema import WEB_SEARCH_TOOL, WebSearchArguments
 from app.lib.ai.agents.types import ToolRunResult
-from app.schemas.chat import ChatRequest
 from app.shared.settings import get_settings
 
 
-ToolRunner = Callable[[BaseModel, ChatRequest], Awaitable[ToolRunResult]]
+ToolRunner = Callable[[BaseModel], Awaitable[ToolRunResult]]
 
 
 @dataclass(frozen=True)
@@ -23,19 +22,20 @@ class RegisteredTool:
     runner: ToolRunner
 
 
-async def _run_web_search(args: WebSearchArguments, request: ChatRequest) -> ToolRunResult:
+async def _run_web_search(args: WebSearchArguments) -> ToolRunResult:
     settings = get_settings()
     args = args.clamped(settings.agent_web_search_max_results)
     if len(args.query) > settings.agent_web_search_input_max_chars:
         return ToolRunResult(
             tool_context="联网搜索 query 超过长度限制，已跳过搜索。",
             error="query 超过长度限制",
+            metadata={"error_code": "query_too_long"},
         )
-    return await run_web_search(args, request=request)
+    return await run_web_search(args)
 
 
-async def _run_ndvi(args: NDVIArguments, request: ChatRequest) -> ToolRunResult:
-    return await run_ndvi(args, request=request)
+async def _run_ndvi(args: NDVIArguments) -> ToolRunResult:
+    return await run_ndvi(args)
 
 
 TOOLS: dict[str, RegisteredTool] = {

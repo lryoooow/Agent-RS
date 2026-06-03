@@ -69,17 +69,17 @@ class TTLCache:
 
 
 class DecisionCache:
-    """Cache for search/no-search decisions keyed by normalized query."""
+    """Cache for search/no-search decisions keyed by normalized query and scope."""
 
     def __init__(self, max_size: int = 256, ttl_seconds: float = 1800) -> None:
         self._cache = TTLCache(max_size=max_size, ttl_seconds=ttl_seconds)
 
-    def get_decision(self, query: str) -> CachedDecision | None:
-        key = _hash_key(_normalize_query(query))
+    def get_decision(self, query: str, *, scope: str = "") -> CachedDecision | None:
+        key = _hash_key(f"{scope}|{_normalize_query(query)}")
         return self._cache.get(key)
 
-    def put_decision(self, query: str, decision: CachedDecision) -> None:
-        key = _hash_key(_normalize_query(query))
+    def put_decision(self, query: str, decision: CachedDecision, *, scope: str = "") -> None:
+        key = _hash_key(f"{scope}|{_normalize_query(query)}")
         self._cache.put(key, decision)
 
     def clear(self) -> None:

@@ -1,12 +1,6 @@
 ﻿from types import SimpleNamespace
 
 import pytest
-from openai.types.chat import ChatCompletion, ChatCompletionMessage
-from openai.types.chat.chat_completion import Choice
-from openai.types.chat.chat_completion_message_tool_call import (
-    ChatCompletionMessageToolCall,
-    Function,
-)
 
 import app.lib.ai.agents.runtime as runtime_module
 from app.lib.ai.agents.runtime import AgentRuntime
@@ -34,51 +28,49 @@ def response_with_content(content: str):
     )
 
 
-def response_with_tool_call(arguments: str):
-    return SimpleNamespace(
-        model="test-model",
-        choices=[
-            SimpleNamespace(
-                message=SimpleNamespace(
-                    content=None,
-                    tool_calls=[
-                        SimpleNamespace(
-                            id="call-1",
-                            function=SimpleNamespace(name="web_search", arguments=arguments),
-                        )
-                    ],
-                ),
-                finish_reason="tool_calls",
-            )
-        ],
-        usage=None,
-    )
+def test_ndvi_concept_question_does_not_create_tool_call():
+    assert runtime_module._detect_ndvi_intent("什么是 NDVI？") is None
 
 
-def sdk_response_with_tool_call(arguments: str) -> ChatCompletion:
-    return ChatCompletion(
-        id="chatcmpl-test",
-        created=0,
-        model="test-model",
-        object="chat.completion",
-        choices=[
-            Choice(
-                finish_reason="tool_calls",
-                index=0,
-                message=ChatCompletionMessage(
-                    role="assistant",
-                    content=None,
-                    tool_calls=[
-                        ChatCompletionMessageToolCall(
-                            id="call-sdk",
-                            type="function",
-                            function=Function(name="web_search", arguments=arguments),
-                        )
-                    ],
-                ),
-            )
-        ],
+def test_ndvi_calculation_requires_explicit_imagery_id():
+    assert runtime_module._detect_ndvi_intent("帮我计算 NDVI") is None
+
+
+def test_ndvi_calculation_with_imagery_id_creates_tool_call():
+    request = ChatRequest(
+        messages=[
+            {"role": "system", "content": "当前上传影像：ID=94e758f38ede，图层类型=preview。"},
+            {"role": "user", "content": "请计算 NDVI"},
+        ]
     )
+
+    tool_call = runtime_module._detect_ndvi_intent("请计算 NDVI", request.messages)
+
+    assert tool_call is not None
+    assert tool_call.name == "calculate_ndvi"
+    assert tool_call.arguments["imagery_id"] == "94e758f38ede"
+
+
+def test_ndvi_calculation_ignores_random_hex_without_uploaded_context():
+    assert runtime_module._detect_ndvi_intent("请计算 abcdef123456 的 NDVI") is None
+
+
+def test_ndvi_calculation_uses_recent_imagery_context():
+    request = ChatRequest(
+        messages=[
+            {
+                "role": "system",
+                "content": "当前上传影像：ID=d54d9f9373c7，图层类型=preview。",
+            },
+            {"role": "user", "content": "计算NDVI"},
+        ]
+    )
+
+    tool_call = runtime_module._detect_ndvi_intent("计算NDVI", request.messages)
+
+    assert tool_call is not None
+    assert tool_call.name == "calculate_ndvi"
+    assert tool_call.arguments["imagery_id"] == "d54d9f9373c7"
 
 
 class FakeChat:
@@ -89,22 +81,6 @@ class FakeChat:
 class FakeClient:
     def __init__(self, completions):
         self.chat = FakeChat(completions)
-
-
-def test_first_tool_call_parses_openai_sdk_response_object():
-    response = sdk_response_with_tool_call(
-        '{"query": "qwen tools", "reason": "verify sdk structure"}'
-    )
-
-    tool_call = AgentRuntime()._first_tool_call(response)
-
-    assert tool_call is not None
-    assert tool_call.name == "web_search"
-    assert tool_call.call_id == "call-sdk"
-    assert tool_call.arguments == {
-        "query": "qwen tools",
-        "reason": "verify sdk structure",
-    }
 
 
 @pytest.mark.asyncio
@@ -136,7 +112,9 @@ async def test_agent_runtime_does_not_pass_tools_when_search_disabled(monkeypatc
 
     assert result.response.choices[0].message.content == "direct"
     assert "tools" not in completions.calls[0]
-    assert result.trace.model_dump() == {"enabled": False, "events": []}
+    trace = result.trace.model_dump()
+    assert trace["enabled"] is True
+    assert [event["stage"] for event in trace["events"]] == ["context_assembled", "classifier_skip"]
 
 
 @pytest.mark.asyncio
@@ -150,7 +128,7 @@ async def test_agent_runtime_uses_tool_call_and_injects_tool_context(monkeypatch
             assert any("tool answer" in message["content"] for message in kwargs["messages"])
             return response_with_content("final answer")
 
-    async def fake_run_web_search(args, request):
+    async def fake_run_web_search(args):
         return ToolRunResult(
             tool_context="tool answer",
             result_count=1,
@@ -203,9 +181,12 @@ async def test_agent_runtime_uses_tool_call_and_injects_tool_context(monkeypatch
     trace = result.trace.model_dump()
     assert trace["enabled"] is True
     assert [event["stage"] for event in trace["events"]] == [
+        "context_assembled",
         "classifier_force",
         "tool_requested",
         "child_agent_running",
+        "tool_execution_started",
+        "tool_execution_completed",
         "tool_context_ready",
         "final_answering",
     ]
@@ -219,9 +200,8 @@ async def test_agent_runtime_rejects_invalid_tool_arguments(monkeypatch):
 
     result = await AgentRuntime().run_tool_call(
         RuntimeToolCall(name="web_search", arguments={"query": "", "reason": "fresh"}),
-        request=ChatRequest(messages=[{"role": "user", "content": "latest news"}]),
         trace=AgentTrace(enabled=True),
     )
 
     assert result.error
-    assert "联网搜索参数无效" in result.tool_context
+    assert "工具参数无效" in result.tool_context

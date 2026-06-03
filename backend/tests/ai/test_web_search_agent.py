@@ -2,7 +2,6 @@ import pytest
 
 from app.lib.ai.agents.tools.web_search.agent import run_web_search
 from app.lib.ai.agents.tools.web_search.schema import WebSearchArguments
-from app.schemas.chat import ChatRequest
 from app.shared.settings import get_settings
 
 
@@ -33,10 +32,7 @@ async def test_web_search_agent_calls_tavily_directly(monkeypatch):
         fake_search_tavily,
     )
 
-    result = await run_web_search(
-        WebSearchArguments(query="latest ai news", reason="fresh info", max_results=3),
-        request=ChatRequest(messages=[{"role": "user", "content": "latest ai news"}]),
-    )
+    result = await run_web_search(WebSearchArguments(query="latest ai news", reason="fresh info", max_results=3))
 
     assert seen_calls[0]["api_key"] == "test-key"
     assert seen_calls[0]["query"] == "latest ai news"

@@ -12,6 +12,7 @@ class Settings(BaseSettings):
 
     app_host: str = "0.0.0.0"
     app_port: int = 3000
+    app_reload: bool = False
     log_level: str = "INFO"
     storage_upload_dir: str = "backend/storage/uploads"
     storage_orphan_max_age_hours: int = 24
@@ -40,11 +41,12 @@ class Settings(BaseSettings):
     ai_prompt_max_core_chars: int | None = None
     ai_prompt_max_optional_chars: int | None = None
     ai_system_prompt_language: str = "zh-CN"
-    ai_assistant_name: str = "Chatbot AI Assistant"
+    ai_assistant_name: str = "Agent-RS Assistant"
 
     allow_client_provider_config: bool = False
     allow_user_extra_instructions: bool = True
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+    max_json_body_bytes: int = 2_000_000
 
     tavily_api_key: str = ""
     tavily_search_url: str = "https://api.tavily.com/search"
@@ -89,6 +91,8 @@ class Settings(BaseSettings):
     embedding_dimensions: int = 1536
     embedding_batch_size: int = 10
     embedding_background_concurrency: int = 8
+    embedding_max_retries: int = 2
+    embedding_retry_base_delay_seconds: float = 0.5
 
     rerank_enabled: bool = True
     rerank_base_url: str = ""
@@ -119,9 +123,16 @@ class Settings(BaseSettings):
 
     imagery_upload_dir: str = "storage/imagery"
     imagery_max_file_bytes: int = 500_000_000
-    ndvi_docker_image: str = "chatbot-ndvi:latest"
+    imagery_working_max_dimension: int = 4096
+    imagery_preview_max_dimension: int = 2048
+    imagery_compression: str = "deflate"
     ndvi_docker_timeout_seconds: int = 120
-    ndvi_docker_gpu: bool = False
+    ndvi_mcp_image: str = "ndvi-mcp:0.1.0"
+    ndvi_mcp_use_docker: bool = True
+    ndvi_mcp_allow_local_fallback: bool = True
+    ndvi_mcp_memory_limit: str = "2g"
+    ndvi_mcp_cpus: float = 2.0
+    ndvi_mcp_network: str = "none"
 
     @property
     def cors_origin_list(self) -> list[str]:

@@ -10,7 +10,6 @@ from app.lib.ai.agents.tools.web_search.schema import WebSearchArguments
 from app.lib.ai.agents.tools.web_search.tavily_client import TavilySearchError, search_tavily
 from app.lib.ai.agents.types import ToolRunResult
 from app.lib.ai.rerank import get_rerank_service
-from app.schemas.chat import ChatRequest
 from app.shared.settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -18,8 +17,6 @@ logger = logging.getLogger(__name__)
 
 async def run_web_search(
     args: WebSearchArguments,
-    *,
-    request: ChatRequest,
 ) -> ToolRunResult:
     settings = get_settings()
     max_results = args.max_results or settings.agent_web_search_max_results

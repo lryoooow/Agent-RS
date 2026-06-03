@@ -13,24 +13,48 @@ export type Usage = {
 
 export type AnalysisStatus = "analyzing" | "preparing" | "answering" | "complete";
 export type AgentStatus =
+  | "context_assembled"
   | "planning"
+  | "planning_fallback"
+  | "classifier_skip"
+  | "classifier_force"
+  | "cache_hit_skip"
+  | "cache_hit_search"
   | "tool_requested"
   | "child_agent_running"
+  | "tool_execution_started"
+  | "tool_execution_completed"
+  | "tool_execution_failed"
+  | "tool_fallback_used"
   | "tool_context_ready"
+  | "geospatial_result_ready"
   | "final_answering"
   | "direct_answer"
-  | "tool_unavailable"
-  | "docker_starting"
-  | "docker_running"
-  | "docker_complete";
+  | "tool_unavailable";
 
-export type GeospatialResult = {
-  type: string;
+export type ToolExecutionInfo = {
+  mode: "docker_mcp" | "local_subprocess" | "local_fallback" | "failed";
+  fallback_used: boolean;
+  error_code?: string | null;
+};
+
+type GeospatialBaseResult = {
   imagery_id: string;
   result_url: string;
   bounds: [number, number, number, number] | null;
-  stats: { min: number; max: number; mean: number; std: number };
 };
+
+export type GeospatialPreviewResult = GeospatialBaseResult & {
+  type: "preview";
+};
+
+export type GeospatialNdviResult = GeospatialBaseResult & {
+  type: "ndvi";
+  stats: { min: number; max: number; mean: number; std: number };
+  execution?: ToolExecutionInfo | null;
+};
+
+export type GeospatialResult = GeospatialPreviewResult | GeospatialNdviResult;
 
 export type ChatTurn = ChatMessage & {
   id: string;
@@ -61,6 +85,7 @@ export type ChatResponse = {
   retrieved_chunks?: number;
   rag_trace?: Record<string, unknown> | null;
   agent_trace?: Record<string, unknown> | null;
+  geospatial_result?: GeospatialResult;
 };
 
 export type ConfigResponse = {

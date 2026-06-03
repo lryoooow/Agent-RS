@@ -17,16 +17,24 @@ ANALYSIS_STATUS_LABELS = {
     "complete": "思考完成",
 }
 AGENT_STATUS_LABELS = {
+    "context_assembled": "上下文已装配",
     "planning": "正在判断是否需要联网",
+    "planning_fallback": "规划模型失败，正在兜底",
+    "classifier_skip": "规则判断无需工具",
+    "classifier_force": "规则判断需要工具",
+    "cache_hit_skip": "命中无需搜索的缓存",
+    "cache_hit_search": "命中需要搜索的缓存",
     "tool_requested": "准备调用工具",
     "child_agent_running": "正在执行工具",
+    "tool_execution_started": "工具执行已开始",
+    "tool_execution_completed": "工具执行完成",
+    "tool_execution_failed": "工具执行失败",
+    "tool_fallback_used": "工具使用了本地回退",
     "tool_context_ready": "工具结果已整理",
+    "geospatial_result_ready": "地图图层结果已生成",
     "final_answering": "正在生成最终回答",
     "direct_answer": "无需调用工具",
     "tool_unavailable": "工具不可用",
-    "docker_starting": "正在启动计算容器",
-    "docker_running": "正在执行遥感计算",
-    "docker_complete": "计算完成",
 }
 
 

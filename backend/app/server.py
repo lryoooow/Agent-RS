@@ -9,7 +9,8 @@ def main() -> None:
         "app.main:app",
         host=settings.app_host,
         port=settings.app_port,
-        reload=True,
+        reload=settings.app_reload,
+        reload_excludes=["storage/*", "storage/**/*"],
     )
 
 

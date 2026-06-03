@@ -1,3 +1,4 @@
+from app.lib.ai.context.budget import estimate_tokens, trim_to_budget
 from app.schemas.chat import ChatMessage
 
 CLIENT_SYSTEM_PREFIX = (
@@ -47,17 +48,22 @@ def _select_by_char_budget(
     if not messages:
         return [], False
     if max_chars <= 0:
-        return [messages[-1]], len(messages) > 1
+        latest = _trim_message(messages[-1], 1)
+        return [latest], True
 
     selected: list[ChatMessage] = []
-    used_chars = 0
+    used_tokens = 0
 
     for message in reversed(messages):
-        content_length = len(message.content)
-        if selected and used_chars + content_length > max_chars:
+        content_tokens = estimate_tokens(message.content)
+        if selected and used_tokens + content_tokens > max_chars:
+            break
+        if not selected and content_tokens > max_chars:
+            selected.append(_trim_message(message, max_chars))
+            used_tokens = max_chars
             break
         selected.append(message)
-        used_chars += content_length
+        used_tokens += content_tokens
 
     selected.reverse()
     return selected, len(selected) < len(messages)
@@ -70,3 +76,7 @@ def _to_provider_message(message: ChatMessage) -> dict[str, str]:
             "content": f"{CLIENT_SYSTEM_PREFIX}\n\n{message.content}",
         }
     return {"role": message.role, "content": message.content}
+
+
+def _trim_message(message: ChatMessage, max_tokens: int) -> ChatMessage:
+    return ChatMessage(role=message.role, content=trim_to_budget(message.content, max_tokens) or message.content[:1])

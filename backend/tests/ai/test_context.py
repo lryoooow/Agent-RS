@@ -41,7 +41,7 @@ def test_context_assembly_does_not_inject_empty_auxiliary_blocks() -> None:
     assert [item["content"] for item in result.messages] == ["base system rules", "hello"]
 
 
-def test_context_assembly_keeps_latest_message_when_total_budget_is_exhausted() -> None:
+def test_context_assembly_trims_latest_message_when_total_budget_is_exhausted() -> None:
     result = assemble_context(
         system_prompt="system rules are intentionally longer than the total budget",
         messages=[
@@ -56,7 +56,9 @@ def test_context_assembly_keeps_latest_message_when_total_budget_is_exhausted() 
     )
 
     assert result.messages[0]["role"] == "system"
-    assert result.messages[-1] == {"role": "user", "content": "latest message must stay"}
+    assert result.messages[-1]["role"] == "user"
+    assert result.messages[-1]["content"].startswith("l")
+    assert result.messages[-1]["content"] != "latest message must stay"
     assert "user_extra_instructions" in result.dropped_blocks
     assert "recent_dialogue:truncated" in result.dropped_blocks
 

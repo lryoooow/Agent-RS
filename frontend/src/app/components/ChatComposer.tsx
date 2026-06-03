@@ -1,6 +1,7 @@
 import { useRef, type FormEvent, type KeyboardEvent, type RefObject } from "react";
 import { ArrowUp, Loader2, Paperclip } from "lucide-react";
-import { useImageryUpload } from "../hooks/useImageryUpload";
+import { useImageryUpload, type ImageryMeta } from "../hooks/useImageryUpload";
+import type { GeospatialResult } from "../types";
 
 type ChatComposerProps = {
   endpoint: string;
@@ -10,7 +11,7 @@ type ChatComposerProps = {
   onInputChange: (value: string) => void;
   onSubmit: (event: FormEvent) => void;
   onKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
-  onImageryUploaded?: (msg: string) => void;
+  onImageryUploaded?: (msg: string, result?: GeospatialResult) => void;
 };
 
 export function ChatComposer({
@@ -44,7 +45,8 @@ export function ChatComposer({
     const meta = await imagery.upload(file);
     if (meta && onImageryUploaded) {
       onImageryUploaded(
-        `已上传影像: ${meta.filename} (${meta.band_count}波段, ${meta.width}x${meta.height}px, ID: ${meta.imagery_id})`,
+        `已上传影像 ${meta.filename} (${meta.band_count}波段, ${meta.width}x${meta.height}px, ID: ${meta.imagery_id})`,
+        buildPreviewResult(meta),
       );
     }
     if (fileInputRef.current) fileInputRef.current.value = "";
@@ -82,7 +84,7 @@ export function ChatComposer({
               isComposingRef.current = false;
             }}
             onKeyDown={handleTextareaKeyDown}
-            placeholder="说点什么…  (Shift + Enter 换行)"
+            placeholder="说点什么... (Shift + Enter 换行)"
             rows={1}
             disabled={loading}
             className="flex-1 resize-none bg-transparent outline-none text-[15px] leading-relaxed placeholder:text-muted-foreground/70 disabled:opacity-60"
@@ -92,7 +94,7 @@ export function ChatComposer({
             type="submit"
             disabled={loading || !input.trim()}
             className="shrink-0 inline-flex items-center justify-center size-9 rounded-full bg-foreground text-background disabled:opacity-30 disabled:cursor-not-allowed hover:bg-foreground/90 transition-colors"
-            aria-label="send"
+            aria-label="发送"
           >
             {loading ? <Loader2 className="size-4 animate-spin" /> : <ArrowUp className="size-4" />}
           </button>
@@ -112,4 +114,20 @@ export function ChatComposer({
       </form>
     </div>
   );
+}
+
+function buildPreviewResult(meta: ImageryMeta): GeospatialResult {
+  return {
+    type: "preview",
+    imagery_id: meta.imagery_id,
+    result_url: meta.preview_url ?? `/api/imagery/${meta.imagery_id}/results/preview.png`,
+    bounds: normalizeBounds(meta.bounds),
+  };
+}
+
+function normalizeBounds(bounds: number[] | null): [number, number, number, number] | null {
+  if (!Array.isArray(bounds) || bounds.length !== 4) return null;
+  const [west, south, east, north] = bounds;
+  if (![west, south, east, north].every(Number.isFinite)) return null;
+  return [west, south, east, north];
 }

@@ -1,10 +1,8 @@
-# Chatbot Backend
+# Agent-RS Backend
 
-Python FastAPI backend for the chatbot UI. The AI layer uses an OpenAI-compatible
-provider interface, so OpenAI, DeepSeek, Moonshot/Kimi, and similar services can
-be switched by changing configuration.
+Agent-RS 后端基于 FastAPI，负责对话接口、上下文组装、Agent 运行时、联网搜索、遥感影像上传，以及 NDVI Docker MCP 工具调用。AI 层使用 OpenAI-compatible Provider 接口，可通过配置切换 DashScope、OpenAI、DeepSeek、Moonshot/Kimi 等服务。
 
-## Run
+## 启动
 
 ```bash
 cd backend
@@ -15,40 +13,47 @@ cp .env.example .env
 uvicorn app.main:app --host 0.0.0.0 --port 3000 --reload
 ```
 
+Windows Conda 环境可直接运行：
+
+```powershell
+conda activate chatbot
+python -m uvicorn app.main:app --host 0.0.0.0 --port 3000 --reload
+```
+
+`chatbot` 只是本地 Conda 环境名，可按自己的环境实际名称调整。
+
 ## API
 
 - `GET /api/health`
 - `GET /api/config`
 - `POST /api/chat`
+- `POST /api/imagery/upload`
+- `GET /api/imagery`
+- `DELETE /api/imagery/{imagery_id}`
+- `POST /api/imagery/cleanup`
 
-`POST /api/chat` accepts `messages`, optional `model`, optional `system_prompt`,
-and optional per-request `provider_config`. The backend owns the base system
-prompt through a versioned Jinja template. Request-level `system_prompt` is
-treated only as extra instructions for that chat and cannot replace the base
-rules.
+`POST /api/chat` 接收 `messages`、可选 `model`、可选 `system_prompt`、可选 Provider 配置，以及 `stream`。后端拥有基础系统提示词；请求级 `system_prompt` 只作为当前对话的额外指令，不能替换基础规则。
 
-Prompt templates live under `app/lib/ai/prompting/templates/`. Set
-`AI_PROMPT_PROFILE` to choose the active prompt profile. The renderer injects
-only the selected prompt modules for the current request; task-specific prompt
-modules are not part of every provider request.
+Prompt 模板位于 `app/lib/ai/prompting/templates/`。通过 `AI_PROMPT_PROFILE` 选择激活的提示词 profile。渲染器只注入当前请求需要的模块，任务专用提示词不会无条件进入每次 Provider 请求。
 
-Set `stream: true` to receive Server-Sent Events from the same endpoint:
+## SSE 流式事件
+
+前端默认发送 `stream: true`，并通过 `fetch()` + `ReadableStream` 读取响应。因为对话请求是 `POST` body，不能直接使用浏览器 `EventSource`。
+
+示例：
 
 ```txt
 event: meta
-data: {"model":"deepseek-chat","provider":"openai-compatible"}
+data: {"model":"qwen3.7-max","provider":"openai-compatible"}
 
 event: analysis_status
-data: {"status":"analyzing","label":"正在分析问题…"}
+data: {"status":"analyzing","label":"正在解析问题..."}
 
 event: analysis_status
-data: {"status":"preparing","label":"正在整理内容…"}
+data: {"status":"preparing","label":"正在整理内容..."}
 
 event: analysis_status
-data: {"status":"answering","label":"正在组织回复…"}
-
-event: analysis_status
-data: {"status":"complete","label":"思考完成"}
+data: {"status":"answering","label":"正在组织回复..."}
 
 event: delta
 data: {"content":"你好"}
@@ -57,58 +62,35 @@ event: done
 data: {"finish_reason":"stop"}
 ```
 
-The frontend sends `stream: true` by default and reads the response with
-`fetch()` + `ReadableStream`, because the chat request is a `POST` body and
-cannot use browser `EventSource`.
+当 Provider 返回 `reasoning_content`、`reasoning`、`thinking`、`thought` 或显式 `<think>...</think>` 文本时，后端会从用户可见响应中剥离原始思考内容。流式客户端只接收安全的 `analysis_status` 进度事件和最终答案增量。
 
-When a provider returns `reasoning_content`, `reasoning`, `thinking`, `thought`,
-or explicit `<think>...</think>` text, the backend strips that raw reasoning
-from user-visible responses. Streaming clients receive only safe
-`analysis_status` progress events plus final answer deltas.
+## 上下文与工具
 
-Before sending provider requests, the backend assembles context through
-`app/lib/ai/context/`. The base system prompt, per-chat extra instructions,
-request-local history summary, request-local important memory, recent dialogue,
-and future RAG/tool blocks are separate context sections with their own budgets.
-Empty optional blocks are not injected.
+后端在发送 Provider 请求前通过 `app/lib/ai/context/` 组装上下文。基础系统提示词、请求级额外指令、历史摘要、重要记忆、最近对话、RAG 片段、影像清单和工具结果拥有独立边界与预算；空的可选模块不会注入。
 
-Current context limits:
+联网搜索走 Agent runtime 调度。配置 `TAVILY_API_KEY` 后，后端可以在需要时调用搜索 Agent，并把精简结果作为工具上下文注入最终回答。
 
-- `AI_CONTEXT_MAX_TOTAL_CHARS`: total context budget.
-- `AI_CONTEXT_MAX_RECENT_MESSAGES`: latest dialogue message count.
-- `AI_CONTEXT_MAX_RECENT_CHARS`: latest dialogue character budget.
-- `AI_CONTEXT_MAX_USER_EXTRA_CHARS`: per-chat extra instruction budget.
-- `AI_CONTEXT_MAX_SUMMARY_CHARS`: request-local compressed conversation summary budget.
-- `AI_CONTEXT_MAX_MEMORY_CHARS`: request-local important memory summary budget.
-- `AI_CONTEXT_MAX_RAG_CHARS`: future retrieved context budget.
-- `AI_CONTEXT_MAX_TOOL_CHARS`: future tool result summary budget.
-
-`AI_MAX_HISTORY_MESSAGES` and `AI_MAX_CONTEXT_CHARS` remain as compatibility
-fallbacks for recent messages and total context if the newer context settings
-are not provided.
-
-If your shell has `http_proxy` or `https_proxy` pointing to a local proxy that is
-not running, provider requests can fail with a network error. The backend ignores
-environment proxy variables by default. Set `AI_TRUST_ENV_PROXY=true` only when
-you intentionally want the OpenAI-compatible client to use those proxy variables.
-
-## Web Search Agent
-
-The first main LLM call may return an OpenAI-compatible `web_search` tool call
-when `TAVILY_API_KEY` is configured. The backend parent agent runtime validates
-that tool request, calls Tavily directly, injects a concise result summary into
-`tool_context`, and then performs the final main LLM call.
+NDVI 计算走 Docker MCP 工具。后端优先启动 `ndvi-mcp:0.1.0` 镜像并调用 `calculate_ndvi`，工具无状态；生产环境建议关闭本地回退：
 
 ```env
-TAVILY_API_KEY=your_key
-TAVILY_SEARCH_URL=https://api.tavily.com/search
-TAVILY_SEARCH_DEPTH=basic
-AGENT_WEB_SEARCH_MAX_CALLS=1
-AGENT_WEB_SEARCH_MAX_RESULTS=5
-AGENT_WEB_SEARCH_TIMEOUT_SECONDS=15
+NDVI_MCP_ALLOW_LOCAL_FALLBACK=false
 ```
 
-Tavily credentials stay in backend environment settings and are never sent from
-the frontend. There is no separate product-level intent switch: when the key is
-configured, the LLM receives the `web_search` tool and decides whether to call
-it.
+## 常用配置
+
+```env
+AI_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+AI_API_KEY=your_key
+AI_DEFAULT_MODEL=qwen3.7-max
+
+TAVILY_API_KEY=your_key
+AGENT_WEB_SEARCH_MAX_CALLS=1
+AGENT_WEB_SEARCH_MAX_RESULTS=5
+
+NDVI_MCP_IMAGE=ndvi-mcp:0.1.0
+NDVI_MCP_USE_DOCKER=true
+NDVI_MCP_ALLOW_LOCAL_FALLBACK=true
+NDVI_MCP_MEMORY_LIMIT=2g
+NDVI_MCP_CPUS=2
+NDVI_MCP_NETWORK=none
+```
