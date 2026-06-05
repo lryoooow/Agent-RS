@@ -1,0 +1,24 @@
+﻿........................................................................ [ 50%]
+.......................................................................  [100%]
+============================== warnings summary ===============================
+..\..\..\..\miniconda3\envs\\agent-rs\Lib\site-packages\fastapi\testclient.py:1
+  D:\miniconda3\envs\\agent-rs\Lib\site-packages\fastapi\testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+tests/ai/test_ndvi_runner.py::test_ndvi_runner_prefers_working_tif
+tests/ai/test_ndvi_runner.py::test_ndvi_runner_rejects_invalid_band_before_execution
+tests/ai/test_ndvi_runner.py::test_ndvi_runner_rejects_band_above_available_count_before_execution
+  D:\miniconda3\envs\\agent-rs\Lib\site-packages\rasterio\__init__.py:378: NotGeoreferencedWarning: Dataset has no geotransform, gcps, or rpcs. The identity matrix will be returned.
+    dataset = writer(
+
+tests/ai/test_ndvi_runner.py::test_ndvi_runner_prefers_working_tif
+tests/ai/test_ndvi_runner.py::test_ndvi_runner_rejects_band_above_available_count_before_execution
+  D:\miniconda3\envs\\agent-rs\Lib\site-packages\rasterio\__init__.py:368: NotGeoreferencedWarning: Dataset has no geotransform, gcps, or rpcs. The identity matrix will be returned.
+    dataset = DatasetReader(path, driver=driver, sharing=sharing, **kwargs)
+
+tests/auth/test_security.py::test_session_db_unavailable_returns_503_instead_of_default_user
+  D:\miniconda3\envs\\agent-rs\Lib\site-packages\starlette\testclient.py:459: DeprecationWarning: Setting per-request cookies=<...> is being deprecated, because the expected behaviour on cookie persistence is ambiguous. Set cookies directly on the client instance instead.
+    return super().request(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+143 passed, 7 warnings in 5.67s

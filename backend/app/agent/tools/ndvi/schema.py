@@ -2,7 +2,7 @@
 
 
 class NDVIArguments(BaseModel):
-    imagery_id: str = Field(description="已上传影像的ID")
+    imagery_id: str = Field(pattern=r"^[a-f0-9]{12}$", description="已上传影像的ID")
     red_band: int = Field(default=3, ge=1, description="红光波段号（GF-2默认3）")
     nir_band: int = Field(default=4, ge=1, description="近红外波段号（GF-2默认4）")
     reason: str = Field(default="用户请求计算NDVI", description="计算原因")

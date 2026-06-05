@@ -39,7 +39,7 @@ include = ["app*"]
 
 [tool.setuptools.package-data]
 "app.agent.prompting.templates" = ["*.jinja", "README.md"]
-"app.agent.tools.web_search" = ["*.jinja"]
+"app.agent.search" = ["*.jinja"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

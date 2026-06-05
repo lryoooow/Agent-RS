@@ -11,7 +11,7 @@ class FakeConn:
 
     async def fetch(self, sql, *_):
         self.calls.append(sql)
-        if "ts_rank_cd" in sql and "WHERE content_tsv" in sql:
+        if "ts_rank_cd" in sql and "content_tsv" in sql:
             return self.tsv_rows
         return self.vector_rows
 

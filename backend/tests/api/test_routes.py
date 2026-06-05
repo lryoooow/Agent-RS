@@ -36,7 +36,7 @@ def test_config_route_does_not_leak_api_key(monkeypatch) -> None:
     assert body["api_key_configured"] is True
     removed_field = "system_prompt" + "_template"
     assert removed_field not in body
-    assert body["prompt_profile"] == "chatbot_core_v1"
+    assert body["prompt_profile"] == "agent_rs_core_v1"
     assert body["prompt_dynamic_modules_enabled"] is True
     assert body["system_prompt_language"] == "zh-CN"
     assert body["allow_user_extra_instructions"] is True

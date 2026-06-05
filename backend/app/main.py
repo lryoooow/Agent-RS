@@ -9,7 +9,7 @@ from app.api.routes import router as api_router
 from app.agent.embedding.service import get_embedding_service
 from app.agent.errors import AIError
 from app.auth import reset_current_user_id, set_current_user_id
-from app.auth.session import get_session_user
+from app.auth.session import AuthSessionUnavailable, get_session_user
 from app.db.pool import close_db_pool, init_db_pool
 from app.documents.task_registry import recover_document_jobs, shutdown_tasks
 from app.core.logging import configure_logging
@@ -63,8 +63,20 @@ def create_app() -> FastAPI:
                 status_code=413,
                 content={"error": {"code": "REQUEST_TOO_LARGE", "message": "Request body is too large."}},
             )
-        session_token = request.cookies.get(settings.auth_session_cookie_name)
-        user = await get_session_user(session_token)
+        # Read the old cookie name during the Agent-RS rename migration.
+        session_token = request.cookies.get(settings.auth_session_cookie_name) or request.cookies.get("chatbot_session")
+        try:
+            user = await get_session_user(session_token)
+        except AuthSessionUnavailable:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "error": {
+                        "code": "AUTH_SESSION_UNAVAILABLE",
+                        "message": "Session authentication is temporarily unavailable.",
+                    }
+                },
+            )
         context_token = set_current_user_id(user["id"] if user else settings.default_user_id)
         try:
             response = await call_next(request)
@@ -72,6 +84,18 @@ def create_app() -> FastAPI:
             response.headers.setdefault("X-Frame-Options", "DENY")
             response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
             response.headers.setdefault("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+            response.headers.setdefault(
+                "Content-Security-Policy",
+                "default-src 'self'; "
+                "img-src 'self' data: blob:; "
+                "style-src 'self' 'unsafe-inline'; "
+                "script-src 'self'; "
+                "connect-src 'self' http://localhost:3000 http://127.0.0.1:3000; "
+                "worker-src 'self' blob:; "
+                "object-src 'none'; "
+                "base-uri 'self'; "
+                "frame-ancestors 'none'",
+            )
             if settings.auth_cookie_secure:
                 response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
             return response

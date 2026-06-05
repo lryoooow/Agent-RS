@@ -1,6 +1,6 @@
 import pytest
 
-from app.agent.tools.web_search.cache import CachedDecision, DecisionCache
+from app.agent.search.cache import CachedDecision, DecisionCache
 from app.agent.embedding.service import EmbeddingService
 from app.core.logging import _format_field
 

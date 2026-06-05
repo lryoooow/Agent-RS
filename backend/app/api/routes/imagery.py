@@ -15,6 +15,7 @@ from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+from app.auth.current_user import get_current_user_id
 from app.core.paths import imagery_root
 from app.core.settings import get_settings
 
@@ -271,9 +272,30 @@ def _metadata_response(entry: Path, meta: dict[str, Any]) -> ImageryMetadata:
     return ImageryMetadata(imagery_id=entry.name, filename=filename, **payload)
 
 
+def _metadata_owner(meta: dict[str, Any]) -> str:
+    return str(meta.get("owner_user_id") or get_settings().default_user_id)
+
+
+def _ensure_imagery_owner(meta: dict[str, Any]) -> None:
+    if _metadata_owner(meta) != get_current_user_id():
+        raise HTTPException(status_code=404, detail="Imagery was not found.")
+
+
+def _read_owned_metadata(dest_dir: Path) -> dict[str, Any]:
+    meta_file = dest_dir / "metadata.json"
+    if not meta_file.exists():
+        raise HTTPException(status_code=404, detail="Imagery was not found.")
+    meta = _read_metadata(meta_file)
+    if meta is None:
+        raise HTTPException(status_code=500, detail="Imagery metadata is invalid.")
+    _ensure_imagery_owner(meta)
+    return meta
+
+
 @router.post("/upload", response_model=ImageryMetadata)
 async def upload_imagery(file: UploadFile = File(...)) -> ImageryMetadata:
     settings = get_settings()
+    owner_user_id = get_current_user_id()
 
     if not file.filename or not file.filename.lower().endswith((".tif", ".tiff")):
         raise HTTPException(status_code=400, detail="仅支持 GeoTIFF (.tif/.tiff) 格式")
@@ -313,6 +335,7 @@ async def upload_imagery(file: UploadFile = File(...)) -> ImageryMetadata:
         "preview_url": f"/api/imagery/{imagery_id}/results/preview.png",
         "sha256": _file_sha256(source_path),
         "created_at": datetime.now(timezone.utc).isoformat(),
+        "owner_user_id": owner_user_id,
     }
     _write_json_atomic(dest_dir / "metadata.json", meta)
 
@@ -331,6 +354,7 @@ async def upload_imagery(file: UploadFile = File(...)) -> ImageryMetadata:
 @router.get("", response_model=list[ImageryMetadata])
 async def list_imagery() -> list[ImageryMetadata]:
     root = _imagery_root()
+    current_user_id = get_current_user_id()
     results: list[ImageryMetadata] = []
     if not root.exists():
         return results
@@ -342,6 +366,8 @@ async def list_imagery() -> list[ImageryMetadata]:
             continue
         meta = _read_metadata(meta_file)
         if meta is None:
+            continue
+        if _metadata_owner(meta) != current_user_id:
             continue
         results.append(_metadata_response(entry, meta))
     return results
@@ -370,20 +396,14 @@ async def cleanup_imagery() -> CleanupResult:
 @router.get("/{imagery_id}", response_model=ImageryMetadata)
 async def get_imagery(imagery_id: str) -> ImageryMetadata:
     dest_dir = _imagery_dir(imagery_id)
-    meta_file = dest_dir / "metadata.json"
-    if not meta_file.exists():
-        raise HTTPException(status_code=404, detail="影像不存在")
-    meta = _read_metadata(meta_file)
-    if meta is None:
-        raise HTTPException(status_code=500, detail="影像元数据损坏")
+    meta = _read_owned_metadata(dest_dir)
     return _metadata_response(dest_dir, meta)
 
 
 @router.delete("/{imagery_id}", response_model=DeleteResult)
 async def delete_imagery(imagery_id: str) -> DeleteResult:
     dest_dir = _imagery_dir(imagery_id)
-    if not dest_dir.exists():
-        raise HTTPException(status_code=404, detail="影像不存在")
+    _read_owned_metadata(dest_dir)
     _safe_rmtree(dest_dir)
     return DeleteResult(imagery_id=imagery_id, deleted=not dest_dir.exists())
 
@@ -391,6 +411,7 @@ async def delete_imagery(imagery_id: str) -> DeleteResult:
 @router.get("/{imagery_id}/results/{filename}")
 async def get_result_file(imagery_id: str, filename: str) -> FileResponse:
     result_path = _safe_result_path(imagery_id, filename)
+    _read_owned_metadata(result_path.parent.parent)
     if not result_path.exists():
         raise HTTPException(status_code=404, detail="结果文件不存在")
     media_type = "image/png" if filename.endswith(".png") else "image/tiff"

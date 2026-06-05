@@ -3,6 +3,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 import rasterio
+from pydantic import ValidationError
 
 from app.agent.tools.ndvi.runner import NDVIExecutionError, _handle_docker_failure, run_ndvi
 from app.agent.tools.ndvi.schema import NDVIArguments
@@ -25,7 +26,7 @@ def _write_test_tif(path: Path, *, count: int = 4) -> None:
 
 @pytest.mark.asyncio
 async def test_ndvi_runner_prefers_working_tif(monkeypatch, tmp_path: Path) -> None:
-    imagery_id = "imagery123"
+    imagery_id = "94e758f38ede"
     imagery_dir = tmp_path / imagery_id
     results_dir = imagery_dir / "results"
     results_dir.mkdir(parents=True)
@@ -80,6 +81,44 @@ async def test_ndvi_runner_rejects_invalid_band_before_execution(monkeypatch, tm
 
     assert result.error == "invalid_bands"
     assert "波段索引必须从 1 开始" in result.tool_context
+
+
+@pytest.mark.asyncio
+async def test_ndvi_runner_rejects_invalid_imagery_id_before_path_lookup() -> None:
+    get_settings.cache_clear()
+
+    result = await run_ndvi(
+        NDVIArguments.model_construct(imagery_id="../bad", red_band=3, nir_band=4, reason="test")
+    )
+
+    assert result.error == "invalid_imagery_id"
+
+
+def test_ndvi_arguments_reject_invalid_imagery_id_at_schema_layer() -> None:
+    with pytest.raises(ValidationError):
+        NDVIArguments(imagery_id="../bad")
+
+
+@pytest.mark.asyncio
+async def test_ndvi_runner_rejects_band_above_available_count_before_execution(monkeypatch, tmp_path: Path) -> None:
+    imagery_id = "94e758f38ede"
+    imagery_dir = tmp_path / imagery_id
+    imagery_dir.mkdir(parents=True)
+    _write_test_tif(imagery_dir / "working.tif", count=4)
+
+    async def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("NDVI execution should not run for unavailable bands")
+
+    monkeypatch.setenv("IMAGERY_UPLOAD_DIR", str(tmp_path))
+    get_settings.cache_clear()
+    monkeypatch.setattr("app.agent.tools.ndvi.runner._run_ndvi_execution", fail_if_called)
+
+    result = await run_ndvi(
+        NDVIArguments(imagery_id=imagery_id, red_band=3, nir_band=5, reason="test")
+    )
+
+    assert result.error == "invalid_bands"
+    assert result.metadata["error_code"] == "invalid_bands"
 
 
 @pytest.mark.asyncio

@@ -1,7 +1,7 @@
 import pytest
 
-from app.agent.tools.web_search.agent import run_web_search
-from app.agent.tools.web_search.schema import WebSearchArguments
+from app.agent.search.agent import run_web_search
+from app.agent.search.schema import WebSearchArguments
 from app.core.settings import get_settings
 
 
@@ -28,7 +28,7 @@ async def test_web_search_agent_calls_tavily_directly(monkeypatch):
     monkeypatch.setenv("TAVILY_API_KEY", "test-key")
     reset_settings()
     monkeypatch.setattr(
-        "app.agent.tools.web_search.agent.search_tavily",
+        "app.agent.search.agent.search_tavily",
         fake_search_tavily,
     )
 

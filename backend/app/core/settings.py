@@ -35,7 +35,7 @@ class Settings(BaseSettings):
     ai_context_max_memory_chars: int = 3000
     ai_context_max_rag_chars: int = 6000
     ai_context_max_tool_chars: int = 3000
-    ai_prompt_profile: str = "chatbot_core_v1"
+    ai_prompt_profile: str = "agent_rs_core_v1"
     ai_prompt_enable_dynamic_modules: bool = True
     ai_prompt_include_reasoning_boundary: bool = True
     ai_prompt_max_core_chars: int | None = None
@@ -67,7 +67,7 @@ class Settings(BaseSettings):
 
     auth_enabled: bool = True
     auth_secret_key: str = "dev-change-me"
-    auth_session_cookie_name: str = "chatbot_session"
+    auth_session_cookie_name: str = "agent_rs_session"
     auth_session_days: int = 14
     auth_cookie_secure: bool = False
     auth_cookie_samesite: str = "lax"
@@ -80,7 +80,7 @@ class Settings(BaseSettings):
 
     default_user_id: str = "00000000-0000-4000-8000-000000000001"
     default_workspace_id: str = "00000000-0000-4000-8000-000000000001"
-    default_user_email: str = "default@local.chatbot"
+    default_user_email: str = "default@local.agent-rs"
     default_user_name: str = "Default User"
     default_workspace_slug: str = "default"
     default_workspace_name: str = "Default Workspace"

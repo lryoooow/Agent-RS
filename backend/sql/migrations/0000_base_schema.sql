@@ -3,41 +3,41 @@
 
 CREATE EXTENSION IF NOT EXISTS vector;
 
-CREATE SCHEMA IF NOT EXISTS chatbot;
+CREATE SCHEMA IF NOT EXISTS agent_rs;
 
 -- 1. Users
-CREATE TABLE IF NOT EXISTS chatbot.users (
+CREATE TABLE IF NOT EXISTS agent_rs.users (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   email TEXT NOT NULL UNIQUE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- 2. Workspaces
-CREATE TABLE IF NOT EXISTS chatbot.workspaces (
+CREATE TABLE IF NOT EXISTS agent_rs.workspaces (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name TEXT NOT NULL,
   slug TEXT NOT NULL UNIQUE,
-  owner_user_id UUID NOT NULL REFERENCES chatbot.users(id),
+  owner_user_id UUID NOT NULL REFERENCES agent_rs.users(id),
   metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- 3. Memberships
-CREATE TABLE IF NOT EXISTS chatbot.memberships (
+CREATE TABLE IF NOT EXISTS agent_rs.memberships (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  workspace_id UUID NOT NULL REFERENCES chatbot.workspaces(id) ON DELETE CASCADE,
-  user_id UUID NOT NULL REFERENCES chatbot.users(id) ON DELETE CASCADE,
+  workspace_id UUID NOT NULL REFERENCES agent_rs.workspaces(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES agent_rs.users(id) ON DELETE CASCADE,
   role TEXT NOT NULL DEFAULT 'member',
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (workspace_id, user_id)
 );
 
 -- 4. Conversations
-CREATE TABLE IF NOT EXISTS chatbot.conversations (
+CREATE TABLE IF NOT EXISTS agent_rs.conversations (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  workspace_id UUID NOT NULL REFERENCES chatbot.workspaces(id) ON DELETE CASCADE,
-  created_by_user_id UUID NOT NULL REFERENCES chatbot.users(id),
+  workspace_id UUID NOT NULL REFERENCES agent_rs.workspaces(id) ON DELETE CASCADE,
+  created_by_user_id UUID NOT NULL REFERENCES agent_rs.users(id),
   title TEXT NOT NULL DEFAULT '',
   scenario_id TEXT NOT NULL DEFAULT 'chat_default',
   model_name TEXT,
@@ -47,9 +47,9 @@ CREATE TABLE IF NOT EXISTS chatbot.conversations (
 );
 
 -- 5. Messages
-CREATE TABLE IF NOT EXISTS chatbot.messages (
+CREATE TABLE IF NOT EXISTS agent_rs.messages (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  conversation_id UUID NOT NULL REFERENCES chatbot.conversations(id) ON DELETE CASCADE,
+  conversation_id UUID NOT NULL REFERENCES agent_rs.conversations(id) ON DELETE CASCADE,
   role TEXT NOT NULL,
   content TEXT NOT NULL DEFAULT '',
   status TEXT NOT NULL DEFAULT 'complete',
@@ -69,6 +69,7 @@ CREATE TABLE IF NOT EXISTS public.documents (
   source_url TEXT,
   doc_type TEXT,
   metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_by_user_id TEXT NOT NULL DEFAULT '00000000-0000-4000-8000-000000000001',
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -119,7 +120,7 @@ END $$;
 
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_conversations_workspace_created
-  ON chatbot.conversations (workspace_id, created_at DESC);
+  ON agent_rs.conversations (workspace_id, created_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_document_chunks_embedding_hnsw
   ON public.document_chunks

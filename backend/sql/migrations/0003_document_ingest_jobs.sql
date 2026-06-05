@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS public.document_ingest_jobs (
   stage_timings JSONB NOT NULL DEFAULT '{}'::jsonb,
   metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
   temp_path TEXT,
+  created_by_user_id TEXT NOT NULL DEFAULT '00000000-0000-4000-8000-000000000001',
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -24,3 +25,6 @@ CREATE INDEX IF NOT EXISTS idx_document_ingest_jobs_status_created
 
 CREATE INDEX IF NOT EXISTS idx_document_ingest_jobs_document_id
   ON public.document_ingest_jobs (document_id);
+
+CREATE INDEX IF NOT EXISTS idx_document_ingest_jobs_owner_created
+  ON public.document_ingest_jobs (created_by_user_id, created_at DESC);

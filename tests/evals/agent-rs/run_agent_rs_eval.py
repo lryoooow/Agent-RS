@@ -853,6 +853,7 @@ def write_summary_md(path: Path, summary: dict[str, Any], failed_rows: list[dict
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run Agent-RS dataset evaluations against the local API.")
+    # Keep the old env var as a compatibility fallback for existing local scripts.
     parser.add_argument("--base-url", default=os.getenv("AGENT_RS_EVAL_BASE_URL", os.getenv("CHATBOT_EVAL_BASE_URL", DEFAULT_BASE_URL)))
     parser.add_argument("--dataset-dir", type=Path, default=DEFAULT_DATASET_DIR)
     parser.add_argument("--report-root", type=Path, default=DEFAULT_REPORT_ROOT)

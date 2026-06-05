@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field, field_validator
 
 class ChatMessage(BaseModel):
     role: Literal["user", "assistant", "system"]
-    content: str
+    content: str = Field(min_length=1, max_length=16000)
 
     @field_validator("content")
     @classmethod
@@ -22,7 +22,7 @@ class ProviderConfig(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    messages: list[ChatMessage] = Field(min_length=1)
+    messages: list[ChatMessage] = Field(min_length=1, max_length=64)
     model: str | None = None
     system_prompt: str | None = None
     stream: bool = False

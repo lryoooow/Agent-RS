@@ -16,11 +16,12 @@ async def insert_document(
     source_url: str | None = None,
     doc_type: str | None = None,
     metadata: dict[str, Any] | None = None,
+    user_id: str,
 ) -> str:
     row = await conn.fetchrow(
         """
-        INSERT INTO public.documents (title, content, source_url, doc_type, metadata)
-        VALUES ($1, $2, $3, $4, $5::jsonb)
+        INSERT INTO public.documents (title, content, source_url, doc_type, metadata, created_by_user_id)
+        VALUES ($1, $2, $3, $4, $5::jsonb, $6)
         RETURNING id::text
         """,
         sanitize_text(title),
@@ -28,6 +29,7 @@ async def insert_document(
         sanitize_text(source_url) if source_url else None,
         sanitize_text(doc_type) if doc_type else None,
         json.dumps(sanitize_json(metadata or {}), ensure_ascii=False),
+        user_id,
     )
     return row["id"]
 
@@ -57,7 +59,7 @@ async def insert_chunks(
         )
 
 
-async def list_documents(conn, *, limit: int = 100) -> list[dict[str, Any]]:
+async def list_documents(conn, *, user_id: str, limit: int = 100) -> list[dict[str, Any]]:
     try:
         rows = await conn.fetch(
             """
@@ -78,13 +80,16 @@ async def list_documents(conn, *, limit: int = 100) -> list[dict[str, Any]]:
               SELECT id, status
               FROM public.document_ingest_jobs
               WHERE document_id = d.id
+                AND created_by_user_id = $1
               ORDER BY created_at DESC
               LIMIT 1
             ) j ON true
+            WHERE d.created_by_user_id = $1
             GROUP BY d.id, j.status, j.id
             ORDER BY d.created_at DESC
-            LIMIT $1
+            LIMIT $2
             """,
+            user_id,
             limit,
         )
     except Exception as exc:
@@ -105,16 +110,18 @@ async def list_documents(conn, *, limit: int = 100) -> list[dict[str, Any]]:
               NULL::text AS latest_job_id
             FROM public.documents d
             LEFT JOIN public.document_chunks c ON c.document_id = d.id
+            WHERE d.created_by_user_id = $1
             GROUP BY d.id
             ORDER BY d.created_at DESC
-            LIMIT $1
+            LIMIT $2
             """,
+            user_id,
             limit,
         )
     return [dict(row) for row in rows]
 
 
-async def get_document(conn, *, document_id: str) -> dict[str, Any] | None:
+async def get_document(conn, *, document_id: str, user_id: str) -> dict[str, Any] | None:
     row = await conn.fetchrow(
         """
         SELECT
@@ -129,10 +136,11 @@ async def get_document(conn, *, document_id: str) -> dict[str, Any] | None:
           count(c.id)::int AS chunk_count
         FROM public.documents d
         LEFT JOIN public.document_chunks c ON c.document_id = d.id
-        WHERE d.id = $1::uuid
+        WHERE d.id = $1::uuid AND d.created_by_user_id = $2
         GROUP BY d.id
         """,
         document_id,
+        user_id,
     )
     return dict(row) if row else None
 
@@ -141,31 +149,41 @@ async def list_document_chunks(
     conn,
     *,
     document_id: str,
+    user_id: str,
     limit: int = 50,
     offset: int = 0,
 ) -> list[dict[str, Any]]:
     rows = await conn.fetch(
         """
         SELECT id::text, document_id::text, chunk_index, content, token_count, metadata, created_at
-        FROM public.document_chunks
-        WHERE document_id = $1::uuid
-        ORDER BY chunk_index ASC
-        LIMIT $2 OFFSET $3
+        FROM public.document_chunks c
+        JOIN public.documents d ON d.id = c.document_id
+        WHERE c.document_id = $1::uuid AND d.created_by_user_id = $2
+        ORDER BY c.chunk_index ASC
+        LIMIT $3 OFFSET $4
         """,
         document_id,
+        user_id,
         limit,
         offset,
     )
     return [dict(row) for row in rows]
 
 
-async def delete_document(conn, *, document_id: str) -> bool:
+async def delete_document(conn, *, document_id: str, user_id: str) -> bool:
     await conn.execute(
-        "DELETE FROM public.document_chunks WHERE document_id = $1::uuid",
+        """
+        DELETE FROM public.document_chunks
+        WHERE document_id = (
+          SELECT id FROM public.documents WHERE id = $1::uuid AND created_by_user_id = $2
+        )
+        """,
         document_id,
+        user_id,
     )
     result = await conn.execute(
-        "DELETE FROM public.documents WHERE id = $1::uuid",
+        "DELETE FROM public.documents WHERE id = $1::uuid AND created_by_user_id = $2",
         document_id,
+        user_id,
     )
     return result.endswith(" 1")
