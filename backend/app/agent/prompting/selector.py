@@ -1,10 +1,12 @@
 ﻿from app.agent.prompting.types import PromptModule
 from app.schemas.chat import ChatMessage
 
-DEFAULT_PROMPT_PROFILE = "chatbot_core_v1"
+DEFAULT_PROMPT_PROFILE = "agent_rs_core_v1"
 
 PROMPT_PROFILES: dict[str, tuple[str, ...]] = {
     DEFAULT_PROMPT_PROFILE: ("core_identity_v1", "security_boundary_v1", "context_priority_v1"),
+    # Legacy alias for existing deployments that still set AI_PROMPT_PROFILE to the old value.
+    "chatbot_core_v1": ("core_identity_v1", "security_boundary_v1", "context_priority_v1"),
 }
 
 PROMPT_MODULES: dict[str, PromptModule] = {

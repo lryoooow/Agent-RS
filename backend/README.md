@@ -16,11 +16,11 @@ uvicorn app.main:app --host 0.0.0.0 --port 3000 --reload
 Windows Conda 环境可直接运行：
 
 ```powershell
-conda activate chatbot
+conda activate agent-rs
 python -m uvicorn app.main:app --host 0.0.0.0 --port 3000 --reload
 ```
 
-`chatbot` 只是本地 Conda 环境名，可按自己的环境实际名称调整。
+`agent-rs` 只是推荐的 Conda 环境名，可按自己的环境实际名称调整。
 
 ## API
 

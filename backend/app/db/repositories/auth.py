@@ -9,7 +9,7 @@ async def find_user_by_email(conn, *, email: str) -> dict[str, Any] | None:
     row = await conn.fetchrow(
         """
         SELECT id::text, email, password_hash, name, email_verified, is_active, created_at
-        FROM chatbot.users
+        FROM agent_rs.users
         WHERE lower(email) = lower($1)
         """,
         email,
@@ -21,7 +21,7 @@ async def get_user_by_id(conn, *, user_id: str) -> dict[str, Any] | None:
     row = await conn.fetchrow(
         """
         SELECT id::text, email, name, email_verified, is_active, created_at
-        FROM chatbot.users
+        FROM agent_rs.users
         WHERE id = $1::uuid
         """,
         user_id,
@@ -33,7 +33,7 @@ async def create_user(conn, *, email: str, password_hash: str, name: str) -> dic
     user_id = str(uuid.uuid4())
     row = await conn.fetchrow(
         """
-        INSERT INTO chatbot.users (
+        INSERT INTO agent_rs.users (
           id, email, password_hash, name, email_verified, is_active
         )
         VALUES ($1::uuid, lower($2), $3, $4, false, true)
@@ -57,7 +57,7 @@ async def create_session(
     expires_at = datetime.now(timezone.utc) + timedelta(days=days)
     row = await conn.fetchrow(
         """
-        INSERT INTO chatbot.sessions (user_id, token_hash, expires_at)
+        INSERT INTO agent_rs.sessions (user_id, token_hash, expires_at)
         VALUES ($1::uuid, $2, $3)
         RETURNING id::text, user_id::text, token_hash, expires_at, created_at, last_seen_at
         """,
@@ -77,7 +77,7 @@ async def ensure_workspace_membership(
 ) -> None:
     await conn.execute(
         """
-        INSERT INTO chatbot.memberships (id, workspace_id, user_id, role)
+        INSERT INTO agent_rs.memberships (id, workspace_id, user_id, role)
         VALUES (gen_random_uuid(), $1::uuid, $2::uuid, $3)
         ON CONFLICT (workspace_id, user_id) DO NOTHING
         """,
@@ -91,8 +91,8 @@ async def find_user_by_session(conn, *, token_hash: str) -> dict[str, Any] | Non
     row = await conn.fetchrow(
         """
         SELECT u.id::text, u.email, u.name, u.email_verified, u.is_active, u.created_at
-        FROM chatbot.sessions s
-        JOIN chatbot.users u ON u.id = s.user_id
+        FROM agent_rs.sessions s
+        JOIN agent_rs.users u ON u.id = s.user_id
         WHERE s.token_hash = $1
           AND s.expires_at > now()
           AND u.is_active = true
@@ -102,17 +102,17 @@ async def find_user_by_session(conn, *, token_hash: str) -> dict[str, Any] | Non
     if row is None:
         return None
     await conn.execute(
-        "UPDATE chatbot.sessions SET last_seen_at = now() WHERE token_hash = $1",
+        "UPDATE agent_rs.sessions SET last_seen_at = now() WHERE token_hash = $1",
         token_hash,
     )
     return dict(row)
 
 
 async def delete_session(conn, *, token_hash: str) -> bool:
-    result = await conn.execute("DELETE FROM chatbot.sessions WHERE token_hash = $1", token_hash)
+    result = await conn.execute("DELETE FROM agent_rs.sessions WHERE token_hash = $1", token_hash)
     return result.endswith(" 1")
 
 
 async def prune_expired_sessions(conn) -> int:
-    result = await conn.execute("DELETE FROM chatbot.sessions WHERE expires_at <= now()")
+    result = await conn.execute("DELETE FROM agent_rs.sessions WHERE expires_at <= now()")
     return int(result.rsplit(" ", 1)[-1])

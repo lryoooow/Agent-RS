@@ -1,7 +1,8 @@
 ﻿import json
 import asyncio
 import logging
-from typing import AsyncIterator
+from dataclasses import dataclass
+from typing import Any, AsyncIterator
 
 from app.agent.runtime import AgentRuntime, AgentPlanResult
 from app.agent.types import AgentEvent
@@ -19,7 +20,7 @@ from app.agent.persistence import (
 )
 from app.agent.provider import create_chat_client
 from app.agent.request_builder import build_provider_request_context
-from app.agent.router import RequestRoute, classify_request_route
+from app.agent.routing import build_agent_route
 from app.agent.stream import (
     agent_status_event,
     analysis_status_event,
@@ -34,24 +35,28 @@ from app.core.settings import get_settings
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class ChatExecutionSetup:
+    config: Any
+    persistence: Any
+    context_request: ChatRequest
+    route: Any
+    provider_context: Any
+    client: Any
+
+
 class AIService:
     async def chat(self, request: ChatRequest) -> ChatResponse:
-        config = resolve_ai_config(
-            request_model=request.model,
-            provider_config=request.provider_config,
-        )
-        persistence = await prepare_persistence(request, model_name=config.model)
-        context_request = request_for_context(request, persistence)
-        route = classify_request_route(self._latest_user_text(context_request), context_request)
-        provider_context = await build_provider_request_context(
-            context_request,
-            user_id=persistence.user_id,
-            skip_retrieval=route == RequestRoute.DIRECT_CHAT,
-        )
-        client = create_chat_client(config)
+        setup = await self._prepare_chat_execution(request)
+        config = setup.config
+        persistence = setup.persistence
+        context_request = setup.context_request
+        route = setup.route
+        provider_context = setup.provider_context
+        client = setup.client
 
         try:
-            if route == RequestRoute.DIRECT_CHAT:
+            if route.mode == "direct_chat":
                 response = await client.chat.completions.create(
                     model=config.model,
                     messages=provider_context.messages,
@@ -69,6 +74,7 @@ class AIService:
                     request=context_request,
                     initial_context=provider_context,
                     user_id=persistence.user_id,
+                    route=route,
                 )
                 response = agent_result.response
                 final_context = agent_result.final_context
@@ -97,7 +103,7 @@ class AIService:
             logger,
             "chat.response",
             model=config.model,
-            route=route.value,
+            route=route.mode,
             retrieved_chunks=final_context.retrieved_chunks,
             finish_reason=result.finish_reason,
             stream=False,
@@ -106,24 +112,17 @@ class AIService:
 
     async def stream_chat(self, request: ChatRequest) -> AsyncIterator[str]:
         try:
-            config = resolve_ai_config(
-                request_model=request.model,
-                provider_config=request.provider_config,
-            )
-            persistence = await prepare_persistence(
+            setup = await self._prepare_chat_execution(
                 request,
-                model_name=config.model,
                 create_streaming_assistant=True,
             )
-            context_request = request_for_context(request, persistence)
-            route = classify_request_route(self._latest_user_text(context_request), context_request)
-            provider_context = await build_provider_request_context(
-                context_request,
-                user_id=persistence.user_id,
-                skip_retrieval=route == RequestRoute.DIRECT_CHAT,
-            )
-            client = create_chat_client(config)
-            runtime = AgentRuntime() if route == RequestRoute.FULL_PIPELINE else None
+            config = setup.config
+            persistence = setup.persistence
+            context_request = setup.context_request
+            route = setup.route
+            provider_context = setup.provider_context
+            client = setup.client
+            runtime = AgentRuntime() if route.mode == "full_pipeline" else None
         except Exception as exc:
             error = exc if isinstance(exc, AIError) else map_provider_error(exc)
             yield sse_event("error", {"code": error.code, "message": error.message})
@@ -148,7 +147,7 @@ class AIService:
             )
             yield analysis_status_event("analyzing")
 
-            if route == RequestRoute.DIRECT_CHAT:
+            if route.mode == "direct_chat":
                 yield analysis_status_event("preparing")
                 yield analysis_status_event("answering")
                 try:
@@ -199,7 +198,7 @@ class AIService:
                     logger,
                     "chat.response",
                     model=config.model,
-                    route=route.value,
+                    route=route.mode,
                     retrieved_chunks=provider_context.retrieved_chunks,
                     finish_reason=(done_payload or {}).get("finish_reason"),
                     stream=True,
@@ -217,6 +216,7 @@ class AIService:
                         user_id=persistence.user_id,
                         trace=agent_result.trace,
                         on_event=event_queue.put,
+                        route=route,
                     )
                 )
                 while True:
@@ -321,7 +321,7 @@ class AIService:
                 logger,
                 "chat.response",
                 model=config.model,
-                route=route.value,
+                route=route.mode,
                 retrieved_chunks=agent_result.final_context.retrieved_chunks,
                 finish_reason=(done_payload or {}).get("finish_reason"),
                 stream=True,
@@ -356,3 +356,35 @@ class AIService:
             if message.role == "user":
                 return message.content.strip()
         return ""
+
+    async def _prepare_chat_execution(
+        self,
+        request: ChatRequest,
+        *,
+        create_streaming_assistant: bool = False,
+    ) -> ChatExecutionSetup:
+        config = resolve_ai_config(
+            request_model=request.model,
+            provider_config=request.provider_config,
+        )
+        persistence = await prepare_persistence(
+            request,
+            model_name=config.model,
+            create_streaming_assistant=create_streaming_assistant,
+        )
+        context_request = request_for_context(request, persistence)
+        route = build_agent_route(self._latest_user_text(context_request), context_request)
+        provider_context = await build_provider_request_context(
+            context_request,
+            user_id=persistence.user_id,
+            skip_retrieval=route.skip_retrieval,
+        )
+        client = create_chat_client(config)
+        return ChatExecutionSetup(
+            config=config,
+            persistence=persistence,
+            context_request=context_request,
+            route=route,
+            provider_context=provider_context,
+            client=client,
+        )

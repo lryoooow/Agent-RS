@@ -18,7 +18,7 @@ async def create_conversation(
     conversation_id = str(uuid.uuid4())
     await conn.execute(
         """
-        INSERT INTO chatbot.conversations (
+        INSERT INTO agent_rs.conversations (
           id, workspace_id, created_by_user_id, title, scenario_id, model_name, metadata_json
         )
         VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, '{}'::jsonb)
@@ -37,7 +37,7 @@ async def get_conversation(conn, conversation_id: str, user_id: str) -> dict[str
     row = await conn.fetchrow(
         """
         SELECT id::text, workspace_id::text, created_by_user_id::text, title, scenario_id, model_name
-        FROM chatbot.conversations
+        FROM agent_rs.conversations
         WHERE id = $1::uuid AND created_by_user_id = $2::uuid
         """,
         conversation_id,
@@ -51,8 +51,8 @@ async def list_conversations(conn, *, user_id: str, limit: int = 50) -> list[dic
         """
         SELECT c.id::text, c.title, c.scenario_id, c.model_name, c.created_at, c.updated_at,
                count(m.id)::int AS message_count
-        FROM chatbot.conversations c
-        LEFT JOIN chatbot.messages m ON m.conversation_id = c.id
+        FROM agent_rs.conversations c
+        LEFT JOIN agent_rs.messages m ON m.conversation_id = c.id
         WHERE c.created_by_user_id = $1::uuid
         GROUP BY c.id
         ORDER BY c.updated_at DESC
@@ -73,7 +73,7 @@ async def update_conversation_title(
 ) -> bool:
     result = await conn.execute(
         """
-        UPDATE chatbot.conversations
+        UPDATE agent_rs.conversations
         SET title = $3, updated_at = now()
         WHERE id = $1::uuid AND created_by_user_id = $2::uuid
         """,
@@ -88,9 +88,9 @@ async def delete_conversation(conn, *, conversation_id: str, user_id: str) -> bo
     row = await get_conversation(conn, conversation_id, user_id)
     if row is None:
         return False
-    await conn.execute("DELETE FROM chatbot.messages WHERE conversation_id = $1::uuid", conversation_id)
+    await conn.execute("DELETE FROM agent_rs.messages WHERE conversation_id = $1::uuid", conversation_id)
     result = await conn.execute(
-        "DELETE FROM chatbot.conversations WHERE id = $1::uuid AND created_by_user_id = $2::uuid",
+        "DELETE FROM agent_rs.conversations WHERE id = $1::uuid AND created_by_user_id = $2::uuid",
         conversation_id,
         user_id,
     )
@@ -99,6 +99,6 @@ async def delete_conversation(conn, *, conversation_id: str, user_id: str) -> bo
 
 async def touch_conversation(conn, conversation_id: str) -> None:
     await conn.execute(
-        "UPDATE chatbot.conversations SET updated_at = now() WHERE id = $1::uuid",
+        "UPDATE agent_rs.conversations SET updated_at = now() WHERE id = $1::uuid",
         conversation_id,
     )

@@ -13,19 +13,21 @@ async def create_ingest_job(
     file_size: int,
     temp_path: str,
     metadata: dict[str, Any] | None = None,
+    user_id: str,
 ) -> str:
     row = await conn.fetchrow(
         """
         INSERT INTO public.document_ingest_jobs (
-          filename, file_size, temp_path, metadata
+          filename, file_size, temp_path, metadata, created_by_user_id
         )
-        VALUES ($1, $2, $3, $4::jsonb)
+        VALUES ($1, $2, $3, $4::jsonb, $5)
         RETURNING id::text
         """,
         sanitize_text(filename),
         file_size,
         temp_path,
         json.dumps(sanitize_json(metadata or {}), ensure_ascii=False),
+        user_id,
     )
     return row["id"]
 
@@ -75,16 +77,19 @@ async def update_ingest_job(
     )
 
 
-async def get_ingest_job(conn, *, job_id: str) -> dict[str, Any] | None:
+async def get_ingest_job(conn, *, job_id: str, user_id: str | None = None) -> dict[str, Any] | None:
+    owner_clause = "AND created_by_user_id = $2" if user_id else ""
+    params: tuple[Any, ...] = (job_id, user_id) if user_id else (job_id,)
     row = await conn.fetchrow(
-        """
+        f"""
         SELECT id::text, status, progress, filename, doc_type, file_size, text_length,
                chunk_count, embedding_batches, document_id::text, error_code, error_message,
                stage_timings, metadata, created_at, updated_at
         FROM public.document_ingest_jobs
         WHERE id = $1::uuid
+        {owner_clause}
         """,
-        job_id,
+        *params,
     )
     return dict(row) if row else None
 

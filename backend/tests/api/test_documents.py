@@ -75,7 +75,9 @@ def test_documents_list_returns_documents(monkeypatch) -> None:
     async def fake_fetch_optional_pool():
         return FakePool()
 
-    async def fake_list_documents(_):
+    async def fake_list_documents(_, *, user_id: str, limit: int = 100):
+        assert user_id == get_settings().default_user_id
+        assert limit == 100
         return [
             {
                 "id": "00000000-0000-4000-8000-000000000901",
@@ -141,8 +143,9 @@ def test_documents_delete_returns_not_found(monkeypatch) -> None:
     assert response.json()["detail"]["code"] == "DOCUMENT_NOT_FOUND"
 
 
-def test_documents_upload_accepts_text_file(monkeypatch) -> None:
+def test_documents_upload_accepts_text_file(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("DATABASE_ENABLED", "true")
+    monkeypatch.setenv("STORAGE_UPLOAD_DIR", str(tmp_path / "uploads"))
     monkeypatch.setattr("app.api.routes.documents.fetch_optional_pool", fake_fetch_optional_pool)
     monkeypatch.setattr("app.api.routes.documents.create_ingest_job", fake_create_ingest_job)
     monkeypatch.setattr("app.api.routes.documents.schedule_task", fake_schedule_task)
@@ -161,7 +164,7 @@ def test_documents_upload_accepts_text_file(monkeypatch) -> None:
     }
 
 
-def test_documents_upload_accepts_docx_file(monkeypatch) -> None:
+def test_documents_upload_accepts_docx_file(monkeypatch, tmp_path) -> None:
     from docx import Document
 
     document = Document()
@@ -170,6 +173,7 @@ def test_documents_upload_accepts_docx_file(monkeypatch) -> None:
     document.save(buffer)
 
     monkeypatch.setenv("DATABASE_ENABLED", "true")
+    monkeypatch.setenv("STORAGE_UPLOAD_DIR", str(tmp_path / "uploads"))
     monkeypatch.setattr("app.api.routes.documents.fetch_optional_pool", fake_fetch_optional_pool)
     monkeypatch.setattr("app.api.routes.documents.create_ingest_job", fake_create_ingest_job)
     monkeypatch.setattr("app.api.routes.documents.schedule_task", fake_schedule_task)
@@ -191,8 +195,9 @@ def test_documents_upload_accepts_docx_file(monkeypatch) -> None:
     assert response.json()["job_id"] == "00000000-0000-4000-8000-000000000999"
 
 
-def test_documents_upload_accepts_text_pdf_file(monkeypatch) -> None:
+def test_documents_upload_accepts_text_pdf_file(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("DATABASE_ENABLED", "true")
+    monkeypatch.setenv("STORAGE_UPLOAD_DIR", str(tmp_path / "uploads"))
     monkeypatch.setattr("app.api.routes.documents.fetch_optional_pool", fake_fetch_optional_pool)
     monkeypatch.setattr("app.api.routes.documents.create_ingest_job", fake_create_ingest_job)
     monkeypatch.setattr("app.api.routes.documents.schedule_task", fake_schedule_task)

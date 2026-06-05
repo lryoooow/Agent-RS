@@ -1,4 +1,4 @@
-ALTER TABLE chatbot.users
+ALTER TABLE agent_rs.users
   ADD COLUMN IF NOT EXISTS password_hash TEXT NOT NULL DEFAULT 'disabled',
   ADD COLUMN IF NOT EXISTS name TEXT NOT NULL DEFAULT '',
   ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT false,
@@ -7,11 +7,11 @@ ALTER TABLE chatbot.users
   ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_unique
-  ON chatbot.users (lower(email));
+  ON agent_rs.users (lower(email));
 
-CREATE TABLE IF NOT EXISTS chatbot.sessions (
+CREATE TABLE IF NOT EXISTS agent_rs.sessions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID NOT NULL REFERENCES chatbot.users(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES agent_rs.users(id) ON DELETE CASCADE,
   token_hash TEXT NOT NULL UNIQUE,
   expires_at TIMESTAMPTZ NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS chatbot.sessions (
 );
 
 CREATE INDEX IF NOT EXISTS idx_sessions_user_id
-  ON chatbot.sessions (user_id);
+  ON agent_rs.sessions (user_id);
 
 CREATE INDEX IF NOT EXISTS idx_sessions_expires_at
-  ON chatbot.sessions (expires_at);
+  ON agent_rs.sessions (expires_at);

@@ -17,3 +17,16 @@ def test_json_body_size_limit(monkeypatch) -> None:
 
     assert response.status_code == 413
     assert response.json()["error"]["code"] == "REQUEST_TOO_LARGE"
+
+
+def test_chat_rejects_too_many_messages() -> None:
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/api/chat",
+        json={"messages": [{"role": "user", "content": f"msg {index}"} for index in range(65)]},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "VALIDATION_ERROR"

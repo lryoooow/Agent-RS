@@ -20,16 +20,25 @@ async def apply_migrations() -> None:
         raise RuntimeError("Database is disabled or DATABASE_URL is not configured.")
 
     async with pool.acquire() as conn:
-        await conn.execute("CREATE SCHEMA IF NOT EXISTS chatbot")
+        # Compatibility path for databases created before the Agent-RS rename.
+        old_exists = await conn.fetchval(
+            "SELECT 1 FROM information_schema.schemata WHERE schema_name = 'chatbot'"
+        )
+        new_exists = await conn.fetchval(
+            "SELECT 1 FROM information_schema.schemata WHERE schema_name = 'agent_rs'"
+        )
+        if old_exists and not new_exists:
+            await conn.execute("ALTER SCHEMA chatbot RENAME TO agent_rs")
+        await conn.execute("CREATE SCHEMA IF NOT EXISTS agent_rs")
         await conn.execute(
             """
-            CREATE TABLE IF NOT EXISTS chatbot.schema_migrations (
+            CREATE TABLE IF NOT EXISTS agent_rs.schema_migrations (
               version TEXT PRIMARY KEY,
               applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
             )
             """
         )
-        rows = await conn.fetch("SELECT version FROM chatbot.schema_migrations")
+        rows = await conn.fetch("SELECT version FROM agent_rs.schema_migrations")
         applied = {row["version"] for row in rows}
 
         for path in sorted(MIGRATIONS_DIR.glob("*.sql")):
@@ -39,7 +48,7 @@ async def apply_migrations() -> None:
             async with conn.transaction():
                 await conn.execute(path.read_text(encoding="utf-8"))
                 await conn.execute(
-                    "INSERT INTO chatbot.schema_migrations (version) VALUES ($1)",
+                    "INSERT INTO agent_rs.schema_migrations (version) VALUES ($1)",
                     version,
                 )
             print(f"applied {version}")

@@ -23,7 +23,7 @@ async def append_message(
     message_id = str(uuid.uuid4())
     await conn.execute(
         """
-        INSERT INTO chatbot.messages (
+        INSERT INTO agent_rs.messages (
           id, conversation_id, role, content, status, metadata_json, tokens_in, tokens_out
         )
         VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6::jsonb, $7, $8)
@@ -52,7 +52,7 @@ async def update_message_complete(
 ) -> None:
     await conn.execute(
         """
-        UPDATE chatbot.messages
+        UPDATE agent_rs.messages
         SET content = $2,
             status = $3,
             metadata_json = metadata_json || $4::jsonb,
@@ -71,7 +71,7 @@ async def update_message_complete(
 
 async def set_embedding(conn, *, message_id: str, embedding: list[float]) -> None:
     await conn.execute(
-        "UPDATE chatbot.messages SET embedding = $2::vector WHERE id = $1::uuid",
+        "UPDATE agent_rs.messages SET embedding = $2::vector WHERE id = $1::uuid",
         message_id,
         encode_vector(embedding),
     )
@@ -93,7 +93,7 @@ async def list_recent_messages(conn, *, conversation_id: str, limit: int) -> lis
     rows = await conn.fetch(
         """
         SELECT role, content
-        FROM chatbot.messages
+        FROM agent_rs.messages
         WHERE conversation_id = $1::uuid
           AND status = 'complete'
           AND role IN ('user', 'assistant', 'system')
@@ -124,7 +124,7 @@ async def list_conversation_messages(
     rows = await conn.fetch(
         f"""
         SELECT id::text, role, content, status, metadata_json, tokens_in, tokens_out, created_at
-        FROM chatbot.messages
+        FROM agent_rs.messages
         WHERE conversation_id = $1::uuid
           {before_clause}
         ORDER BY created_at DESC

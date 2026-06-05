@@ -3,6 +3,7 @@ import time
 import asyncio
 from dataclasses import dataclass
 
+from app.agent.imagery_access import iter_user_imagery_metadata
 from app.agent.context.assembler import assemble_context
 from app.agent.context.summarizer import build_context_summaries
 from app.agent.context.types import ContextAssembly
@@ -14,15 +15,13 @@ from app.agent.prompting.scenarios import (
     wants_imagery_context,
 )
 from app.agent.rag.formatter import format_retrieved_blocks
-from app.agent.rag.mmr import mmr_select
-from app.agent.rerank import get_rerank_service
+from app.agent.rag.service import retrieve_rag_context
 from app.db.pool import fetch_optional_pool
 from app.db.repositories.memory import list_relevant_memories
 from app.db.repositories.message import list_recent_messages
 from app.db.repositories.vector_search import search_hybrid_rrf
 from app.schemas.chat import ChatRequest
 from app.core.logging import log_event
-from app.core.paths import imagery_root
 from app.core.settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -113,7 +112,7 @@ async def build_provider_request_context(
         memory=memory_context or summaries.memory,
         rag_context=rag_context,
         tool_context=tool_context,
-        imagery_inventory=_build_imagery_inventory() if wants_imagery_context(query) else None,
+        imagery_inventory=_build_imagery_inventory(user_id) if wants_imagery_context(query) else None,
         max_total_chars=settings.context_max_total_chars,
         max_recent_chars=settings.ai_context_max_recent_chars,
         max_recent_messages=settings.context_max_recent_messages,
@@ -204,7 +203,7 @@ async def _resolve_retrieved_context(
         if can_parallel:
             memory_context, rag_payload = await asyncio.gather(
                 _load_memory_context(pool, user_id=user_id, embedding=embedding),
-                _load_rag_context(pool, query=query, embedding=embedding, rag_trace=rag_trace),
+                _load_rag_context(pool, query=query, embedding=embedding, user_id=user_id, rag_trace=rag_trace),
             )
             rag_context, retrieved_chunks = rag_payload
             rag_trace["parallel"] = True
@@ -216,6 +215,7 @@ async def _resolve_retrieved_context(
                     pool,
                     query=query,
                     embedding=embedding,
+                    user_id=user_id,
                     rag_trace=rag_trace,
                 )
             rag_trace["parallel"] = False
@@ -254,39 +254,18 @@ async def _load_rag_context(
     *,
     query: str,
     embedding: list[float],
+    user_id: str | None,
     rag_trace: dict,
 ) -> tuple[str | None, int]:
-    settings = get_settings()
-    started = time.perf_counter()
-    async with pool.acquire() as conn:
-        chunks = await search_hybrid_rrf(
-            conn,
-            embedding=embedding,
-            query=query,
-            limit=max(settings.rag_candidate_limit, settings.rag_retrieval_limit),
-            k=settings.rag_rrf_k,
-        )
-    rag_trace["candidates"] = len(chunks)
-    rag_trace["recall_ms"] = int((time.perf_counter() - started) * 1000)
-    started = time.perf_counter()
-    chunks = await get_rerank_service().rerank(
+    result = await retrieve_rag_context(
+        pool,
         query=query,
-        items=chunks,
-        top_n=(settings.rerank_top_n or settings.rag_retrieval_limit) + 3,
+        embedding=embedding,
+        user_id=user_id,
+        trace=rag_trace,
+        search_fn=search_hybrid_rrf,
     )
-    rag_trace["rerank_ms"] = int((time.perf_counter() - started) * 1000)
-    if settings.rag_mmr_enabled:
-        chunks = mmr_select(
-            candidates=chunks,
-            query_embedding=embedding,
-            top_n=settings.rerank_top_n or settings.rag_retrieval_limit,
-            lambda_mult=settings.rag_mmr_lambda,
-        )
-        rag_trace["mmr_selected"] = len(chunks)
-    else:
-        chunks = chunks[: settings.rerank_top_n or settings.rag_retrieval_limit]
-    retrieved_chunks = sum(1 for chunk in chunks if str(chunk.get("content") or "").strip())
-    return format_retrieved_blocks(chunks, title="document"), retrieved_chunks
+    return result.context, result.retrieved_chunks
 
 
 def _latest_user_text(request: ChatRequest) -> str:
@@ -311,26 +290,12 @@ async def build_planning_context(
     return messages
 
 
-def _build_imagery_inventory() -> str | None:
+def _build_imagery_inventory(user_id: str | None) -> str | None:
     """Build a brief inventory of uploaded imagery for LLM context."""
-    import json
-
-    root = imagery_root()
-    if not root.exists():
-        return None
-
     items: list[str] = []
-    for entry in sorted(root.iterdir()):
-        meta_file = entry / "metadata.json"
-        if not meta_file.exists():
-            continue
-        try:
-            meta = json.loads(meta_file.read_text(encoding="utf-8"))
-        except OSError:
-            logger.warning("Failed to read imagery metadata: %s", meta_file, exc_info=True)
-            continue
+    for imagery_id, meta in iter_user_imagery_metadata(user_id):
         items.append(
-            f"- ID: {entry.name} | {meta.get('band_count', '?')}波段 "
+            f"- ID: {imagery_id} | {meta.get('band_count', '?')}波段 "
             f"| {meta.get('width', '?')}x{meta.get('height', '?')}px "
             f"| CRS: {meta.get('crs') or '未知'}"
         )

@@ -1,5 +1,6 @@
 from io import BytesIO
 from pathlib import Path
+import json
 from datetime import datetime, timedelta, timezone
 
 import numpy as np
@@ -117,6 +118,42 @@ def test_imagery_result_serves_preview_from_safe_path(monkeypatch, tmp_path: Pat
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("image/png")
+
+
+def test_imagery_list_hides_other_user_metadata(monkeypatch, tmp_path: Path) -> None:
+    client = make_client(monkeypatch, tmp_path)
+    other_dir = tmp_path / "imagery" / "94e758f38ede"
+    other_dir.mkdir(parents=True)
+    (other_dir / "metadata.json").write_text(
+        json.dumps({"filename": "other.tif", "owner_user_id": "other-user"}),
+        encoding="utf-8",
+    )
+
+    response = client.get("/api/imagery")
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_imagery_detail_and_result_reject_other_owner(monkeypatch, tmp_path: Path) -> None:
+    client = make_client(monkeypatch, tmp_path)
+    other_dir = tmp_path / "imagery" / "94e758f38ede"
+    results_dir = other_dir / "results"
+    results_dir.mkdir(parents=True)
+    (other_dir / "metadata.json").write_text(
+        json.dumps({"filename": "other.tif", "owner_user_id": "other-user"}),
+        encoding="utf-8",
+    )
+    (results_dir / "preview.png").write_bytes(b"png")
+
+    detail = client.get("/api/imagery/94e758f38ede")
+    result = client.get("/api/imagery/94e758f38ede/results/preview.png")
+    delete = client.delete("/api/imagery/94e758f38ede")
+
+    assert detail.status_code == 404
+    assert result.status_code == 404
+    assert delete.status_code == 404
+    assert other_dir.exists()
 
 
 def test_imagery_list_skips_broken_metadata(monkeypatch, tmp_path: Path) -> None:

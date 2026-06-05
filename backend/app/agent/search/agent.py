@@ -2,12 +2,12 @@
 
 import httpx
 
-from app.agent.tools.web_search.cache import get_result_cache
-from app.agent.tools.web_search.filter import filter_search_results
-from app.agent.tools.web_search.formatter import format_search_context
-from app.agent.tools.web_search.prompt import load_web_search_prompt
-from app.agent.tools.web_search.schema import WebSearchArguments
-from app.agent.tools.web_search.tavily_client import TavilySearchError, search_tavily
+from app.agent.search.cache import get_result_cache
+from app.agent.search.filter import filter_search_results
+from app.agent.search.formatter import format_search_context
+from app.agent.search.prompt import load_web_search_prompt
+from app.agent.search.schema import WebSearchArguments
+from app.agent.search.tavily_client import TavilySearchError, search_tavily
 from app.agent.types import ToolRunResult
 from app.agent.rerank import get_rerank_service
 from app.core.settings import get_settings

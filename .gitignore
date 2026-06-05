@@ -6,8 +6,10 @@ build/
 .venv/
 __pycache__/
 .pytest_cache/
+.test-tmp/
 *.pyc
 *.egg-info/
 backend/storage/
+backend/backend/storage/
 /storage/
 ~$*.docx

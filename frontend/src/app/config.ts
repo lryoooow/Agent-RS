@@ -3,6 +3,7 @@ import type { StoredConfig } from "./types";
 export const DEFAULT_ENDPOINT = "/api/chat";
 export const DEFAULT_SYSTEM_PROMPT = "";
 export const STORAGE_KEY = "agent-rs.config.v1";
+// Legacy key kept so existing browsers migrate to the Agent-RS key on save.
 const LEGACY_STORAGE_KEY = "chatbot.config.v1";
 
 export const SUGGESTIONS = [

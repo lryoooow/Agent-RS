@@ -74,6 +74,20 @@ class RuntimeToolCall:
 
 
 @dataclass(frozen=True)
+class RuntimeAgentCall:
+    name: str
+    arguments: dict[str, Any]
+    call_id: str | None = None
+
+
+@dataclass(frozen=True)
+class AgentArtifact:
+    type: str
+    payload: dict[str, Any]
+    visibility: Literal["response_metadata", "tool_context"] = "response_metadata"
+
+
+@dataclass(frozen=True)
 class ToolRunResult:
     tool_context: str
     result_count: int = 0
@@ -81,3 +95,4 @@ class ToolRunResult:
     error: str | None = None
     geospatial_result: GeospatialResult | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    artifacts: list[AgentArtifact] = field(default_factory=list)

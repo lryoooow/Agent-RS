@@ -15,6 +15,7 @@ import type {
 } from "../types";
 
 const CONVERSATION_STORAGE_KEY = "agent-rs.conversationId";
+// Legacy key kept so existing browser sessions migrate to the Agent-RS key.
 const LEGACY_CONVERSATION_STORAGE_KEY = "chatbot.conversationId";
 
 type ChatControllerSettings = {

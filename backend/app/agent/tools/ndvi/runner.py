@@ -2,6 +2,7 @@
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -10,7 +11,7 @@ from typing import Any
 
 from app.agent.tools.ndvi.formatter import format_ndvi_context
 from app.agent.tools.ndvi.schema import NDVIArguments
-from app.agent.types import ToolRunResult
+from app.agent.types import AgentArtifact, ToolRunResult
 from app.mcp.ndvi_client import MCPCallError, NDVIMCPClient
 from app.schemas.chat import ToolExecutionInfo
 from app.core.paths import imagery_root, project_root
@@ -19,6 +20,7 @@ from app.core.settings import get_settings
 logger = logging.getLogger(__name__)
 
 COMPUTE_SCRIPT = project_root() / "docker" / "ndvi" / "compute_ndvi.py"
+IMAGERY_ID_PATTERN = re.compile(r"^[a-f0-9]{12}$")
 
 
 class NDVIExecutionError(Exception):
@@ -33,6 +35,12 @@ def _imagery_root() -> Path:
 
 async def run_ndvi(args: NDVIArguments) -> ToolRunResult:
     settings = get_settings()
+    if not IMAGERY_ID_PATTERN.fullmatch(args.imagery_id):
+        return ToolRunResult(
+            tool_context="NDVI 计算参数无效: imagery_id 必须是 12 位十六进制影像 ID。",
+            error="invalid_imagery_id",
+            metadata={"error_code": "invalid_imagery_id", "execution_mode": "failed"},
+        )
     imagery_dir = _imagery_root() / args.imagery_id
     source_path = imagery_dir / "working.tif"
     if not source_path.exists():
@@ -105,6 +113,7 @@ async def run_ndvi(args: NDVIArguments) -> ToolRunResult:
         result_count=1,
         query=f"NDVI({args.imagery_id})",
         geospatial_result=geospatial_result,
+        artifacts=[AgentArtifact(type="geospatial", payload=geospatial_result)],
         metadata={
             "execution_mode": execution["mode"],
             "fallback_used": execution["fallback_used"],

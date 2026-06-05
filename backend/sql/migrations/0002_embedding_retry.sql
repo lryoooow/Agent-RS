@@ -1,6 +1,6 @@
 CREATE TABLE IF NOT EXISTS public.embedding_retry (
   id BIGSERIAL PRIMARY KEY,
-  message_id UUID NOT NULL REFERENCES chatbot.messages(id) ON DELETE CASCADE,
+  message_id UUID NOT NULL REFERENCES agent_rs.messages(id) ON DELETE CASCADE,
   attempts INT NOT NULL DEFAULT 0,
   last_error TEXT,
   last_attempt_at TIMESTAMPTZ,

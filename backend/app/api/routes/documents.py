@@ -10,6 +10,7 @@ from typing import Any
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
 
+from app.auth.current_user import get_current_user_id
 from app.agent.embedding.service import EmbeddingUnavailableError, get_embedding_service
 from app.db.errors import is_missing_schema_error
 from app.db.pool import fetch_optional_pool
@@ -139,9 +140,10 @@ class DocumentSearchResponse(BaseModel):
 
 @router.get("/documents", response_model=DocumentListResponse)
 async def list_knowledge_documents() -> DocumentListResponse:
+    user_id = get_current_user_id()
     pool = await _require_document_db()
     async with pool.acquire() as conn:
-        rows = await list_documents(conn)
+        rows = await list_documents(conn, user_id=user_id)
 
     return DocumentListResponse(
         documents=[
@@ -170,6 +172,7 @@ async def create_document(request: DocumentCreateRequest) -> DocumentCreateRespo
         doc_type=request.doc_type or "text",
         source_url=request.source_url,
         metadata=request.metadata,
+        user_id=get_current_user_id(),
     )
 
 
@@ -180,6 +183,7 @@ async def upload_document(
     metadata: str | None = Form(default=None),
 ) -> DocumentUploadJobResponse:
     settings = get_settings()
+    user_id = get_current_user_id()
     data = await file.read()
     if len(data) > settings.document_max_file_bytes:
         raise HTTPException(
@@ -224,6 +228,7 @@ async def upload_document(
                 file_size=len(data),
                 temp_path=str(temp_path),
                 metadata={"title": title, "content_type": file.content_type, **parsed_metadata},
+                user_id=user_id,
             )
     except Exception as exc:
         temp_path.unlink(missing_ok=True)
@@ -238,6 +243,7 @@ async def upload_document(
             content_type=file.content_type,
             title=title,
             metadata=parsed_metadata,
+            user_id=user_id,
         )
     )
     return DocumentUploadJobResponse(job_id=job_id, status="pending")
@@ -245,10 +251,11 @@ async def upload_document(
 
 @router.get("/documents/jobs/{job_id}", response_model=DocumentJobResponse)
 async def get_document_job(job_id: str) -> DocumentJobResponse:
+    user_id = get_current_user_id()
     pool = await _require_document_db()
     try:
         async with pool.acquire() as conn:
-            row = await get_ingest_job(conn, job_id=job_id)
+            row = await get_ingest_job(conn, job_id=job_id, user_id=user_id)
     except Exception as exc:
         if is_missing_schema_error(exc):
             raise _migration_required() from exc
@@ -263,9 +270,10 @@ async def get_document_job(job_id: str) -> DocumentJobResponse:
 
 @router.get("/documents/{document_id}", response_model=DocumentDetailResponse)
 async def get_knowledge_document(document_id: str) -> DocumentDetailResponse:
+    user_id = get_current_user_id()
     pool = await _require_document_db()
     async with pool.acquire() as conn:
-        row = await get_document(conn, document_id=document_id)
+        row = await get_document(conn, document_id=document_id, user_id=user_id)
     if row is None:
         raise HTTPException(
             status_code=404,
@@ -291,9 +299,16 @@ async def get_knowledge_document_chunks(
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
 ) -> DocumentChunksResponse:
+    user_id = get_current_user_id()
     pool = await _require_document_db()
     async with pool.acquire() as conn:
-        rows = await list_document_chunks(conn, document_id=document_id, limit=limit, offset=offset)
+        rows = await list_document_chunks(
+            conn,
+            document_id=document_id,
+            user_id=user_id,
+            limit=limit,
+            offset=offset,
+        )
     return DocumentChunksResponse(
         chunks=[
             DocumentChunkItem(
@@ -314,6 +329,7 @@ async def get_knowledge_document_chunks(
 @router.post("/documents/search", response_model=DocumentSearchResponse)
 async def search_knowledge_documents(request: DocumentSearchRequest) -> DocumentSearchResponse:
     settings = get_settings()
+    user_id = get_current_user_id()
     pool = await _require_document_db()
     started = time.perf_counter()
     embedding = await get_embedding_service().embed_text(request.query)
@@ -326,6 +342,7 @@ async def search_knowledge_documents(request: DocumentSearchRequest) -> Document
             query=request.query,
             limit=max(settings.rag_candidate_limit, request.limit),
             k=settings.rag_rrf_k,
+            user_id=user_id,
         )
     recall_ms = int((time.perf_counter() - recall_started) * 1000)
     rerank_started = time.perf_counter()
@@ -378,6 +395,7 @@ async def _store_document_content(
     doc_type: str,
     source_url: str | None,
     metadata: dict[str, Any],
+    user_id: str,
     job_id: str | None = None,
 ) -> DocumentCreateResponse:
     settings = get_settings()
@@ -456,6 +474,7 @@ async def _store_document_content(
                 source_url=source_url,
                 doc_type=doc_type,
                 metadata=metadata,
+                user_id=user_id,
             )
             chunk_metadata = dict(metadata)
             if source_url:
@@ -506,6 +525,7 @@ async def _run_document_ingest_job(
     content_type: str | None,
     title: str | None,
     metadata: dict[str, Any],
+    user_id: str,
 ) -> None:
     settings = get_settings()
     stage_timings: dict[str, int] = {}
@@ -548,6 +568,7 @@ async def _run_document_ingest_job(
             doc_type=parsed.doc_type,
             source_url=None,
             metadata={**parsed.metadata, **metadata},
+            user_id=user_id,
             job_id=job_id,
         )
     except DocumentParseError as exc:
@@ -586,10 +607,11 @@ async def _fail_ingest_job(job_id: str, code: str, message: str) -> None:
 
 @router.delete("/documents/{document_id}", response_model=DocumentDeleteResponse)
 async def remove_document(document_id: str) -> DocumentDeleteResponse:
+    user_id = get_current_user_id()
     pool = await _require_document_db()
     async with pool.acquire() as conn:
         async with conn.transaction():
-            deleted = await delete_document(conn, document_id=document_id)
+            deleted = await delete_document(conn, document_id=document_id, user_id=user_id)
     if not deleted:
         raise HTTPException(
             status_code=404,

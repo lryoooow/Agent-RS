@@ -8,20 +8,16 @@ session) to keep state isolation simple.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from pathlib import Path
 from typing import Any
 
+from app.mcp.client import MCPCallError, StdioMCPClient
+
 logger = logging.getLogger(__name__)
 
-PROTOCOL_VERSION = "2024-11-05"
 CLIENT_NAME = "agent-rs-ndvi-client"
 CLIENT_VERSION = "0.1.0"
-
-
-class MCPCallError(Exception):
-    """Raised when the MCP server returns an error or the transport fails."""
 
 
 class NDVIMCPClient:
@@ -45,9 +41,10 @@ class NDVIMCPClient:
         self.cpus = cpus
         self.network = network
 
-    def host_to_container(self, host_path: Path) -> str:
-        """Map a host path under imagery_root to its container-side path."""
-        rel = host_path.resolve().relative_to(self.host_imagery_root)
+    def host_to_container(self, host_path: Path, *, mount_root: Path | None = None) -> str:
+        """Map a host path under the active mount root to its container-side path."""
+        root = (mount_root or self.host_imagery_root).resolve()
+        rel = host_path.resolve().relative_to(root)
         return f"{self.container_imagery_root}/{rel.as_posix()}"
 
     async def call_ndvi(
@@ -61,122 +58,32 @@ class NDVIMCPClient:
 
         Returns the parsed stats dict from structuredContent.
         """
-        container_input = self.host_to_container(source_path)
-        container_output = self.host_to_container(output_dir)
+        mount_root = source_path.resolve().parent
+        output_dir.resolve().relative_to(mount_root)
+        container_input = self.host_to_container(source_path, mount_root=mount_root)
+        container_output = self.host_to_container(output_dir, mount_root=mount_root)
 
         cmd = [
             "docker", "run", "--rm", "-i",
             "--network", self.network,
             "--memory", self.memory_limit,
             "--cpus", str(self.cpus),
-            "-v", f"{self.host_imagery_root}:{self.container_imagery_root}",
+            "-v", f"{mount_root}:{self.container_imagery_root}",
             self.image,
         ]
-        logger.info("[NDVI MCP] launch image=%s root_exists=%s", self.image, self.host_imagery_root.exists())
+        logger.info("[NDVI MCP] launch image=%s mount_root=%s", self.image, mount_root)
 
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+        return await StdioMCPClient(
+            command=cmd,
+            timeout_seconds=self.timeout_seconds,
+            client_name=CLIENT_NAME,
+            client_version=CLIENT_VERSION,
+        ).call_tool(
+            "calculate_ndvi",
+            {
+                "input_path": container_input,
+                "output_dir": container_output,
+                "red_band": red_band,
+                "nir_band": nir_band,
+            },
         )
-
-        try:
-            stats = await asyncio.wait_for(
-                self._handshake_and_call(
-                    proc, container_input, container_output, red_band, nir_band
-                ),
-                timeout=self.timeout_seconds,
-            )
-        except asyncio.TimeoutError:
-            proc.kill()
-            await proc.wait()
-            raise
-        except Exception:
-            proc.kill()
-            await proc.wait()
-            raise
-        else:
-            try:
-                proc.stdin.close()
-            except Exception:
-                pass
-            await proc.wait()
-
-        return stats
-
-    async def _handshake_and_call(
-        self,
-        proc: asyncio.subprocess.Process,
-        container_input: str,
-        container_output: str,
-        red_band: int,
-        nir_band: int,
-    ) -> dict[str, Any]:
-        await self._send(proc, {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "initialize",
-            "params": {
-                "protocolVersion": PROTOCOL_VERSION,
-                "capabilities": {},
-                "clientInfo": {"name": CLIENT_NAME, "version": CLIENT_VERSION},
-            },
-        })
-        init_resp = await self._recv(proc)
-        if "error" in init_resp:
-            raise MCPCallError(f"initialize failed: {init_resp['error']}")
-
-        await self._send(proc, {
-            "jsonrpc": "2.0",
-            "method": "notifications/initialized",
-        })
-
-        await self._send(proc, {
-            "jsonrpc": "2.0",
-            "id": 2,
-            "method": "tools/call",
-            "params": {
-                "name": "calculate_ndvi",
-                "arguments": {
-                    "input_path": container_input,
-                    "output_dir": container_output,
-                    "red_band": red_band,
-                    "nir_band": nir_band,
-                },
-            },
-        })
-        call_resp = await self._recv(proc)
-        if "error" in call_resp:
-            raise MCPCallError(f"tools/call failed: {call_resp['error']}")
-
-        result = call_resp.get("result") or {}
-        if result.get("isError"):
-            text = ""
-            for item in result.get("content", []):
-                if item.get("type") == "text":
-                    text = item.get("text", "")
-                    break
-            raise MCPCallError(text or "tool returned isError without message")
-
-        stats = result.get("structuredContent")
-        if not isinstance(stats, dict):
-            raise MCPCallError("missing structuredContent in tool response")
-        return stats
-
-    @staticmethod
-    async def _send(proc: asyncio.subprocess.Process, msg: dict) -> None:
-        line = (json.dumps(msg) + "\n").encode("utf-8")
-        proc.stdin.write(line)
-        await proc.stdin.drain()
-
-    @staticmethod
-    async def _recv(proc: asyncio.subprocess.Process) -> dict:
-        line = await proc.stdout.readline()
-        if not line:
-            stderr = (await proc.stderr.read()).decode(errors="replace")
-            raise MCPCallError(f"MCP server closed stdout. stderr: {stderr[:500]}")
-        try:
-            return json.loads(line.decode("utf-8"))
-        except json.JSONDecodeError as exc:
-            raise MCPCallError(f"invalid JSON from server: {exc}: {line!r}")

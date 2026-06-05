@@ -213,6 +213,11 @@ def _require_auth_settings(settings) -> None:
             status_code=500,
             detail={"code": "AUTH_SECRET_NOT_CONFIGURED", "message": "AUTH_SECRET_KEY is not configured."},
         )
+    if settings.database_enabled and settings.auth_secret_key == "dev-change-me":
+        raise HTTPException(
+            status_code=500,
+            detail={"code": "AUTH_SECRET_INSECURE", "message": "AUTH_SECRET_KEY must be changed."},
+        )
 
 
 def _validate_password(password: str, min_length: int) -> None:
