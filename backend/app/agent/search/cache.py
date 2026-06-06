@@ -104,8 +104,28 @@ class ResultCache:
         self._cache.clear()
 
 
+class PlannerDecisionCache:
+    """Cache validated planner decisions keyed by normalized query and scope."""
+
+    def __init__(self, max_size: int = 256, ttl_seconds: float = 1800) -> None:
+        self._cache = TTLCache(max_size=max_size, ttl_seconds=ttl_seconds)
+
+    def get_plan(self, query: str, *, scope: str = "") -> dict[str, Any] | None:
+        key = _hash_key(f"{scope}|{_normalize_query(query)}")
+        value = self._cache.get(key)
+        return value if isinstance(value, dict) else None
+
+    def put_plan(self, query: str, plan: dict[str, Any], *, scope: str = "") -> None:
+        key = _hash_key(f"{scope}|{_normalize_query(query)}")
+        self._cache.put(key, plan)
+
+    def clear(self) -> None:
+        self._cache.clear()
+
+
 _decision_cache: DecisionCache | None = None
 _result_cache: ResultCache | None = None
+_planner_decision_cache: PlannerDecisionCache | None = None
 
 
 def get_decision_cache() -> DecisionCache:
@@ -130,3 +150,15 @@ def get_result_cache() -> ResultCache:
             ttl_seconds=s.agent_result_cache_ttl_seconds,
         )
     return _result_cache
+
+
+def get_planner_decision_cache() -> PlannerDecisionCache:
+    global _planner_decision_cache
+    if _planner_decision_cache is None:
+        from app.core.settings import get_settings
+        s = get_settings()
+        _planner_decision_cache = PlannerDecisionCache(
+            max_size=s.agent_decision_cache_max_size,
+            ttl_seconds=s.agent_decision_cache_ttl_seconds,
+        )
+    return _planner_decision_cache

@@ -17,8 +17,8 @@ export function AnalysisStatusLine({ status, label }: AnalysisStatusLineProps) {
 }
 
 function getAnalysisLabel(status: AnalysisStatus) {
-  if (status === "analyzing") return "正在解析问题…";
-  if (status === "preparing") return "正在整理内容…";
-  if (status === "answering") return "正在组织回复…";
+  if (status === "analyzing") return "正在解析问题...";
+  if (status === "preparing") return "正在整理内容...";
+  if (status === "answering") return "正在组织回复...";
   return "思考完成";
 }

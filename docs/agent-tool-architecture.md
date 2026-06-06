@@ -10,7 +10,7 @@ Agent-RS now separates the runtime into explicit responsibilities:
 - `ToolChildAgent`: deterministic tool execution lifecycle. It validates arguments, runs access guards, executes the registered runner, catches runner exceptions, and emits trace events.
 - `SearchChildAgent`: search child-agent lifecycle. It validates search input, runs search, catches search exceptions, and emits trace events.
 
-NDVI is a deterministic MCP Docker tool. It is not a child agent.
+Remote-sensing tools are deterministic MCP Docker tools. They are not child agents.
 
 Web search is a child agent. It is not registered as a tool. Its search implementation lives under `backend/app/agent/search/`. It currently has no internal LLM loop; if query rewriting, multi-step search, or source self-checking is needed later, that logic belongs inside `SearchChildAgent`.
 
@@ -46,7 +46,7 @@ Tool and child-agent outputs are injected into the final prompt only as summariz
 
 `backend/app/mcp/client.py` provides a reusable stdio JSON-RPC MCP transport.
 
-`NDVIMCPClient` keeps the existing `call_ndvi()` contract and delegates transport work to the generic client.
+`RSToolsMCPClient` is the single Docker MCP client for raster inspection, NDVI, spectral indices, and band composites. Tool identities stay separate in `tool_registry.py`, but execution goes through the same `rs-tools-mcp` container and stdio transport.
 
 MCP `tools/list` is intentionally not used for dynamic registration. External MCP tools are not trusted automatically.
 

@@ -16,6 +16,13 @@ export type AgentStatus =
   | "context_assembled"
   | "planning"
   | "planning_fallback"
+  | "planner_started"
+  | "planner_completed"
+  | "planner_invalid"
+  | "planner_selected"
+  | "planner_no_call"
+  | "plan_validation_failed"
+  | "capability_guard_rejected"
   | "classifier_skip"
   | "classifier_force"
   | "cache_hit_skip"
@@ -38,6 +45,13 @@ export type ToolExecutionInfo = {
   error_code?: string | null;
 };
 
+export type LegendInfo = {
+  label: string;
+  min: number;
+  max: number;
+  palette: string;
+};
+
 type GeospatialBaseResult = {
   imagery_id: string;
   result_url: string;
@@ -52,9 +66,70 @@ export type GeospatialNdviResult = GeospatialBaseResult & {
   type: "ndvi";
   stats: { min: number; max: number; mean: number; std: number };
   execution?: ToolExecutionInfo | null;
+  legend?: LegendInfo | null;
 };
 
-export type GeospatialResult = GeospatialPreviewResult | GeospatialNdviResult;
+export type GeospatialSpectralIndexResult = GeospatialBaseResult & {
+  type: "spectral_index";
+  index_type: string;
+  stats: {
+    index_type: string;
+    min: number;
+    max: number;
+    mean: number;
+    std: number;
+    nodata_pct?: number;
+  };
+  execution?: ToolExecutionInfo | null;
+  legend?: LegendInfo | null;
+};
+
+export type GeospatialCompositeResult = GeospatialBaseResult & {
+  type: "composite";
+  mode: string;
+  bands_used: number[];
+  execution?: ToolExecutionInfo | null;
+};
+
+export type GeospatialResult =
+  | GeospatialPreviewResult
+  | GeospatialNdviResult
+  | GeospatialSpectralIndexResult
+  | GeospatialCompositeResult;
+
+export type RasterBandStats = {
+  band: number;
+  min?: number | null;
+  max?: number | null;
+  mean?: number | null;
+  std?: number | null;
+};
+
+export type RasterCapabilities = {
+  has_blue: boolean;
+  has_green: boolean;
+  has_red: boolean;
+  has_nir: boolean;
+  has_swir: boolean;
+};
+
+export type RasterInspectResult = {
+  type: "raster_inspect";
+  imagery_id: string;
+  width: number;
+  height: number;
+  band_count: number;
+  crs?: string | null;
+  bounds?: [number, number, number, number] | null;
+  dtype?: string | null;
+  pixel_size?: [number, number] | null;
+  nodata?: number | string | null;
+  capabilities: RasterCapabilities;
+  per_band_stats: RasterBandStats[];
+  execution?: ToolExecutionInfo | null;
+};
+
+export type ToolResult = RasterInspectResult;
 
 export type ChatTurn = ChatMessage & {
   id: string;
@@ -70,6 +145,7 @@ export type ChatTurn = ChatMessage & {
   agentLabel?: string;
   agentTrace?: Record<string, unknown> | null;
   geospatialResult?: GeospatialResult;
+  toolResult?: ToolResult;
   error?: boolean;
 };
 
@@ -86,6 +162,7 @@ export type ChatResponse = {
   rag_trace?: Record<string, unknown> | null;
   agent_trace?: Record<string, unknown> | null;
   geospatial_result?: GeospatialResult;
+  tool_result?: ToolResult;
 };
 
 export type ConfigResponse = {

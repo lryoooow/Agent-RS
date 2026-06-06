@@ -7,33 +7,28 @@ export function EmptyState({ onPick }: { onPick: (value: string) => void }) {
       <div className="flex items-center gap-2 text-muted-foreground">
         <Sparkles className="size-4" />
         <span
-          className="text-[11px] tracking-[0.22em] uppercase"
+          className="text-[11px] uppercase tracking-[0.22em]"
           style={{ fontFamily: "'JetBrains Mono', monospace" }}
         >
-          a quiet place to think out loud
+          Agent-RS remote sensing workspace
         </span>
       </div>
       <h1
-        className="text-5xl md:text-6xl leading-[1.05] tracking-tight max-w-xl"
+        className="max-w-xl text-5xl leading-[1.05] tracking-tight md:text-6xl"
         style={{ fontFamily: "'Instrument Serif', serif" }}
       >
-        Start a <em className="text-accent">conversation</em>, see where the thread leads.
+        Analyze imagery, call tools, and keep the map in view.
       </h1>
-      <p className="text-muted-foreground max-w-md leading-relaxed">
-        本应用通过{" "}
-        <code className="text-foreground" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
-          POST /api/chat
-        </code>{" "}
-        与 Python 后端对接。可在右上 <span className="text-foreground">config</span>{" "}
-        处填写备用 base URL、API key、模型与额外要求。
+      <p className="max-w-md leading-relaxed text-muted-foreground">
+        上传 GeoTIFF 后，可以检查影像、计算 NDVI 或其他光谱指数，并在右侧地图查看结果图层。
       </p>
-      <div className="grid sm:grid-cols-2 gap-2 w-full pt-2">
+      <div className="grid w-full gap-2 pt-2 sm:grid-cols-2">
         {SUGGESTIONS.map((suggestion) => (
           <button
             key={suggestion}
             type="button"
             onClick={() => onPick(suggestion)}
-            className="text-left text-sm leading-relaxed border border-border rounded-xl px-4 py-3 bg-card hover:border-foreground/30 hover:bg-card transition-colors"
+            className="rounded-xl border border-border bg-card px-4 py-3 text-left text-sm leading-relaxed transition-colors hover:border-foreground/30 hover:bg-card"
           >
             {suggestion}
           </button>

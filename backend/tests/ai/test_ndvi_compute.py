@@ -1,19 +1,34 @@
-import os
-import subprocess
 import sys
-import json
 from pathlib import Path
 
 import numpy as np
+import pytest
 import rasterio
 from rasterio.transform import from_origin
 
+RS_TOOLS_DIR = Path(__file__).resolve().parents[3] / "docker" / "rs_tools"
+sys.path.insert(0, str(RS_TOOLS_DIR))
 
-def test_compute_ndvi_script_writes_raster_preview_and_stats(tmp_path: Path) -> None:
+from compute_ndvi import compute  # noqa: E402
+
+
+def _write_tif(path: Path, data: np.ndarray) -> None:
+    with rasterio.open(
+        path,
+        "w",
+        driver="GTiff",
+        height=data.shape[1],
+        width=data.shape[2],
+        count=data.shape[0],
+        dtype=str(data.dtype),
+        transform=from_origin(0, data.shape[1], 1, 1),
+    ) as dst:
+        dst.write(data)
+
+
+def test_compute_ndvi_writes_raster_preview_and_stats(tmp_path: Path) -> None:
     input_path = tmp_path / "input.tif"
     output_dir = tmp_path / "output"
-    script_path = Path(__file__).resolve().parents[3] / "docker" / "ndvi" / "compute_ndvi.py"
-
     data = np.zeros((4, 3, 3), dtype=np.uint16)
     data[2] = np.array(
         [
@@ -31,42 +46,18 @@ def test_compute_ndvi_script_writes_raster_preview_and_stats(tmp_path: Path) -> 
         ],
         dtype=np.uint16,
     )
+    _write_tif(input_path, data)
 
-    with rasterio.open(
-        input_path,
-        "w",
-        driver="GTiff",
-        height=3,
-        width=3,
-        count=4,
-        dtype="uint16",
-        transform=from_origin(0, 3, 1, 1),
-    ) as dst:
-        dst.write(data)
+    stats = compute(input_path=str(input_path), output_dir=str(output_dir), red_band=3, nir_band=4)
 
-    env = {
-        **os.environ,
-        "INPUT_PATH": str(input_path),
-        "OUTPUT_DIR": str(output_dir),
-        "RED_BAND": "3",
-        "NIR_BAND": "4",
-    }
-    result = subprocess.run(
-        [sys.executable, str(script_path)],
-        capture_output=True,
-        env=env,
-        text=True,
-        timeout=30,
-    )
-
-    assert result.returncode == 0, result.stderr
     assert (output_dir / "ndvi.tif").exists()
     assert (output_dir / "ndvi_colored.png").exists()
-    assert (output_dir / "stats.json").exists()
+    assert (output_dir / "ndvi_stats.json").exists()
+    assert stats["output_tif"] == "ndvi.tif"
+    assert stats["output_png"] == "ndvi_colored.png"
 
     with rasterio.open(output_dir / "ndvi.tif") as src:
         ndvi = src.read(1)
-    stats = json.loads((output_dir / "stats.json").read_text(encoding="utf-8"))
 
     expected = (data[3].astype(np.float32) - data[2].astype(np.float32)) / (
         data[3].astype(np.float32) + data[2].astype(np.float32)
@@ -82,77 +73,21 @@ def test_compute_ndvi_script_writes_raster_preview_and_stats(tmp_path: Path) -> 
 def test_compute_ndvi_rejects_zero_band_index(tmp_path: Path) -> None:
     input_path = tmp_path / "input.tif"
     output_dir = tmp_path / "output"
-    script_path = Path(__file__).resolve().parents[3] / "docker" / "ndvi" / "compute_ndvi.py"
+    _write_tif(input_path, np.ones((4, 2, 2), dtype=np.uint16))
 
-    data = np.ones((4, 2, 2), dtype=np.uint16)
-    with rasterio.open(
-        input_path,
-        "w",
-        driver="GTiff",
-        height=2,
-        width=2,
-        count=4,
-        dtype="uint16",
-        transform=from_origin(0, 2, 1, 1),
-    ) as dst:
-        dst.write(data)
-
-    env = {
-        **os.environ,
-        "INPUT_PATH": str(input_path),
-        "OUTPUT_DIR": str(output_dir),
-        "RED_BAND": "0",
-        "NIR_BAND": "4",
-    }
-    result = subprocess.run(
-        [sys.executable, str(script_path)],
-        capture_output=True,
-        env=env,
-        text=True,
-        timeout=30,
-    )
-
-    assert result.returncode == 1
-    assert "1-based positive" in result.stderr
+    with pytest.raises(ValueError, match="1-based positive"):
+        compute(input_path=str(input_path), output_dir=str(output_dir), red_band=0, nir_band=4)
 
 
 def test_compute_ndvi_handles_zero_denominator_as_nodata(tmp_path: Path) -> None:
     input_path = tmp_path / "input.tif"
     output_dir = tmp_path / "output"
-    script_path = Path(__file__).resolve().parents[3] / "docker" / "ndvi" / "compute_ndvi.py"
-
     data = np.zeros((4, 2, 2), dtype=np.uint16)
     data[2] = np.array([[0, 10], [0, 20]], dtype=np.uint16)
     data[3] = np.array([[0, 30], [0, 40]], dtype=np.uint16)
-    with rasterio.open(
-        input_path,
-        "w",
-        driver="GTiff",
-        height=2,
-        width=2,
-        count=4,
-        dtype="uint16",
-        transform=from_origin(0, 2, 1, 1),
-    ) as dst:
-        dst.write(data)
+    _write_tif(input_path, data)
 
-    env = {
-        **os.environ,
-        "INPUT_PATH": str(input_path),
-        "OUTPUT_DIR": str(output_dir),
-        "RED_BAND": "3",
-        "NIR_BAND": "4",
-    }
-    result = subprocess.run(
-        [sys.executable, str(script_path)],
-        capture_output=True,
-        env=env,
-        text=True,
-        timeout=30,
-    )
-
-    assert result.returncode == 0, result.stderr
-    stats = json.loads((output_dir / "stats.json").read_text(encoding="utf-8"))
+    stats = compute(input_path=str(input_path), output_dir=str(output_dir), red_band=3, nir_band=4)
     with rasterio.open(output_dir / "ndvi.tif") as src:
         ndvi = src.read(1)
 
@@ -166,35 +101,22 @@ def test_compute_ndvi_handles_zero_denominator_as_nodata(tmp_path: Path) -> None
 def test_compute_ndvi_rejects_band_index_above_available_count(tmp_path: Path) -> None:
     input_path = tmp_path / "input.tif"
     output_dir = tmp_path / "output"
-    script_path = Path(__file__).resolve().parents[3] / "docker" / "ndvi" / "compute_ndvi.py"
+    _write_tif(input_path, np.ones((4, 2, 2), dtype=np.uint16))
 
-    data = np.ones((4, 2, 2), dtype=np.uint16)
-    with rasterio.open(
-        input_path,
-        "w",
-        driver="GTiff",
-        height=2,
-        width=2,
-        count=4,
-        dtype="uint16",
-        transform=from_origin(0, 2, 1, 1),
-    ) as dst:
-        dst.write(data)
+    with pytest.raises(ValueError, match="exceed available bands"):
+        compute(input_path=str(input_path), output_dir=str(output_dir), red_band=3, nir_band=5)
 
-    env = {
-        **os.environ,
-        "INPUT_PATH": str(input_path),
-        "OUTPUT_DIR": str(output_dir),
-        "RED_BAND": "3",
-        "NIR_BAND": "5",
-    }
-    result = subprocess.run(
-        [sys.executable, str(script_path)],
-        capture_output=True,
-        env=env,
-        text=True,
-        timeout=30,
-    )
 
-    assert result.returncode == 1
-    assert "exceed available bands" in result.stderr
+def test_compute_ndvi_all_nodata_returns_fallback_stats(tmp_path: Path) -> None:
+    input_path = tmp_path / "input.tif"
+    output_dir = tmp_path / "output"
+    data = np.zeros((4, 2, 2), dtype=np.uint16)
+    _write_tif(input_path, data)
+
+    stats = compute(input_path=str(input_path), output_dir=str(output_dir), red_band=3, nir_band=4)
+
+    assert stats["min"] == 0.0
+    assert stats["max"] == 0.0
+    assert stats["mean"] == 0.0
+    assert stats["std"] == 0.0
+    assert stats["nodata_pct"] == 100.0

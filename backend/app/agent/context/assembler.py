@@ -24,6 +24,7 @@ def assemble_context(
     max_memory_chars: int | None = None,
     max_rag_chars: int | None = None,
     max_tool_chars: int | None = None,
+    max_imagery_chars: int | None = None,
 ) -> ContextAssembly:
     payload = [{"role": "system", "content": system_prompt.strip()}]
     included_blocks = system_prompt_blocks or ["system"]
@@ -44,6 +45,7 @@ def assemble_context(
             max_memory_chars=max_memory_chars,
             max_rag_chars=max_rag_chars,
             max_tool_chars=max_tool_chars,
+            max_imagery_chars=max_imagery_chars,
         ),
         key=lambda item: item.priority,
         reverse=True,
@@ -110,6 +112,7 @@ def _optional_blocks(
     max_memory_chars: int | None,
     max_rag_chars: int | None,
     max_tool_chars: int | None,
+    max_imagery_chars: int | None,
 ) -> list[ContextBlock]:
     return [
         ContextBlock(
@@ -145,7 +148,7 @@ def _optional_blocks(
                 imagery_inventory,
             ),
             priority=72,
-            budget_chars=2000,
+            budget_chars=max_imagery_chars,
             source="imagery",
         ),
         ContextBlock(

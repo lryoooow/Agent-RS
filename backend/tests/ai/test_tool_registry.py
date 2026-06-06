@@ -29,6 +29,9 @@ def test_web_search_is_not_in_tool_registry() -> None:
 
     assert "web_search" not in names
     assert "calculate_ndvi" in names
+    assert "raster_inspect" in names
+    assert "calculate_spectral_index" in names
+    assert "render_band_composite" in names
 
 
 def test_registered_tool_enabled_defaults_to_true() -> None:

@@ -45,10 +45,42 @@ class NDVIStats(BaseModel):
     std: float
 
 
+class SpectralIndexStats(BaseModel):
+    index_type: str
+    min: float
+    max: float
+    mean: float
+    std: float
+    nodata_pct: float = 0.0
+
+
+class RasterBandStats(BaseModel):
+    band: int
+    min: float | None = None
+    max: float | None = None
+    mean: float | None = None
+    std: float | None = None
+
+
+class RasterCapabilities(BaseModel):
+    has_blue: bool = False
+    has_green: bool = False
+    has_red: bool = False
+    has_nir: bool = False
+    has_swir: bool = False
+
+
 class ToolExecutionInfo(BaseModel):
     mode: Literal["docker_mcp", "local_subprocess", "local_fallback", "failed"]
     fallback_used: bool = False
     error_code: str | None = None
+
+
+class LegendInfo(BaseModel):
+    label: str
+    min: float
+    max: float
+    palette: str
 
 
 class GeospatialPreviewResult(BaseModel):
@@ -65,9 +97,53 @@ class GeospatialNDVIResult(BaseModel):
     bounds: tuple[float, float, float, float] | None = None
     stats: NDVIStats
     execution: ToolExecutionInfo | None = None
+    legend: LegendInfo | None = None
 
 
-GeospatialResult = GeospatialPreviewResult | GeospatialNDVIResult
+class GeospatialSpectralIndexResult(BaseModel):
+    type: Literal["spectral_index"]
+    imagery_id: str
+    result_url: str
+    bounds: tuple[float, float, float, float] | None = None
+    index_type: str
+    stats: SpectralIndexStats
+    execution: ToolExecutionInfo | None = None
+    legend: LegendInfo | None = None
+
+
+class GeospatialCompositeResult(BaseModel):
+    type: Literal["composite"]
+    imagery_id: str
+    result_url: str
+    bounds: tuple[float, float, float, float] | None = None
+    mode: str
+    bands_used: list[int]
+    execution: ToolExecutionInfo | None = None
+
+
+class RasterInspectResult(BaseModel):
+    type: Literal["raster_inspect"]
+    imagery_id: str
+    width: int
+    height: int
+    band_count: int
+    crs: str | None = None
+    bounds: tuple[float, float, float, float] | None = None
+    dtype: str | None = None
+    pixel_size: tuple[float, float] | None = None
+    nodata: float | int | str | None = None
+    capabilities: RasterCapabilities = Field(default_factory=RasterCapabilities)
+    per_band_stats: list[RasterBandStats] = Field(default_factory=list)
+    execution: ToolExecutionInfo | None = None
+
+
+GeospatialResult = (
+    GeospatialPreviewResult
+    | GeospatialNDVIResult
+    | GeospatialSpectralIndexResult
+    | GeospatialCompositeResult
+)
+ToolResult = RasterInspectResult
 
 
 class ChatResponse(BaseModel):
@@ -83,3 +159,4 @@ class ChatResponse(BaseModel):
     rag_trace: dict | None = None
     agent_trace: dict | None = None
     geospatial_result: GeospatialResult | None = None
+    tool_result: ToolResult | None = None

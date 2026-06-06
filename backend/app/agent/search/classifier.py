@@ -11,10 +11,10 @@ class SearchIntent(Enum):
 _FORCE_PATTERNS: list[re.Pattern] = [
     re.compile(
         r"(最新|最近|今天|今日|昨天|本周|这周|上周|本月|今年|"
-        r"实时|当前价格|现在.*多少|目前.*情况|"
+        r"明天|后天|预报|实时|当前价格|现在.*多少|目前.*情况|"
         r"新闻|热搜|热点|头条|breaking|latest|trending|"
         r"发布了|上线了|更新了|宣布了|"
-        r"股价|汇率|天气|比分|赛果|"
+        r"股价|汇率|天气|气温|降雨|降水|小雨|中雨|大雨|暴雨|阵雨|雷阵雨|阴天|晴天|多云|比分|赛果|"
         r"刚刚|刚才)"
     ),
     re.compile(r"(202[4-9]|2030)年"),
@@ -49,6 +49,13 @@ _SEARCH_RESULT_SIGNALS = (
 )
 
 
+def has_force_search_signal(query: str) -> bool:
+    text = query.strip()
+    if not text:
+        return False
+    return any(pattern.search(text) for pattern in _FORCE_PATTERNS)
+
+
 def classify_search_intent(
     query: str,
     conversation_messages: list | None = None,
@@ -64,9 +71,8 @@ def classify_search_intent(
     if _is_followup_with_existing_results(text, conversation_messages):
         return SearchIntent.SKIP
 
-    for pattern in _FORCE_PATTERNS:
-        if pattern.search(text):
-            return SearchIntent.FORCE
+    if has_force_search_signal(text):
+        return SearchIntent.FORCE
 
     return SearchIntent.UNCERTAIN
 

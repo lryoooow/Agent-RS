@@ -125,7 +125,7 @@ export default function App() {
       )}
 
       <div className="flex flex-1 min-h-0">
-        <div className="flex flex-col min-w-0" style={{ flex: '0 0 40%' }}>
+        <div className="flex min-w-0 flex-col" style={{ flex: "0 0 40%" }}>
           <ErrorBoundary>
             <Conversation
               turns={chat.turns}
@@ -154,7 +154,7 @@ export default function App() {
           </ErrorBoundary>
         </div>
 
-        <div className="min-w-0" style={{ flex: '0 0 60%' }}>
+        <div className="min-w-0" style={{ flex: "0 0 60%" }}>
           <ErrorBoundary>
             <Suspense fallback={<div className="h-full bg-[#1a1a2e] p-4 text-sm text-[#a0a0c0]">地图加载中...</div>}>
               <MapPanel

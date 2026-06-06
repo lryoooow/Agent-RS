@@ -2,13 +2,20 @@
 from time import perf_counter
 from typing import Any, Literal
 
-from app.schemas.chat import GeospatialResult
+from app.schemas.chat import GeospatialResult, ToolResult
 
 
 AgentStage = Literal[
     "context_assembled",
     "planning",
     "planning_fallback",
+    "planner_started",
+    "planner_completed",
+    "planner_invalid",
+    "planner_selected",
+    "planner_no_call",
+    "plan_validation_failed",
+    "capability_guard_rejected",
     "classifier_skip",
     "classifier_force",
     "cache_hit_skip",
@@ -94,5 +101,6 @@ class ToolRunResult:
     query: str = ""
     error: str | None = None
     geospatial_result: GeospatialResult | None = None
+    tool_result: ToolResult | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     artifacts: list[AgentArtifact] = field(default_factory=list)

@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     ai_max_history_messages: int = 24
     ai_max_context_chars: int = 24000
     ai_context_max_total_chars: int | None = None
+    ai_context_max_loaded_messages: int | None = None
     ai_context_max_recent_chars: int = 16000
     ai_context_max_recent_messages: int | None = None
     ai_context_max_user_extra_chars: int = 2000
@@ -35,6 +36,7 @@ class Settings(BaseSettings):
     ai_context_max_memory_chars: int = 3000
     ai_context_max_rag_chars: int = 6000
     ai_context_max_tool_chars: int = 3000
+    ai_context_max_imagery_chars: int = 2000
     ai_prompt_profile: str = "agent_rs_core_v1"
     ai_prompt_enable_dynamic_modules: bool = True
     ai_prompt_include_reasoning_boundary: bool = True
@@ -52,6 +54,8 @@ class Settings(BaseSettings):
     tavily_search_url: str = "https://api.tavily.com/search"
     tavily_search_depth: str = "basic"
     agent_planning_model: str = "qwen3.6-flash"
+    agent_planner_mode: str = "legacy"
+    agent_planner_max_tokens: int = 256
     agent_web_search_max_calls: int = 1
     agent_web_search_max_results: int = 5
     agent_web_search_min_score: float = 0.4
@@ -126,13 +130,13 @@ class Settings(BaseSettings):
     imagery_working_max_dimension: int = 4096
     imagery_preview_max_dimension: int = 2048
     imagery_compression: str = "deflate"
-    ndvi_docker_timeout_seconds: int = 120
-    ndvi_mcp_image: str = "ndvi-mcp:0.1.0"
-    ndvi_mcp_use_docker: bool = True
-    ndvi_mcp_allow_local_fallback: bool = True
-    ndvi_mcp_memory_limit: str = "2g"
-    ndvi_mcp_cpus: float = 2.0
-    ndvi_mcp_network: str = "none"
+    rs_tools_docker_timeout_seconds: int = 120
+    rs_tools_mcp_image: str = "rs-tools-mcp:0.1.0"
+    rs_tools_mcp_use_docker: bool = True
+    rs_tools_mcp_allow_local_fallback: bool = False
+    rs_tools_mcp_memory_limit: str = "2g"
+    rs_tools_mcp_cpus: float = 2.0
+    rs_tools_mcp_network: str = "none"
 
     @property
     def cors_origin_list(self) -> list[str]:
@@ -145,6 +149,14 @@ class Settings(BaseSettings):
     @property
     def context_max_recent_messages(self) -> int:
         return self.ai_context_max_recent_messages or self.ai_max_history_messages
+
+    @property
+    def context_max_loaded_messages(self) -> int:
+        configured = self.ai_context_max_loaded_messages
+        recent = self.context_max_recent_messages
+        if configured and configured > 0:
+            return max(configured, recent)
+        return max(recent, 200)
 
     @property
     def resolved_embedding_base_url(self) -> str:

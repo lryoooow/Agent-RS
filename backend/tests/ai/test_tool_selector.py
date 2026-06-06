@@ -49,6 +49,10 @@ def _request(query: str) -> ChatRequest:
     return ChatRequest(messages=[{"role": "user", "content": query}])
 
 
+def _stages(trace: AgentTrace) -> list[str]:
+    return [event.stage for event in trace.events]
+
+
 def _owned_imagery(root: Path, imagery_id: str, owner_user_id: str) -> None:
     imagery_dir = root / imagery_id
     imagery_dir.mkdir(parents=True)
@@ -111,6 +115,7 @@ async def test_selector_force_search_without_planner(monkeypatch) -> None:
     monkeypatch.setenv("TAVILY_API_KEY", "test")
     reset_settings()
     completions = FakeCompletions("NO")
+    trace = AgentTrace(enabled=True)
 
     selection = await TaskSelector().select(
         client=FakeClient(completions),
@@ -118,7 +123,7 @@ async def test_selector_force_search_without_planner(monkeypatch) -> None:
         request=_request("今天有什么遥感新闻"),
         query="今天有什么遥感新闻",
         user_id=get_settings().default_user_id,
-        trace=AgentTrace(enabled=True),
+        trace=trace,
         on_event=None,
         add_event=_add_event,
     )
@@ -126,6 +131,7 @@ async def test_selector_force_search_without_planner(monkeypatch) -> None:
     assert selection.agent_call is not None
     assert selection.agent_call.name == "web_search"
     assert completions.calls == []
+    assert _stages(trace) == ["classifier_force"]
 
 
 @pytest.mark.asyncio
@@ -158,6 +164,43 @@ async def test_selector_planner_yes_writes_cache(monkeypatch) -> None:
     )
     assert cached.agent_call is not None
     assert cached.reason == "planner"
+
+
+@pytest.mark.asyncio
+async def test_selector_cache_hit_search_trace_sequence(monkeypatch) -> None:
+    monkeypatch.setenv("TAVILY_API_KEY", "test")
+    reset_settings()
+    query = "Transformer 注意力机制怎么工作"
+
+    first_trace = AgentTrace(enabled=True)
+    first = await TaskSelector().select(
+        client=FakeClient(FakeCompletions("YES")),
+        config=resolve_ai_config(),
+        request=_request(query),
+        query=query,
+        user_id=get_settings().default_user_id,
+        trace=first_trace,
+        on_event=None,
+        add_event=_add_event,
+    )
+    assert first.agent_call is not None
+    assert _stages(first_trace) == ["planning"]
+
+    cached_trace = AgentTrace(enabled=True)
+    cached = await TaskSelector().select(
+        client=FakeClient(FakeCompletions("NO")),
+        config=resolve_ai_config(),
+        request=_request(query),
+        query=query,
+        user_id=get_settings().default_user_id,
+        trace=cached_trace,
+        on_event=None,
+        add_event=_add_event,
+    )
+
+    assert cached.agent_call is not None
+    assert cached.reason == "planner"
+    assert _stages(cached_trace) == ["cache_hit_search"]
 
 
 @pytest.mark.asyncio
@@ -255,3 +298,97 @@ async def test_selector_search_unavailable_does_not_call_planner(monkeypatch) ->
     assert selection.agent_call is None
     assert selection.reason == "planner_no_tool"
     assert completions.calls == []
+
+
+@pytest.mark.asyncio
+async def test_selector_selects_raster_inspect(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("IMAGERY_UPLOAD_DIR", str(tmp_path))
+    reset_settings()
+    user_id = get_settings().default_user_id
+    _owned_imagery(tmp_path, "94e758f38ede", user_id)
+    query = "检查影像 94e758f38ede 的波段信息和 CRS"
+
+    selection = await TaskSelector().select(
+        client=FakeClient(FakeCompletions("NO")),
+        config=resolve_ai_config(),
+        request=_request(query),
+        query=query,
+        user_id=user_id,
+        trace=AgentTrace(enabled=True),
+        on_event=None,
+        add_event=_add_event,
+    )
+
+    assert selection.tool_call is not None
+    assert selection.tool_call.name == "raster_inspect"
+
+
+@pytest.mark.asyncio
+async def test_selector_selects_spectral_index(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("IMAGERY_UPLOAD_DIR", str(tmp_path))
+    reset_settings()
+    user_id = get_settings().default_user_id
+    _owned_imagery(tmp_path, "94e758f38ede", user_id)
+    query = "计算 NDWI 94e758f38ede"
+
+    selection = await TaskSelector().select(
+        client=FakeClient(FakeCompletions("NO")),
+        config=resolve_ai_config(),
+        request=_request(query),
+        query=query,
+        user_id=user_id,
+        trace=AgentTrace(enabled=True),
+        on_event=None,
+        add_event=_add_event,
+    )
+
+    assert selection.tool_call is not None
+    assert selection.tool_call.name == "calculate_spectral_index"
+    assert selection.tool_call.arguments["index_type"] == "ndwi"
+
+
+@pytest.mark.asyncio
+async def test_selector_keeps_ndvi_priority(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("IMAGERY_UPLOAD_DIR", str(tmp_path))
+    reset_settings()
+    user_id = get_settings().default_user_id
+    _owned_imagery(tmp_path, "94e758f38ede", user_id)
+    query = "计算 NDVI 94e758f38ede"
+
+    selection = await TaskSelector().select(
+        client=FakeClient(FakeCompletions("NO")),
+        config=resolve_ai_config(),
+        request=_request(query),
+        query=query,
+        user_id=user_id,
+        trace=AgentTrace(enabled=True),
+        on_event=None,
+        add_event=_add_event,
+    )
+
+    assert selection.tool_call is not None
+    assert selection.tool_call.name == "calculate_ndvi"
+
+
+@pytest.mark.asyncio
+async def test_selector_selects_band_composite(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("IMAGERY_UPLOAD_DIR", str(tmp_path))
+    reset_settings()
+    user_id = get_settings().default_user_id
+    _owned_imagery(tmp_path, "94e758f38ede", user_id)
+    query = "显示 94e758f38ede 的假彩色"
+
+    selection = await TaskSelector().select(
+        client=FakeClient(FakeCompletions("NO")),
+        config=resolve_ai_config(),
+        request=_request(query),
+        query=query,
+        user_id=user_id,
+        trace=AgentTrace(enabled=True),
+        on_event=None,
+        add_event=_add_event,
+    )
+
+    assert selection.tool_call is not None
+    assert selection.tool_call.name == "render_band_composite"
+    assert selection.tool_call.arguments["mode"] == "false_color"
