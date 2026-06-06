@@ -22,6 +22,16 @@ def format_search_context(
     ]
     if policy:
         lines.extend(["", "Tool policy:", trim_to_budget(policy, 600) or ""])
+    if _is_weather_query(query):
+        lines.extend(
+            [
+                "",
+                "天气类回答边界:",
+                "- 只能依据搜索结果中明确匹配目标城市和目标日期的天气、温度、降水信息回答。",
+                "- 如果结果只提供区域趋势或缺少城市/日期/降水级别，不要推断成具体城市预报。",
+                "- 不要凭常识或上下文猜测“小雨/中雨/大雨”等降水级别；应明确说明搜索结果不足。",
+            ]
+        )
     lines.append("")
 
     sources: list[str] = []
@@ -62,3 +72,24 @@ def _result_items(search_result: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _clean(value: Any) -> str:
     return str(value or "").strip()
+
+
+def _is_weather_query(query: str) -> bool:
+    lowered = query.lower()
+    weather_terms = (
+        "天气",
+        "预报",
+        "气温",
+        "降雨",
+        "降水",
+        "小雨",
+        "中雨",
+        "大雨",
+        "暴雨",
+        "阵雨",
+        "雷阵雨",
+        "weather",
+        "forecast",
+        "rain",
+    )
+    return any(term in lowered for term in weather_terms)

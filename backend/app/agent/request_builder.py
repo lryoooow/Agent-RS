@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 from app.agent.imagery_access import iter_user_imagery_metadata
 from app.agent.context.assembler import assemble_context
+from app.agent.context.history import normalize_chat_message_for_provider
 from app.agent.context.summarizer import build_context_summaries
 from app.agent.context.types import ContextAssembly
 from app.agent.embedding.service import get_embedding_service
@@ -25,6 +26,8 @@ from app.core.logging import log_event
 from app.core.settings import get_settings
 
 logger = logging.getLogger(__name__)
+PLANNING_CONTEXT_RECENT_MESSAGES = 3
+PLANNING_CONTEXT_MESSAGE_CHARS = 400
 
 
 @dataclass(frozen=True)
@@ -87,7 +90,7 @@ async def build_provider_request_context(
         max_memory_chars=settings.ai_context_max_memory_chars,
     )
     prompt_context = render_prompt_context(
-        messages=request.messages,
+        messages=messages,
         profile=settings.ai_prompt_profile,
         language=settings.ai_system_prompt_language,
         assistant_name=settings.ai_assistant_name,
@@ -112,7 +115,9 @@ async def build_provider_request_context(
         memory=memory_context or summaries.memory,
         rag_context=rag_context,
         tool_context=tool_context,
-        imagery_inventory=_build_imagery_inventory(user_id) if wants_imagery_context(query) else None,
+        imagery_inventory=(
+            build_imagery_inventory(user_id) if should_include_imagery_inventory(query) else None
+        ),
         max_total_chars=settings.context_max_total_chars,
         max_recent_chars=settings.ai_context_max_recent_chars,
         max_recent_messages=settings.context_max_recent_messages,
@@ -121,6 +126,7 @@ async def build_provider_request_context(
         max_memory_chars=settings.ai_context_max_memory_chars,
         max_rag_chars=settings.ai_context_max_rag_chars,
         max_tool_chars=settings.ai_context_max_tool_chars,
+        max_imagery_chars=settings.ai_context_max_imagery_chars,
     )
     return ProviderRequestContext(
         context=context,
@@ -147,7 +153,7 @@ async def _resolve_context_messages(request: ChatRequest, *, user_id: str | None
             messages = await list_recent_messages(
                 conn,
                 conversation_id=request.conversation_id,
-                limit=settings.context_max_recent_messages,
+                limit=settings.context_max_loaded_messages,
             )
         return messages or request.messages
     except Exception:
@@ -268,13 +274,6 @@ async def _load_rag_context(
     return result.context, result.retrieved_chunks
 
 
-def _latest_user_text(request: ChatRequest) -> str:
-    for message in reversed(request.messages):
-        if message.role == "user":
-            return message.content.strip()
-    return ""
-
-
 async def build_planning_context(
     request: ChatRequest,
 ) -> list[dict[str, str]]:
@@ -284,13 +283,29 @@ async def build_planning_context(
             "content": WEB_PLANNING_PROMPT,
         }
     ]
-    recent = request.messages[-3:] if len(request.messages) > 3 else request.messages
+    recent = (
+        request.messages[-PLANNING_CONTEXT_RECENT_MESSAGES:]
+        if len(request.messages) > PLANNING_CONTEXT_RECENT_MESSAGES
+        else request.messages
+    )
     for msg in recent:
-        messages.append({"role": msg.role, "content": msg.content[:400]})
+        provider_msg = normalize_chat_message_for_provider(msg)
+        messages.append(
+            {
+                "role": provider_msg["role"],
+                "content": provider_msg["content"][:PLANNING_CONTEXT_MESSAGE_CHARS],
+            }
+        )
     return messages
 
 
-def _build_imagery_inventory(user_id: str | None) -> str | None:
+def should_include_imagery_inventory(query: str) -> bool:
+    if wants_imagery_context(query):
+        return True
+    return get_settings().agent_planner_mode.strip().lower() == "llm"
+
+
+def build_imagery_inventory(user_id: str | None) -> str | None:
     """Build a brief inventory of uploaded imagery for LLM context."""
     items: list[str] = []
     for imagery_id, meta in iter_user_imagery_metadata(user_id):

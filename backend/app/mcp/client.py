@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import subprocess
 from typing import Any
 
 PROTOCOL_VERSION = "2024-11-05"
@@ -26,12 +27,15 @@ class StdioMCPClient:
         self.client_version = client_version
 
     async def call_tool(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-        proc = await asyncio.create_subprocess_exec(
-            *self.command,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *self.command,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        except NotImplementedError:
+            return await self._call_tool_sync_with_timeout(tool_name, arguments)
         completed = False
         try:
             result = await asyncio.wait_for(
@@ -159,4 +163,159 @@ class StdioMCPClient:
         try:
             await asyncio.wait_for(proc.wait(), timeout=2.0)
         except asyncio.TimeoutError:
+            pass
+
+    async def _call_tool_sync_with_timeout(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        proc_holder: dict[str, subprocess.Popen] = {}
+        try:
+            return await asyncio.wait_for(
+                asyncio.to_thread(self._call_tool_sync, tool_name, arguments, proc_holder),
+                timeout=self.timeout_seconds,
+            )
+        except asyncio.TimeoutError:
+            proc = proc_holder.get("proc")
+            if proc is not None:
+                await asyncio.to_thread(self._kill_process_sync, proc)
+            raise
+
+    def _call_tool_sync(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        proc_holder: dict[str, subprocess.Popen] | None = None,
+    ) -> dict[str, Any]:
+        proc = subprocess.Popen(
+            self.command,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+        )
+        if proc_holder is not None:
+            proc_holder["proc"] = proc
+        completed = False
+        try:
+            result = self._handshake_and_call_sync(proc, tool_name, arguments)
+            completed = True
+            return result
+        except Exception:
+            self._kill_process_sync(proc)
+            raise
+        finally:
+            if completed:
+                self._close_stdin_and_wait_sync(proc)
+
+    def _handshake_and_call_sync(
+        self,
+        proc: subprocess.Popen,
+        tool_name: str,
+        arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        self._send_sync(
+            proc,
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": PROTOCOL_VERSION,
+                    "capabilities": {},
+                    "clientInfo": {
+                        "name": self.client_name,
+                        "version": self.client_version,
+                    },
+                },
+            },
+        )
+        init_resp = self._recv_sync(proc)
+        if "error" in init_resp:
+            raise MCPCallError(f"initialize failed: {init_resp['error']}")
+
+        self._send_sync(
+            proc,
+            {
+                "jsonrpc": "2.0",
+                "method": "notifications/initialized",
+            },
+        )
+
+        self._send_sync(
+            proc,
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {
+                    "name": tool_name,
+                    "arguments": arguments,
+                },
+            },
+        )
+        call_resp = self._recv_sync(proc)
+        if "error" in call_resp:
+            raise MCPCallError(f"tools/call failed: {call_resp['error']}")
+
+        result = call_resp.get("result") or {}
+        if result.get("isError"):
+            text = ""
+            for item in result.get("content", []):
+                if item.get("type") == "text":
+                    text = item.get("text", "")
+                    break
+            raise MCPCallError(text or "tool returned isError without message")
+
+        structured_content = result.get("structuredContent")
+        if not isinstance(structured_content, dict):
+            raise MCPCallError("missing structuredContent in tool response")
+        return structured_content
+
+    @staticmethod
+    def _send_sync(proc: subprocess.Popen, msg: dict[str, Any]) -> None:
+        if proc.stdin is None:
+            raise MCPCallError("MCP process stdin is not available")
+        proc.stdin.write(json.dumps(msg) + "\n")
+        proc.stdin.flush()
+
+    @staticmethod
+    def _recv_sync(proc: subprocess.Popen) -> dict[str, Any]:
+        if proc.stdout is None:
+            raise MCPCallError("MCP process stdout is not available")
+        line = proc.stdout.readline()
+        if not line:
+            stderr = ""
+            if proc.stderr is not None:
+                stderr = proc.stderr.read()
+            raise MCPCallError(f"MCP server closed stdout. stderr: {stderr[:500]}")
+        try:
+            return json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise MCPCallError(f"invalid JSON from server: {exc}: {line!r}")
+
+    @staticmethod
+    def _close_stdin_and_wait_sync(proc: subprocess.Popen) -> None:
+        try:
+            if proc.stdin is not None and not proc.stdin.closed:
+                proc.stdin.close()
+        except Exception:
+            pass
+
+        if proc.poll() is None:
+            try:
+                proc.wait(timeout=2.0)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+
+    @staticmethod
+    def _kill_process_sync(proc: subprocess.Popen) -> None:
+        if proc.poll() is None:
+            proc.kill()
+        try:
+            proc.wait(timeout=2.0)
+        except subprocess.TimeoutExpired:
             pass

@@ -19,6 +19,7 @@ from app.agent.persistence import (
     schedule_after_response,
 )
 from app.agent.provider import create_chat_client
+from app.agent.prompting.scenarios import latest_user_text
 from app.agent.request_builder import build_provider_request_context
 from app.agent.routing import build_agent_route
 from app.agent.stream import (
@@ -66,6 +67,7 @@ class AIService:
                 final_context = provider_context
                 agent_trace = None
                 geospatial_result = None
+                tool_result = None
             else:
                 runtime = AgentRuntime()
                 agent_result = await runtime.complete(
@@ -80,6 +82,7 @@ class AIService:
                 final_context = agent_result.final_context
                 agent_trace = self._agent_trace_payload(agent_result.trace)
                 geospatial_result = agent_result.geospatial_result
+                tool_result = agent_result.tool_result
         except Exception as exc:
             await mark_assistant_failed(persistence, exc)
             raise map_provider_error(exc) from exc
@@ -91,6 +94,7 @@ class AIService:
         result.rag_trace = final_context.rag_trace
         result.agent_trace = agent_trace
         result.geospatial_result = geospatial_result
+        result.tool_result = tool_result
         persistence.assistant_message_id = await save_assistant_response(
             persistence,
             content=result.content,
@@ -261,6 +265,8 @@ class AIService:
                     payload["agent_trace"] = agent_trace
                 if agent_result.geospatial_result:
                     payload["geospatial_result"] = agent_result.geospatial_result
+                if agent_result.tool_result:
+                    payload["tool_result"] = agent_result.tool_result
                 yield sse_event("done", payload)
                 await save_streamed_assistant(
                     persistence,
@@ -302,6 +308,8 @@ class AIService:
                         payload["agent_trace"] = agent_trace
                     if agent_result.geospatial_result:
                         payload["geospatial_result"] = agent_result.geospatial_result
+                    if agent_result.tool_result:
+                        payload["tool_result"] = agent_result.tool_result
                     event = sse_event("done", payload)
                 yield event
 
@@ -351,12 +359,6 @@ class AIService:
             return None
         return payload
 
-    def _latest_user_text(self, request: ChatRequest) -> str:
-        for message in reversed(request.messages):
-            if message.role == "user":
-                return message.content.strip()
-        return ""
-
     async def _prepare_chat_execution(
         self,
         request: ChatRequest,
@@ -373,7 +375,7 @@ class AIService:
             create_streaming_assistant=create_streaming_assistant,
         )
         context_request = request_for_context(request, persistence)
-        route = build_agent_route(self._latest_user_text(context_request), context_request)
+        route = build_agent_route(latest_user_text(context_request.messages), context_request)
         provider_context = await build_provider_request_context(
             context_request,
             user_id=persistence.user_id,

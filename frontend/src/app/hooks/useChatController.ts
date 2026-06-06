@@ -15,7 +15,6 @@ import type {
 } from "../types";
 
 const CONVERSATION_STORAGE_KEY = "agent-rs.conversationId";
-// Legacy key kept so existing browser sessions migrate to the Agent-RS key.
 const LEGACY_CONVERSATION_STORAGE_KEY = "chatbot.conversationId";
 
 type ChatControllerSettings = {
@@ -85,7 +84,7 @@ export function useChatController({
           role: "assistant",
           content: "",
           analysisStatus: "analyzing",
-          analysisLabel: "正在解析问题…",
+          analysisLabel: "正在解析问题...",
         },
       ]);
     } else {
@@ -172,7 +171,7 @@ function latestGeospatialContext(turns: ChatTurn[]) {
   return [
     {
       role: "system" as const,
-      content: `当前上传影像：ID=${result.imagery_id}，图层类型=${result.type}。如用户要求计算 NDVI，优先使用该 imagery_id。`,
+      content: `当前上传影像：ID=${result.imagery_id}，图层类型=${result.type}。如用户要求计算 NDVI 或其他遥感工具，优先使用该 imagery_id。`,
     },
   ];
 }

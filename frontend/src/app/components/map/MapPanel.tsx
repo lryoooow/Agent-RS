@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
-import type { GeospatialResult } from "../../types";
+import type { GeospatialResult, LegendInfo } from "../../types";
 
 export type { GeospatialResult };
 
@@ -41,7 +41,12 @@ export function MapPanel({ geospatialResults }: MapPanelProps) {
       }),
     [geospatialResults],
   );
-  const hasNdviLayer = layerEntries.some((entry) => entry.result.type === "ndvi");
+
+  const visibleLegendEntries = layerEntries.filter(
+    (entry) =>
+      visibleLayers[entry.key] !== false &&
+      (entry.result.type === "ndvi" || entry.result.type === "spectral_index"),
+  );
 
   useEffect(() => {
     if (!mapContainer.current || mapRef.current) return;
@@ -180,8 +185,8 @@ export function MapPanel({ geospatialResults }: MapPanelProps) {
   );
 
   return (
-    <div className="flex flex-col h-full bg-[#1a1a2e] border-l border-[#2a2a4a]" role="region" aria-label="影像地图预览">
-      <div className="flex items-center justify-between px-3 py-2 border-b border-[#2a2a4a]">
+    <div className="flex h-full flex-col border-l border-[#2a2a4a] bg-[#1a1a2e]" role="region" aria-label="影像地图预览">
+      <div className="flex items-center justify-between border-b border-[#2a2a4a] px-3 py-2">
         <span className="text-sm font-medium text-[#a0a0c0]">地图</span>
         <div className="flex items-center gap-2">
           <label className="text-xs text-[#707090]">透明度</label>
@@ -192,15 +197,15 @@ export function MapPanel({ geospatialResults }: MapPanelProps) {
             step="0.1"
             value={opacity}
             onChange={(e) => setOpacity(Number(e.target.value))}
-            className="w-16 h-1 accent-emerald-500"
+            className="h-1 w-16 accent-emerald-500"
           />
         </div>
       </div>
 
-      <div ref={mapContainer} className="flex-1 relative" role="application" aria-label="遥感影像地图画布">
+      <div ref={mapContainer} className="relative flex-1" role="application" aria-label="遥感影像地图画布">
         {layerEntries.length === 0 && (
           <div className="absolute inset-0 flex items-center justify-center">
-            <p className="text-[#505070] text-sm">上传影像后将在这里预览</p>
+            <p className="text-sm text-[#505070]">上传影像后将在这里预览</p>
           </div>
         )}
         {thumbnailEntries.map((entry) => (
@@ -221,7 +226,7 @@ export function MapPanel({ geospatialResults }: MapPanelProps) {
           onFocus={focusLayer}
         />
       )}
-      {hasNdviLayer && <NdviLegend />}
+      {visibleLegendEntries.length > 0 && <LegendList entries={visibleLegendEntries} />}
     </div>
   );
 }
@@ -239,14 +244,14 @@ function ThumbnailOverlay({
     ? resultUrl
     : `${window.location.origin}${resultUrl}`;
   return (
-    <div className="absolute inset-0 flex flex-col items-center justify-center z-10 pointer-events-none">
+    <div className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center">
       <img
         src={url}
         alt={label}
-        className="max-w-[90%] max-h-[80%] object-contain rounded shadow-lg"
+        className="max-h-[80%] max-w-[90%] rounded object-contain shadow-lg"
         style={{ opacity }}
       />
-      <p className="mt-2 text-xs text-[#a0a0c0] bg-[#1a1a2e]/80 px-2 py-0.5 rounded">
+      <p className="mt-2 rounded bg-[#1a1a2e]/80 px-2 py-0.5 text-xs text-[#a0a0c0]">
         {label} - 无地理坐标，以缩略图展示
       </p>
     </div>
@@ -262,8 +267,8 @@ interface LayerListProps {
 
 function LayerList({ entries, visibility, onToggle, onFocus }: LayerListProps) {
   return (
-    <div className="px-3 py-2 border-t border-[#2a2a4a] max-h-32 overflow-y-auto">
-      <p className="text-xs text-[#707090] mb-1">图层</p>
+    <div className="max-h-32 overflow-y-auto border-t border-[#2a2a4a] px-3 py-2">
+      <p className="mb-1 text-xs text-[#707090]">图层</p>
       <ul className="space-y-1">
         {entries.map((entry) => {
           const visible = visibility[entry.key] !== false;
@@ -273,10 +278,10 @@ function LayerList({ entries, visibility, onToggle, onFocus }: LayerListProps) {
               <button
                 type="button"
                 onClick={() => onToggle(entry.key)}
-                className={`w-3.5 h-3.5 rounded border ${
+                className={`h-3.5 w-3.5 rounded border ${
                   visible
-                    ? "bg-emerald-500 border-emerald-400"
-                    : "bg-transparent border-[#3a3a5a]"
+                    ? "border-emerald-400 bg-emerald-500"
+                    : "border-[#3a3a5a] bg-transparent"
                 }`}
                 aria-label={visible ? "隐藏图层" : "显示图层"}
                 title={visible ? "隐藏图层" : "显示图层"}
@@ -285,13 +290,13 @@ function LayerList({ entries, visibility, onToggle, onFocus }: LayerListProps) {
                 <button
                   type="button"
                   onClick={() => onFocus(entry)}
-                  className="flex-1 text-left text-xs text-[#a0a0c0] hover:text-emerald-400 truncate"
+                  className="flex-1 truncate text-left text-xs text-[#a0a0c0] hover:text-emerald-400"
                   title="定位到此图层"
                 >
                   {label}
                 </button>
               ) : (
-                <span className="flex-1 text-xs text-[#707090] truncate">
+                <span className="flex-1 truncate text-xs text-[#707090]">
                   {label} <span className="text-[#505070]">(无坐标)</span>
                 </span>
               )}
@@ -303,28 +308,67 @@ function LayerList({ entries, visibility, onToggle, onFocus }: LayerListProps) {
   );
 }
 
+function LegendList({ entries }: { entries: LayerEntry[] }) {
+  return (
+    <div className="space-y-2 border-t border-[#2a2a4a] px-3 py-2">
+      {entries.map((entry) => (
+        <LayerLegend key={entry.key} result={entry.result} />
+      ))}
+    </div>
+  );
+}
+
+function LayerLegend({ result }: { result: GeospatialResult }) {
+  if (result.type !== "ndvi" && result.type !== "spectral_index") return null;
+  const legend = result.legend ?? defaultLegend(result);
+  return (
+    <div>
+      <p className="mb-1 text-xs text-[#707090]">{legend.label}</p>
+      <div className="flex items-center gap-1">
+        <span className="w-8 text-right text-[10px] text-[#707090]">{formatTick(legend.min)}</span>
+        <div className="h-2 flex-1 rounded" style={{ background: gradientForPalette(legend.palette) }} />
+        <span className="w-8 text-[10px] text-[#707090]">{formatTick(legend.max)}</span>
+      </div>
+    </div>
+  );
+}
+
 function layerLabel(result: GeospatialResult) {
   const id = result.imagery_id.slice(0, 8);
   if (result.type === "preview") return `原图 - ${id}`;
   if (result.type === "ndvi") return `NDVI - ${id}`;
+  if (result.type === "spectral_index") return `${result.index_type.toUpperCase()} - ${id}`;
+  if (result.type === "composite") return `${compositeLabel(result.mode)} - ${id}`;
   return `图层 - ${id}`;
 }
 
-function NdviLegend() {
-  return (
-    <div className="px-3 py-2 border-t border-[#2a2a4a]">
-      <p className="text-xs text-[#707090] mb-1">NDVI</p>
-      <div className="flex items-center gap-1">
-        <span className="text-[10px] text-[#707090]">-1</span>
-        <div
-          className="flex-1 h-2 rounded"
-          style={{
-            background:
-              "linear-gradient(to right, #a60026, #d73027, #f46d43, #fdae61, #fee08b, #ffffbf, #d9ef8b, #a6d96a, #66bd63, #1a9850, #006837)",
-          }}
-        />
-        <span className="text-[10px] text-[#707090]">1</span>
-      </div>
-    </div>
-  );
+function compositeLabel(mode: string) {
+  if (mode === "true_color") return "真彩色";
+  if (mode === "false_color") return "假彩色";
+  return "波段组合";
+}
+
+function defaultLegend(result: GeospatialResult): LegendInfo {
+  if (result.type === "spectral_index") {
+    const type = result.index_type.toLowerCase();
+    if (type === "evi") return { label: "EVI", min: -1, max: 2.5, palette: "vegetation" };
+    if (type === "savi") return { label: "SAVI", min: -1, max: 1.5, palette: "vegetation" };
+    if (type === "ndbi") return { label: "NDBI", min: -1, max: 1, palette: "built" };
+    if (type === "ndwi" || type === "mndwi") return { label: type.toUpperCase(), min: -1, max: 1, palette: "water" };
+  }
+  return { label: "NDVI", min: -1, max: 1, palette: "vegetation" };
+}
+
+function gradientForPalette(palette: string) {
+  if (palette === "water") {
+    return "linear-gradient(to right, #7f3b08, #f6e8c3, #67a9cf, #053061)";
+  }
+  if (palette === "built") {
+    return "linear-gradient(to right, #2c7bb6, #ffffbf, #fdae61, #a6611a)";
+  }
+  return "linear-gradient(to right, #a60026, #f46d43, #ffffbf, #66bd63, #006837)";
+}
+
+function formatTick(value: number) {
+  return Number.isInteger(value) ? String(value) : value.toFixed(1);
 }

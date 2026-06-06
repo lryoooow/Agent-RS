@@ -5,8 +5,8 @@ from types import SimpleNamespace
 import pytest
 
 import app.agent.runtime as runtime_module
+from app.agent.intent_policy import detect_ndvi_intent
 from app.agent.runtime import AgentRuntime
-from app.agent.tool_selector import detect_ndvi_intent
 from app.agent.types import AgentTrace, RuntimeToolCall, ToolRunResult
 from app.agent.config import resolve_ai_config
 from app.agent.request_builder import build_provider_request_context

@@ -3,12 +3,16 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import app.agent.tool_selector as selector_module
+import app.agent.intent_policy as intent_policy
 from app.agent.prompting.scenarios import wants_ndvi_calculation
 from app.core.settings import get_settings
 from app.schemas.chat import ChatRequest
 
 from _trigger_cases import NDVI_TEXT_CASES
+
+
+CN_CALCULATE_NDVI = "\u8bf7\u8ba1\u7b97 NDVI"
+CN_CURRENT_UPLOAD = "\u5f53\u524d\u4e0a\u4f20\u5f71\u50cf\uff1aID={imagery_id}\uff0c\u56fe\u5c42\u7c7b\u578b preview\u3002"
 
 
 def _request_with_context(*messages: dict[str, str]) -> ChatRequest:
@@ -45,7 +49,7 @@ def test_ndvi_tool_requires_imagery_context_even_when_calculation_is_requested(m
     monkeypatch.setenv("IMAGERY_UPLOAD_DIR", str(tmp_path))
     get_settings.cache_clear()
 
-    tool_call = selector_module.detect_ndvi_intent("请计算 NDVI", user_id=get_settings().default_user_id)
+    tool_call = intent_policy.detect_ndvi_intent(CN_CALCULATE_NDVI, user_id=get_settings().default_user_id)
 
     assert tool_call is None
 
@@ -54,30 +58,32 @@ def test_ndvi_tool_uses_trusted_chinese_upload_context(monkeypatch, tmp_path: Pa
     monkeypatch.setenv("IMAGERY_UPLOAD_DIR", str(tmp_path))
     get_settings.cache_clear()
     user_id = get_settings().default_user_id
-    _make_known_imagery(tmp_path, "94e758f38ede", user_id)
+    imagery_id = "94e758f38ede"
+    _make_known_imagery(tmp_path, imagery_id, user_id)
     request = _request_with_context(
-        {"role": "system", "content": "当前上传影像：ID=94e758f38ede，图层类型=preview。"},
-        {"role": "user", "content": "请计算 NDVI"},
+        {"role": "system", "content": CN_CURRENT_UPLOAD.format(imagery_id=imagery_id)},
+        {"role": "user", "content": CN_CALCULATE_NDVI},
     )
 
-    tool_call = selector_module.detect_ndvi_intent("请计算 NDVI", request.messages, user_id=user_id)
+    tool_call = intent_policy.detect_ndvi_intent(CN_CALCULATE_NDVI, request.messages, user_id=user_id)
 
     assert tool_call is not None
     assert tool_call.name == "calculate_ndvi"
-    assert tool_call.arguments["imagery_id"] == "94e758f38ede"
+    assert tool_call.arguments["imagery_id"] == imagery_id
 
 
 def test_ndvi_tool_rejects_trusted_context_for_other_user(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("IMAGERY_UPLOAD_DIR", str(tmp_path))
     get_settings.cache_clear()
-    _make_known_imagery(tmp_path, "94e758f38ede", "other-user")
+    imagery_id = "94e758f38ede"
+    _make_known_imagery(tmp_path, imagery_id, "other-user")
     request = _request_with_context(
-        {"role": "system", "content": "当前上传影像：ID=94e758f38ede，图层类型=preview。"},
-        {"role": "user", "content": "请计算 NDVI"},
+        {"role": "system", "content": CN_CURRENT_UPLOAD.format(imagery_id=imagery_id)},
+        {"role": "user", "content": CN_CALCULATE_NDVI},
     )
 
-    tool_call = selector_module.detect_ndvi_intent(
-        "请计算 NDVI",
+    tool_call = intent_policy.detect_ndvi_intent(
+        CN_CALCULATE_NDVI,
         request.messages,
         user_id=get_settings().default_user_id,
     )
@@ -91,11 +97,11 @@ def test_ndvi_tool_ignores_long_hex_without_known_imagery(monkeypatch, tmp_path:
     long_hex = "94e758f38edeaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     request = _request_with_context(
         {"role": "assistant", "content": f"sha256={long_hex}"},
-        {"role": "user", "content": "请计算 NDVI"},
+        {"role": "user", "content": CN_CALCULATE_NDVI},
     )
 
-    tool_call = selector_module.detect_ndvi_intent(
-        "请计算 NDVI",
+    tool_call = intent_policy.detect_ndvi_intent(
+        CN_CALCULATE_NDVI,
         request.messages,
         user_id=get_settings().default_user_id,
     )
@@ -112,10 +118,10 @@ def test_ndvi_tool_uses_known_imagery_id_found_inside_long_hex(monkeypatch, tmp_
     long_hex = imagery_id + "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     request = _request_with_context(
         {"role": "assistant", "content": f"sha256={long_hex}"},
-        {"role": "user", "content": "请计算 NDVI"},
+        {"role": "user", "content": CN_CALCULATE_NDVI},
     )
 
-    tool_call = selector_module.detect_ndvi_intent("请计算 NDVI", request.messages, user_id=user_id)
+    tool_call = intent_policy.detect_ndvi_intent(CN_CALCULATE_NDVI, request.messages, user_id=user_id)
 
     assert tool_call is not None
     assert tool_call.arguments["imagery_id"] == imagery_id
@@ -129,7 +135,7 @@ def test_ndvi_tool_does_not_trust_english_upload_marker_without_known_imagery(mo
         {"role": "user", "content": "please calculate NDVI"},
     )
 
-    tool_call = selector_module.detect_ndvi_intent(
+    tool_call = intent_policy.detect_ndvi_intent(
         "please calculate NDVI",
         request.messages,
         user_id=get_settings().default_user_id,

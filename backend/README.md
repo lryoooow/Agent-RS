@@ -1,6 +1,6 @@
 # Agent-RS Backend
 
-Agent-RS 后端基于 FastAPI，负责对话接口、上下文组装、Agent 运行时、联网搜索、遥感影像上传，以及 NDVI Docker MCP 工具调用。AI 层使用 OpenAI-compatible Provider 接口，可通过配置切换 DashScope、OpenAI、DeepSeek、Moonshot/Kimi 等服务。
+Agent-RS 后端基于 FastAPI，负责对话接口、上下文组装、Agent 运行时、联网搜索、遥感影像上传，以及统一 RS Tools Docker MCP 工具调用。AI 层使用 OpenAI-compatible Provider 接口，可通过配置切换 DashScope、OpenAI、DeepSeek、Moonshot/Kimi 等服务。
 
 ## 启动
 
@@ -70,10 +70,11 @@ data: {"finish_reason":"stop"}
 
 联网搜索走 Agent runtime 调度。配置 `TAVILY_API_KEY` 后，后端可以在需要时调用搜索 Agent，并把精简结果作为工具上下文注入最终回答。
 
-NDVI 计算走 Docker MCP 工具。后端优先启动 `ndvi-mcp:0.1.0` 镜像并调用 `calculate_ndvi`，工具无状态；生产环境建议关闭本地回退：
+遥感处理走统一 Docker MCP 工具。后端启动 `rs-tools-mcp:0.1.0` 镜像并调用 `calculate_ndvi`、`raster_inspect`、`calculate_spectral_index` 或 `render_band_composite`，工具无状态且不做本地兜底：
 
 ```env
-NDVI_MCP_ALLOW_LOCAL_FALLBACK=false
+RS_TOOLS_MCP_IMAGE=rs-tools-mcp:0.1.0
+RS_TOOLS_MCP_USE_DOCKER=true
 ```
 
 ## 常用配置
@@ -87,10 +88,9 @@ TAVILY_API_KEY=your_key
 AGENT_WEB_SEARCH_MAX_CALLS=1
 AGENT_WEB_SEARCH_MAX_RESULTS=5
 
-NDVI_MCP_IMAGE=ndvi-mcp:0.1.0
-NDVI_MCP_USE_DOCKER=true
-NDVI_MCP_ALLOW_LOCAL_FALLBACK=true
-NDVI_MCP_MEMORY_LIMIT=2g
-NDVI_MCP_CPUS=2
-NDVI_MCP_NETWORK=none
+RS_TOOLS_MCP_IMAGE=rs-tools-mcp:0.1.0
+RS_TOOLS_MCP_USE_DOCKER=true
+RS_TOOLS_MCP_MEMORY_LIMIT=2g
+RS_TOOLS_MCP_CPUS=2
+RS_TOOLS_MCP_NETWORK=none
 ```

@@ -18,7 +18,7 @@ def build_recent_dialogue_messages(
         max_messages=max_messages,
         max_chars=max_chars,
     )
-    return [_to_provider_message(message) for message in selected], truncated
+    return [normalize_chat_message_for_provider(message) for message in selected], truncated
 
 
 def select_recent_dialogue_messages(
@@ -69,7 +69,7 @@ def _select_by_char_budget(
     return selected, len(selected) < len(messages)
 
 
-def _to_provider_message(message: ChatMessage) -> dict[str, str]:
+def normalize_chat_message_for_provider(message: ChatMessage) -> dict[str, str]:
     if message.role == "system":
         return {
             "role": "user",
@@ -79,4 +79,7 @@ def _to_provider_message(message: ChatMessage) -> dict[str, str]:
 
 
 def _trim_message(message: ChatMessage, max_tokens: int) -> ChatMessage:
-    return ChatMessage(role=message.role, content=trim_to_budget(message.content, max_tokens) or message.content[:1])
+    return ChatMessage(
+        role=message.role,
+        content=trim_to_budget(message.content, max_tokens) or message.content[:1],
+    )

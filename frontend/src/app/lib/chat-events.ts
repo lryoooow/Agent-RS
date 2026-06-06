@@ -1,18 +1,16 @@
 import type { Dispatch, SetStateAction } from "react";
 import type { StreamHandlers } from "./sse";
-import {
-  appendToTurn,
-  updateAnalysisStatus,
-  uid,
-  updateTurn,
-} from "./turns";
+import { appendToTurn, updateAnalysisStatus, uid, updateTurn } from "./turns";
 import type {
   AgentStatus,
   AnalysisStatus,
   ChatResponse,
   ChatTurn,
   GeospatialResult,
+  LegendInfo,
+  RasterCapabilities,
   ToolExecutionInfo,
+  ToolResult,
   Usage,
 } from "../types";
 
@@ -59,6 +57,7 @@ export function createStreamHandlers(
     },
     onDone: (data) => {
       const geospatialResult = parseGeospatialResult(data.geospatial_result);
+      const toolResult = parseToolResult(data.tool_result);
       const finishReason = typeof data.finish_reason === "string" ? data.finish_reason : undefined;
       const failed = finishReason === "error";
       setTurns((prev) =>
@@ -79,6 +78,7 @@ export function createStreamHandlers(
               ? (data.agent_trace as Record<string, unknown>)
               : undefined,
           geospatialResult,
+          toolResult,
         }),
       );
     },
@@ -87,6 +87,7 @@ export function createStreamHandlers(
 
 export function appendAssistantResponse(setTurns: SetTurns, data: ChatResponse) {
   const geospatialResult = parseGeospatialResult(data.geospatial_result);
+  const toolResult = parseToolResult(data.tool_result);
   setTurns((prev) => [
     ...prev,
     {
@@ -101,6 +102,7 @@ export function appendAssistantResponse(setTurns: SetTurns, data: ChatResponse) 
       ragTrace: data.rag_trace,
       agentTrace: data.agent_trace,
       geospatialResult,
+      toolResult,
     },
   ]);
 }
@@ -117,6 +119,13 @@ function normalizeAgentStatus(value: unknown): AgentStatus | null {
     value === "context_assembled" ||
     value === "planning" ||
     value === "planning_fallback" ||
+    value === "planner_started" ||
+    value === "planner_completed" ||
+    value === "planner_invalid" ||
+    value === "planner_selected" ||
+    value === "planner_no_call" ||
+    value === "plan_validation_failed" ||
+    value === "capability_guard_rejected" ||
     value === "classifier_skip" ||
     value === "classifier_force" ||
     value === "cache_hit_skip" ||
@@ -141,7 +150,14 @@ function normalizeAgentStatus(value: unknown): AgentStatus | null {
 function parseGeospatialResult(value: unknown): GeospatialResult | undefined {
   if (!value || typeof value !== "object") return undefined;
   const candidate = value as Record<string, unknown>;
-  if (candidate.type !== "preview" && candidate.type !== "ndvi") return undefined;
+  if (
+    candidate.type !== "preview" &&
+    candidate.type !== "ndvi" &&
+    candidate.type !== "spectral_index" &&
+    candidate.type !== "composite"
+  ) {
+    return undefined;
+  }
   if (typeof candidate.imagery_id !== "string") return undefined;
   if (typeof candidate.result_url !== "string") return undefined;
   const bounds = candidate.bounds;
@@ -155,17 +171,89 @@ function parseGeospatialResult(value: unknown): GeospatialResult | undefined {
   if (candidate.type === "preview") {
     return { type: "preview", ...base };
   }
+  if (candidate.type === "composite") {
+    if (typeof candidate.mode !== "string") return undefined;
+    if (!Array.isArray(candidate.bands_used) || !candidate.bands_used.every((item) => typeof item === "number")) {
+      return undefined;
+    }
+    return {
+      type: "composite",
+      ...base,
+      mode: candidate.mode,
+      bands_used: candidate.bands_used,
+      execution: isExecution(candidate.execution) ? candidate.execution : undefined,
+    };
+  }
   if (!isStats(candidate.stats)) return undefined;
+  if (candidate.type === "spectral_index") {
+    if (typeof candidate.index_type !== "string") return undefined;
+    const stats = candidate.stats as {
+      min: number;
+      max: number;
+      mean: number;
+      std: number;
+      nodata_pct?: number;
+      index_type?: string;
+    };
+    return {
+      type: "spectral_index",
+      ...base,
+      index_type: candidate.index_type,
+      stats: {
+        ...stats,
+        index_type: typeof stats.index_type === "string" ? stats.index_type : candidate.index_type,
+      },
+      execution: isExecution(candidate.execution) ? candidate.execution : undefined,
+      legend: parseLegend(candidate.legend),
+    };
+  }
   return {
     type: "ndvi",
     ...base,
     stats: candidate.stats,
+    execution: isExecution(candidate.execution) ? candidate.execution : undefined,
+    legend: parseLegend(candidate.legend),
+  };
+}
+
+function parseToolResult(value: unknown): ToolResult | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const candidate = value as Record<string, unknown>;
+  if (candidate.type !== "raster_inspect") return undefined;
+  if (typeof candidate.imagery_id !== "string") return undefined;
+  if (typeof candidate.width !== "number") return undefined;
+  if (typeof candidate.height !== "number") return undefined;
+  if (typeof candidate.band_count !== "number") return undefined;
+  const bounds = candidate.bounds;
+  if (bounds != null && !isBounds(bounds)) return undefined;
+  const pixelSize = candidate.pixel_size;
+  if (pixelSize != null && !isPixelSize(pixelSize)) return undefined;
+  return {
+    type: "raster_inspect",
+    imagery_id: candidate.imagery_id,
+    width: candidate.width,
+    height: candidate.height,
+    band_count: candidate.band_count,
+    crs: typeof candidate.crs === "string" ? candidate.crs : null,
+    bounds: bounds ?? null,
+    dtype: typeof candidate.dtype === "string" ? candidate.dtype : null,
+    pixel_size: pixelSize ?? null,
+    nodata:
+      typeof candidate.nodata === "number" || typeof candidate.nodata === "string"
+        ? candidate.nodata
+        : null,
+    capabilities: parseCapabilities(candidate.capabilities),
+    per_band_stats: parseBandStats(candidate.per_band_stats),
     execution: isExecution(candidate.execution) ? candidate.execution : undefined,
   };
 }
 
 function isBounds(value: unknown): value is [number, number, number, number] {
   return Array.isArray(value) && value.length === 4 && value.every((item) => typeof item === "number");
+}
+
+function isPixelSize(value: unknown): value is [number, number] {
+  return Array.isArray(value) && value.length === 2 && value.every((item) => typeof item === "number");
 }
 
 function isStats(value: unknown): value is { min: number; max: number; mean: number; std: number } {
@@ -184,6 +272,45 @@ function isExecution(value: unknown): value is ToolExecutionInfo {
       execution.error_code === null ||
       typeof execution.error_code === "string")
   );
+}
+
+function parseLegend(value: unknown): LegendInfo | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const legend = value as Record<string, unknown>;
+  if (typeof legend.label !== "string") return undefined;
+  if (typeof legend.min !== "number" || typeof legend.max !== "number") return undefined;
+  if (typeof legend.palette !== "string") return undefined;
+  return {
+    label: legend.label,
+    min: legend.min,
+    max: legend.max,
+    palette: legend.palette,
+  };
+}
+
+function parseCapabilities(value: unknown): RasterCapabilities {
+  const capabilities = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+  return {
+    has_blue: capabilities.has_blue === true,
+    has_green: capabilities.has_green === true,
+    has_red: capabilities.has_red === true,
+    has_nir: capabilities.has_nir === true,
+    has_swir: capabilities.has_swir === true,
+  };
+}
+
+function parseBandStats(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
+    .filter((item) => typeof item.band === "number")
+    .map((item) => ({
+      band: item.band as number,
+      min: typeof item.min === "number" ? item.min : null,
+      max: typeof item.max === "number" ? item.max : null,
+      mean: typeof item.mean === "number" ? item.mean : null,
+      std: typeof item.std === "number" ? item.std : null,
+    }));
 }
 
 export function applyRequestError(setTurns: SetTurns, assistantId: string, shouldStream: boolean, err: unknown) {

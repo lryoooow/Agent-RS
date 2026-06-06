@@ -1,27 +1,32 @@
 from __future__ import annotations
 
-import logging
-import re
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
+from app.agent.capability_registry import is_capability_enabled
 from app.agent.config import ResolvedAIConfig
-from app.agent.imagery_access import known_imagery_ids_for_user
-from app.agent.prompting.scenarios import wants_ndvi_calculation
-from app.agent.request_builder import build_planning_context
+from app.agent.intent_policy import IntentDecision, IntentPolicy
+from app.agent.llm_planner import LLMCapabilityPlanner, PlannerDecision, capability_snapshot
+from app.agent.plan_validator import PlanValidator
 from app.agent.routing import AgentRoute
-from app.agent.search.cache import CachedDecision, get_decision_cache
-from app.agent.search.classifier import SearchIntent, classify_search_intent
+from app.agent.safety_policy import SafetyPolicy
+from app.agent.search.cache import get_planner_decision_cache
+from app.agent.search_planner import SearchPlanner
 from app.agent.types import AgentEvent, AgentTrace, RuntimeAgentCall, RuntimeToolCall
 from app.core.settings import get_settings
 from app.schemas.chat import ChatRequest
 
-logger = logging.getLogger(__name__)
 
 AgentEventCallback = Callable[[AgentEvent], Awaitable[None]]
 
-_IMAGERY_ID_PATTERN = re.compile(r"[a-f0-9]{12}")
-_TRUSTED_IMAGERY_ID_PATTERN = re.compile(r"(?:ID|id)\s*[:=：]\s*([a-f0-9]{12})")
+_DEFAULT_TOOLS = {
+    "calculate_ndvi",
+    "raster_inspect",
+    "calculate_spectral_index",
+    "render_band_composite",
+}
+
+_GUARD_ERROR_CODES = {"imagery_not_found_or_forbidden", "owner_required"}
 
 
 @dataclass(frozen=True)
@@ -32,16 +37,6 @@ class TaskSelection:
 
 
 class TaskSelector:
-    def __init__(self) -> None:
-        self.settings = get_settings()
-
-    @property
-    def web_search_available(self) -> bool:
-        return bool(
-            self.settings.tavily_api_key.strip()
-            and self.settings.agent_web_search_max_calls > 0
-        )
-
     async def select(
         self,
         *,
@@ -55,35 +50,19 @@ class TaskSelector:
         add_event: Callable[..., Awaitable[AgentEvent]],
         route: AgentRoute | None = None,
     ) -> TaskSelection:
-        allowed_tools = set(route.candidate_tools) if route else {"calculate_ndvi"}
-        allowed_agents = set(route.candidate_agents) if route else {"web_search"}
-
-        ndvi_call = detect_ndvi_intent(query, request.messages, user_id=user_id)
-        if ndvi_call:
-            if ndvi_call.name not in allowed_tools:
-                return TaskSelection(reason="ndvi_not_allowed_by_route")
-            return TaskSelection(tool_call=ndvi_call, reason="ndvi_intent")
-
-        intent = classify_search_intent(query, request.messages)
-        if intent == SearchIntent.SKIP:
-            await add_event(trace, on_event, "classifier_skip", "规则预判：无需联网搜索")
-            return TaskSelection(reason="classifier_skip")
-
-        if "web_search" not in allowed_agents:
-            await add_event(trace, on_event, "tool_unavailable", "当前路由不允许联网搜索")
-            return TaskSelection(reason="search_not_allowed_by_route")
-
-        if intent == SearchIntent.FORCE:
-            if not self.web_search_available:
-                await add_event(trace, on_event, "tool_unavailable", "联网搜索不可用，跳过")
-                return TaskSelection(reason="force_but_unavailable")
-            await add_event(trace, on_event, "classifier_force", "规则预判：直接执行联网搜索")
-            return TaskSelection(
-                agent_call=self._web_search_call(query, "规则预判触发"),
-                reason="classifier_force",
+        if get_settings().agent_planner_mode.strip().lower() == "llm":
+            return await self._select_with_llm_planner(
+                client=client,
+                config=config,
+                request=request,
+                query=query,
+                user_id=user_id,
+                trace=trace,
+                on_event=on_event,
+                add_event=add_event,
+                route=route,
             )
-
-        agent_call = await self._plan_search_call(
+        return await self._select_legacy(
             client=client,
             config=config,
             request=request,
@@ -92,10 +71,10 @@ class TaskSelector:
             trace=trace,
             on_event=on_event,
             add_event=add_event,
+            route=route,
         )
-        return TaskSelection(agent_call=agent_call, reason="planner" if agent_call else "planner_no_tool")
 
-    async def _plan_search_call(
+    async def _select_legacy(
         self,
         *,
         client: Any,
@@ -106,149 +85,224 @@ class TaskSelector:
         trace: AgentTrace,
         on_event: AgentEventCallback | None,
         add_event: Callable[..., Awaitable[AgentEvent]],
-    ) -> RuntimeAgentCall | None:
-        if not self.web_search_available:
-            await add_event(trace, on_event, "tool_unavailable", "联网搜索不可用，跳过")
-            return None
+        route: AgentRoute | None,
+    ) -> TaskSelection:
+        allowed_tools = set(route.candidate_tools) if route else _DEFAULT_TOOLS
+        allowed_agents = set(route.candidate_agents) if route else {"web_search"}
+        web_search_available = is_capability_enabled("web_search")
 
-        decision_cache = get_decision_cache()
-        cache_scope = decision_cache_scope(
+        decision = IntentPolicy().decide(
             request=request,
+            query=query,
             user_id=user_id,
             config=config,
-            web_search_available=self.web_search_available,
+            web_search_available=web_search_available,
         )
-        cached = decision_cache.get_decision(query, scope=cache_scope)
-        if cached == CachedDecision.NO_SEARCH:
-            await add_event(trace, on_event, "cache_hit_skip", "决策缓存命中：无需联网搜索")
-            return None
-        if cached == CachedDecision.SEARCH:
-            await add_event(trace, on_event, "cache_hit_search", "决策缓存命中：需要联网搜索")
-            return self._web_search_call(query, "缓存决策触发")
 
-        await add_event(trace, on_event, "planning", "正在判断是否需要联网搜索")
-        planning_messages = await build_planning_context(request)
-        planning_model = self.settings.agent_planning_model.strip() or config.model
-        try:
-            response = await client.chat.completions.create(
-                model=planning_model,
-                messages=planning_messages,
-                stream=False,
-                max_tokens=3,
-                extra_body={"enable_thinking": False},
+        if decision.action == "skip":
+            await self._emit_decision_event(decision, trace, on_event, add_event)
+            return TaskSelection(reason=decision.reason)
+
+        if decision.action == "ask_planner":
+            if "web_search" not in allowed_agents:
+                await add_event(trace, on_event, "tool_unavailable", "当前路由不允许联网搜索")
+                return TaskSelection(reason="search_not_allowed_by_route")
+            agent_call = await SearchPlanner().plan(
+                client=client,
+                config=config,
+                request=request,
+                query=query,
+                user_id=user_id,
+                web_search_available=web_search_available,
+                trace=trace,
+                on_event=on_event,
+                add_event=add_event,
             )
-        except Exception:
-            logger.warning("Planning model failed; trying main model as fallback.")
-            await add_event(trace, on_event, "planning_fallback", "规划模型失败，尝试主模型兜底")
-            try:
-                response = await client.chat.completions.create(
-                    model=config.model,
-                    messages=planning_messages,
-                    stream=False,
-                    max_tokens=3,
-                    extra_body={"enable_thinking": False},
-                )
-            except Exception:
-                logger.exception("Fallback model also failed.")
-                await add_event(trace, on_event, "tool_unavailable", "模型接口不可用，降级为普通回答")
-                return None
+            return TaskSelection(
+                agent_call=agent_call,
+                reason="planner" if agent_call else "planner_no_tool",
+            )
 
-        answer = extract_text(response).strip().upper()
-        if answer.startswith("YES"):
-            decision_cache.put_decision(query, CachedDecision.SEARCH, scope=cache_scope)
-            return self._web_search_call(query, "模型判断需要搜索")
+        if decision.capability_kind == "tool":
+            return await self._select_tool(
+                decision=decision,
+                allowed_tools=allowed_tools,
+            )
 
-        decision_cache.put_decision(query, CachedDecision.NO_SEARCH, scope=cache_scope)
-        await add_event(trace, on_event, "direct_answer", "无需联网搜索，直接回答")
-        return None
+        if decision.capability_kind == "agent":
+            return await self._select_agent(
+                decision=decision,
+                allowed_agents=allowed_agents,
+                web_search_available=web_search_available,
+                trace=trace,
+                on_event=on_event,
+                add_event=add_event,
+            )
 
-    def _web_search_call(self, query: str, reason: str) -> RuntimeAgentCall:
-        return RuntimeAgentCall(
-            name="web_search",
-            arguments={
-                "query": query[: self.settings.agent_web_search_input_max_chars],
-                "reason": reason,
-            },
-            call_id=None,
+        return TaskSelection(reason=decision.reason)
+
+    async def _select_with_llm_planner(
+        self,
+        *,
+        client: Any,
+        config: ResolvedAIConfig,
+        request: ChatRequest,
+        query: str,
+        user_id: str | None,
+        trace: AgentTrace,
+        on_event: AgentEventCallback | None,
+        add_event: Callable[..., Awaitable[AgentEvent]],
+        route: AgentRoute | None,
+    ) -> TaskSelection:
+        safety = SafetyPolicy().decide(query)
+        if safety.action == "skip":
+            await add_event(trace, on_event, "planner_no_call", "无需调用能力，直接回答", reason=safety.reason)
+            return TaskSelection(reason=safety.reason)
+
+        capabilities = capability_snapshot()
+        scope = _planner_cache_scope(config=config, route=route, capabilities=capabilities, user_id=user_id, request=request)
+        cache = get_planner_decision_cache()
+        cached = cache.get_plan(query, scope=scope)
+        if cached:
+            decision = PlannerDecision(
+                action=str(cached.get("action") or "none"),
+                capability=cached.get("capability") if isinstance(cached.get("capability"), str) else None,
+                arguments=cached.get("arguments") if isinstance(cached.get("arguments"), dict) else {},
+                reason=str(cached.get("reason") or "cached_planner_decision"),
+                raw=cached,
+            )
+        else:
+            decision = await LLMCapabilityPlanner().plan(
+                client=client,
+                config=config,
+                request=request,
+                query=query,
+                user_id=user_id,
+                capabilities=capabilities,
+                trace=trace,
+                on_event=on_event,
+                add_event=add_event,
+            )
+
+        validated = PlanValidator().validate(decision, route=route, user_id=user_id)
+        if validated.validation_error:
+            stage = (
+                "capability_guard_rejected"
+                if validated.validation_error in _GUARD_ERROR_CODES
+                else "plan_validation_failed"
+            )
+            label = (
+                "能力调用被拒绝，降级为直接回答"
+                if stage == "capability_guard_rejected"
+                else "能力规划校验失败，降级为直接回答"
+            )
+            await add_event(
+                trace,
+                on_event,
+                stage,
+                label,
+                capability=validated.capability_name,
+                error=validated.validation_error,
+            )
+            return TaskSelection(reason=validated.validation_error)
+        if validated.action == "none":
+            await add_event(trace, on_event, "planner_no_call", "规划结果无需调用能力", reason=validated.reason)
+            return TaskSelection(reason=validated.reason or "planner_no_call")
+
+        if not cached:
+            cache.put_plan(
+                query,
+                {
+                    "action": "call",
+                    "capability": validated.capability_name,
+                    "arguments": validated.arguments,
+                    "reason": validated.reason,
+                },
+                scope=scope,
+            )
+
+        await add_event(
+            trace,
+            on_event,
+            "planner_selected",
+            "规划选择能力调用",
+            capability=validated.capability_name,
+            dispatch_kind=validated.capability_kind,
+            reason=validated.reason,
+            cached=bool(cached),
+        )
+        return TaskSelection(
+            tool_call=validated.tool_call,
+            agent_call=validated.agent_call,
+            reason=validated.reason or "llm_planner",
         )
 
+    async def _select_tool(
+        self,
+        *,
+        decision: IntentDecision,
+        allowed_tools: set[str],
+    ) -> TaskSelection:
+        if not decision.capability_name or not decision.tool_call:
+            return TaskSelection(reason=decision.reason)
+        if decision.capability_name not in allowed_tools:
+            if decision.capability_name == "calculate_ndvi":
+                return TaskSelection(reason="ndvi_not_allowed_by_route")
+            return TaskSelection(reason=f"{decision.capability_name}_not_allowed_by_route")
+        if not is_capability_enabled(decision.capability_name):
+            return TaskSelection(reason=f"{decision.capability_name}_unavailable")
+        return TaskSelection(tool_call=decision.tool_call, reason=decision.reason)
 
-def detect_ndvi_intent(
-    query: str,
-    messages: list[Any] | None = None,
+    async def _select_agent(
+        self,
+        *,
+        decision: IntentDecision,
+        allowed_agents: set[str],
+        web_search_available: bool,
+        trace: AgentTrace,
+        on_event: AgentEventCallback | None,
+        add_event: Callable[..., Awaitable[AgentEvent]],
+    ) -> TaskSelection:
+        if not decision.capability_name or not decision.agent_call:
+            return TaskSelection(reason=decision.reason)
+        if decision.capability_name not in allowed_agents:
+            await add_event(trace, on_event, "tool_unavailable", "当前路由不允许联网搜索")
+            return TaskSelection(reason="search_not_allowed_by_route")
+        if not web_search_available:
+            await add_event(trace, on_event, "tool_unavailable", "联网搜索不可用，跳过")
+            return TaskSelection(reason="force_but_unavailable")
+        await self._emit_decision_event(decision, trace, on_event, add_event)
+        return TaskSelection(agent_call=decision.agent_call, reason=decision.reason)
+
+    async def _emit_decision_event(
+        self,
+        decision: IntentDecision,
+        trace: AgentTrace,
+        on_event: AgentEventCallback | None,
+        add_event: Callable[..., Awaitable[AgentEvent]],
+    ) -> None:
+        if decision.trace_stage and decision.trace_label:
+            await add_event(trace, on_event, decision.trace_stage, decision.trace_label)
+
+
+def _planner_cache_scope(
     *,
-    user_id: str | None,
-) -> RuntimeToolCall | None:
-    if not wants_ndvi_calculation(query):
-        return None
-    context_text = query
-    if messages:
-        context_text = "\n".join(
-            str(read_value(message, "content", "") or "")
-            for message in messages[-6:]
-        )
-    known_ids = known_imagery_ids_for_user(user_id)
-    imagery_id = trusted_imagery_id(context_text, known_ids) or known_imagery_id_in_text(context_text, known_ids)
-    if not imagery_id:
-        return None
-    return RuntimeToolCall(
-        name="calculate_ndvi",
-        arguments={
-            "imagery_id": imagery_id,
-            "reason": "User requested NDVI calculation",
-        },
-        call_id=None,
-    )
-
-
-def trusted_imagery_id(text: str, known_ids: set[str]) -> str | None:
-    trusted_markers = ("当前上传影像", "已上传影像", "可用影像", "上传影像")
-    if not any(marker in text for marker in trusted_markers):
-        return None
-    match = _TRUSTED_IMAGERY_ID_PATTERN.search(text)
-    if not match:
-        return None
-    imagery_id = match.group(1)
-    return imagery_id if imagery_id in known_ids else None
-
-
-def known_imagery_id_in_text(text: str, known_ids: set[str]) -> str | None:
-    if not known_ids:
-        return None
-    for match in _IMAGERY_ID_PATTERN.finditer(text):
-        if match.group() in known_ids:
-            return match.group()
-    return None
-
-
-def decision_cache_scope(
-    *,
-    request: ChatRequest,
-    user_id: str | None,
     config: ResolvedAIConfig,
-    web_search_available: bool,
+    route: AgentRoute | None,
+    capabilities,
+    user_id: str | None,
+    request: ChatRequest,
 ) -> str:
+    capability_key = ",".join(sorted(capability.name for capability in capabilities))
     return "|".join(
         [
             user_id or "anonymous",
             request.conversation_id or "no-conversation",
             config.model,
-            "web:on" if web_search_available else "web:off",
+            "mode:llm",
+            route.mode if route else "no-route",
+            capability_key,
             f"rag:{int(request.use_rag)}",
             f"memory:{int(request.use_memory)}",
         ]
     )
-
-
-def read_value(value: Any, name: str, default: Any = None) -> Any:
-    if isinstance(value, dict):
-        return value.get(name, default)
-    return getattr(value, name, default)
-
-
-def extract_text(response: Any) -> str:
-    choices = read_value(response, "choices", []) or []
-    if not choices:
-        return ""
-    message = read_value(choices[0], "message", {})
-    return read_value(message, "content", "") or ""

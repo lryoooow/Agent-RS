@@ -22,7 +22,7 @@ def test_health_route(monkeypatch, tmp_path) -> None:
     assert body["storage_writable"] is True
     assert "api_key_configured" in body
     assert "docker_available" in body
-    assert body["ndvi_mcp"]["image"] == "ndvi-mcp:0.1.0"
+    assert body["rs_tools_mcp"]["image"] == "rs-tools-mcp:0.1.0"
 
 
 def test_config_route_does_not_leak_api_key(monkeypatch) -> None:

@@ -3,12 +3,14 @@ from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
 from app.agent.child import ToolChildAgent
+from app.agent.capability_registry import is_capability_enabled
 from app.agent.search_agent import SearchChildAgent
 from app.agent.tool_registry import list_tool_definitions
 from app.agent.tool_selector import TaskSelector
 from app.agent.types import AgentEvent, AgentTrace, RuntimeAgentCall, RuntimeToolCall, ToolRunResult
 from app.agent.config import ResolvedAIConfig
 from app.agent.prompting.scenarios import (
+    latest_user_text,
     tool_final_label,
 )
 from app.agent.request_builder import (
@@ -16,7 +18,7 @@ from app.agent.request_builder import (
     build_provider_request_context,
 )
 from app.agent.routing import AgentRoute, build_agent_route
-from app.schemas.chat import ChatRequest, GeospatialResult
+from app.schemas.chat import ChatRequest, GeospatialResult, ToolResult
 from app.core.settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -33,18 +35,12 @@ class AgentPlanResult:
     used_tool: bool = False
     dispatch_kind: str | None = None
     geospatial_result: GeospatialResult | None = None
+    tool_result: ToolResult | None = None
 
 
 class AgentRuntime:
     def __init__(self) -> None:
         self.settings = get_settings()
-
-    @property
-    def web_search_available(self) -> bool:
-        return bool(
-            self.settings.tavily_api_key.strip()
-            and self.settings.agent_web_search_max_calls > 0
-        )
 
     @property
     def tools_available(self) -> bool:
@@ -90,6 +86,7 @@ class AgentRuntime:
             used_tool=plan.used_tool,
             dispatch_kind=plan.dispatch_kind,
             geospatial_result=plan.geospatial_result,
+            tool_result=plan.tool_result,
         )
 
     async def plan_stream(
@@ -137,11 +134,11 @@ class AgentRuntime:
         )
 
         tools = self.tool_definitions()
-        if not tools and not self.web_search_available:
+        if not tools and not is_capability_enabled("web_search"):
             await self._add_event(trace, on_event, "tool_unavailable", "工具未配置，跳过工具调用")
             return AgentPlanResult(response=None, final_context=initial_context, trace=trace)
 
-        query = _latest_user_query(request)
+        query = latest_user_text(request.messages)
         route = route or build_agent_route(query, request)
 
         selection = await TaskSelector().select(
@@ -192,6 +189,7 @@ class AgentRuntime:
             used_tool=dispatch_kind == "tool",
             dispatch_kind=dispatch_kind,
             geospatial_result=tool_result.geospatial_result,
+            tool_result=tool_result.tool_result,
         )
 
     async def run_tool_call(
@@ -251,10 +249,3 @@ class AgentRuntime:
             extra_body={"enable_thinking": True, "thinking_budget": self.settings.ai_thinking_budget},
             **kwargs,
         )
-
-
-def _latest_user_query(request: ChatRequest) -> str:
-    for message in reversed(request.messages):
-        if message.role == "user":
-            return message.content.strip()
-    return ""

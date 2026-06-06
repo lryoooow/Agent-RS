@@ -19,10 +19,9 @@ async def health() -> dict:
         "web_search_configured": bool(settings.tavily_api_key.strip()),
         "storage_writable": storage_ok,
         "docker_available": docker_available,
-        "ndvi_mcp": {
-            "use_docker": settings.ndvi_mcp_use_docker,
-            "image": settings.ndvi_mcp_image,
-            "allow_local_fallback": settings.ndvi_mcp_allow_local_fallback,
+        "rs_tools_mcp": {
+            "use_docker": settings.rs_tools_mcp_use_docker,
+            "image": settings.rs_tools_mcp_image,
             "docker_command_available": docker_available,
         },
     }
