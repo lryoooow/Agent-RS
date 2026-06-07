@@ -4,6 +4,7 @@ from typing import Any, Awaitable, Callable
 
 from app.agent.child import ToolChildAgent
 from app.agent.capability_registry import is_capability_enabled
+from app.agent.domain_agents import DomainToolAgent, domain_for_tool
 from app.agent.search_agent import SearchChildAgent
 from app.agent.tool_registry import list_tool_definitions
 from app.agent.tool_selector import TaskSelector
@@ -200,6 +201,15 @@ class AgentRuntime:
         on_event: AgentEventCallback | None = None,
         user_id: str | None = None,
     ) -> ToolRunResult:
+        # 按领域归属派发到对应领域子 agent；未登记的工具回退通用执行器，保证不退化。
+        domain = domain_for_tool(tool_call.name)
+        if domain is not None:
+            return await DomainToolAgent(domain).run(
+                tool_call,
+                user_id=user_id,
+                trace=trace,
+                on_event=on_event,
+            )
         return await ToolChildAgent().run(
             tool_call,
             user_id=user_id,
