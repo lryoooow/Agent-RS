@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/logo.png" alt="Agent-RS Logo" width="180" />
+<img src="docs/assets/logo-rsagent.png" alt="Agent-RS Logo" width="180" />
 
 # Agent-RS
 
