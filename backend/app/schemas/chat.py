@@ -121,6 +121,42 @@ class GeospatialCompositeResult(BaseModel):
     execution: ToolExecutionInfo | None = None
 
 
+class DetectionClassInfo(BaseModel):
+    name: str
+    label: str
+    count: int
+    color: str
+
+
+class GeospatialDetectionResult(BaseModel):
+    type: Literal["detection"]
+    imagery_id: str
+    result_url: str
+    bounds: tuple[float, float, float, float] | None = None
+    detection_count: int = 0
+    score_threshold: float = 0.5
+    classes: list[DetectionClassInfo] = Field(default_factory=list)
+    execution: ToolExecutionInfo | None = None
+
+
+class SegmentationClassInfo(BaseModel):
+    name: str
+    label: str
+    pixel_count: int
+    percentage: float
+    color: str
+
+
+class GeospatialSegmentationResult(BaseModel):
+    type: Literal["segmentation"]
+    imagery_id: str
+    result_url: str
+    bounds: tuple[float, float, float, float] | None = None
+    total_pixels: int = 0
+    classes: list[SegmentationClassInfo] = Field(default_factory=list)
+    execution: ToolExecutionInfo | None = None
+
+
 class RasterInspectResult(BaseModel):
     type: Literal["raster_inspect"]
     imagery_id: str
@@ -142,6 +178,8 @@ GeospatialResult = (
     | GeospatialNDVIResult
     | GeospatialSpectralIndexResult
     | GeospatialCompositeResult
+    | GeospatialDetectionResult
+    | GeospatialSegmentationResult
 )
 ToolResult = RasterInspectResult
 

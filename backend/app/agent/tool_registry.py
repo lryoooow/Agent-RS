@@ -5,10 +5,14 @@ from pydantic import BaseModel
 
 from app.agent.tools.band_composite.runner import run_band_composite
 from app.agent.tools.band_composite.schema import BAND_COMPOSITE_TOOL, BandCompositeArguments
+from app.agent.tools.detect.runner import run_detect
+from app.agent.tools.detect.schema import DETECT_TOOL, DetectArguments
 from app.agent.tools.ndvi.runner import run_ndvi
 from app.agent.tools.ndvi.schema import NDVI_TOOL, NDVIArguments
 from app.agent.tools.raster_inspect.runner import run_raster_inspect
 from app.agent.tools.raster_inspect.schema import RASTER_INSPECT_TOOL, RasterInspectArguments
+from app.agent.tools.segment.runner import run_segment
+from app.agent.tools.segment.schema import SEGMENT_TOOL, SegmentArguments
 from app.agent.tools.spectral_index.runner import run_spectral_index
 from app.agent.tools.spectral_index.schema import SPECTRAL_INDEX_TOOL, SpectralIndexArguments
 from app.agent.types import ToolRunResult
@@ -47,6 +51,14 @@ async def _run_band_composite(args: BandCompositeArguments) -> ToolRunResult:
     return await run_band_composite(args)
 
 
+async def _run_detect(args: DetectArguments) -> ToolRunResult:
+    return await run_detect(args)
+
+
+async def _run_segment(args: SegmentArguments) -> ToolRunResult:
+    return await run_segment(args)
+
+
 TOOLS: dict[str, RegisteredTool] = {
     "calculate_ndvi": RegisteredTool(
         name="calculate_ndvi",
@@ -75,6 +87,20 @@ TOOLS: dict[str, RegisteredTool] = {
         argument_model=BandCompositeArguments,
         runner=_run_band_composite,
         tags=("imagery", "composite", "mcp"),
+    ),
+    "detect_objects": RegisteredTool(
+        name="detect_objects",
+        definition=DETECT_TOOL,
+        argument_model=DetectArguments,
+        runner=_run_detect,
+        tags=("imagery", "detection", "mcp"),
+    ),
+    "segment_landcover": RegisteredTool(
+        name="segment_landcover",
+        definition=SEGMENT_TOOL,
+        argument_model=SegmentArguments,
+        runner=_run_segment,
+        tags=("imagery", "segmentation", "mcp"),
     ),
 }
 

@@ -91,11 +91,43 @@ export type GeospatialCompositeResult = GeospatialBaseResult & {
   execution?: ToolExecutionInfo | null;
 };
 
+export type DetectionClassInfo = {
+  name: string;
+  label: string;
+  count: number;
+  color: string;
+};
+
+export type GeospatialDetectionResult = GeospatialBaseResult & {
+  type: "detection";
+  detection_count: number;
+  score_threshold: number;
+  classes: DetectionClassInfo[];
+  execution?: ToolExecutionInfo | null;
+};
+
+export type SegmentationClassInfo = {
+  name: string;
+  label: string;
+  pixel_count: number;
+  percentage: number;
+  color: string;
+};
+
+export type GeospatialSegmentationResult = GeospatialBaseResult & {
+  type: "segmentation";
+  total_pixels: number;
+  classes: SegmentationClassInfo[];
+  execution?: ToolExecutionInfo | null;
+};
+
 export type GeospatialResult =
   | GeospatialPreviewResult
   | GeospatialNdviResult
   | GeospatialSpectralIndexResult
-  | GeospatialCompositeResult;
+  | GeospatialCompositeResult
+  | GeospatialDetectionResult
+  | GeospatialSegmentationResult;
 
 export type RasterBandStats = {
   band: number;

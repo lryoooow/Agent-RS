@@ -45,7 +45,10 @@ export function MapPanel({ geospatialResults }: MapPanelProps) {
   const visibleLegendEntries = layerEntries.filter(
     (entry) =>
       visibleLayers[entry.key] !== false &&
-      (entry.result.type === "ndvi" || entry.result.type === "spectral_index"),
+      (entry.result.type === "ndvi" ||
+        entry.result.type === "spectral_index" ||
+        entry.result.type === "detection" ||
+        entry.result.type === "segmentation"),
   );
 
   useEffect(() => {
@@ -319,6 +322,54 @@ function LegendList({ entries }: { entries: LayerEntry[] }) {
 }
 
 function LayerLegend({ result }: { result: GeospatialResult }) {
+  if (result.type === "segmentation") {
+    if (!result.classes.length) {
+      return <p className="text-xs text-[#707090]">地物分割 - 未识别到地物</p>;
+    }
+    return (
+      <div>
+        <p className="mb-1 text-xs text-[#707090]">地物分割 - 像素占比</p>
+        <ul className="space-y-0.5">
+          {result.classes.map((cls) => (
+            <li key={cls.name} className="flex items-center gap-1.5">
+              <span
+                className="h-2.5 w-2.5 rounded-sm border border-[#2a2a4a]"
+                style={{ backgroundColor: cls.color }}
+              />
+              <span className="text-[10px] text-[#a0a0c0]">
+                {cls.label} ({cls.percentage.toFixed(1)}%)
+              </span>
+            </li>
+          ))}
+        </ul>
+      </div>
+    );
+  }
+  if (result.type === "detection") {
+    if (!result.classes.length) {
+      return <p className="text-xs text-[#707090]">目标检测 - 未检测到目标</p>;
+    }
+    return (
+      <div>
+        <p className="mb-1 text-xs text-[#707090]">
+          目标检测 - 共 {result.detection_count} 个
+        </p>
+        <ul className="space-y-0.5">
+          {result.classes.map((cls) => (
+            <li key={cls.name} className="flex items-center gap-1.5">
+              <span
+                className="h-2.5 w-2.5 rounded-sm border border-[#2a2a4a]"
+                style={{ backgroundColor: cls.color }}
+              />
+              <span className="text-[10px] text-[#a0a0c0]">
+                {cls.label} ({cls.count})
+              </span>
+            </li>
+          ))}
+        </ul>
+      </div>
+    );
+  }
   if (result.type !== "ndvi" && result.type !== "spectral_index") return null;
   const legend = result.legend ?? defaultLegend(result);
   return (
@@ -339,6 +390,8 @@ function layerLabel(result: GeospatialResult) {
   if (result.type === "ndvi") return `NDVI - ${id}`;
   if (result.type === "spectral_index") return `${result.index_type.toUpperCase()} - ${id}`;
   if (result.type === "composite") return `${compositeLabel(result.mode)} - ${id}`;
+  if (result.type === "detection") return `目标检测 - ${id}`;
+  if (result.type === "segmentation") return `地物分割 - ${id}`;
   return `图层 - ${id}`;
 }
 
@@ -353,7 +406,12 @@ function defaultLegend(result: GeospatialResult): LegendInfo {
     const type = result.index_type.toLowerCase();
     if (type === "evi") return { label: "EVI", min: -1, max: 2.5, palette: "vegetation" };
     if (type === "savi") return { label: "SAVI", min: -1, max: 1.5, palette: "vegetation" };
+    if (type === "gndvi") return { label: "GNDVI", min: -1, max: 1, palette: "vegetation" };
+    if (type === "msavi") return { label: "MSAVI", min: -1, max: 1, palette: "vegetation" };
     if (type === "ndbi") return { label: "NDBI", min: -1, max: 1, palette: "built" };
+    if (type === "bsi") return { label: "BSI", min: -1, max: 1, palette: "built" };
+    if (type === "nbr") return { label: "NBR", min: -1, max: 1, palette: "burn" };
+    if (type === "ndmi") return { label: "NDMI", min: -1, max: 1, palette: "water" };
     if (type === "ndwi" || type === "mndwi") return { label: type.toUpperCase(), min: -1, max: 1, palette: "water" };
   }
   return { label: "NDVI", min: -1, max: 1, palette: "vegetation" };
@@ -365,6 +423,9 @@ function gradientForPalette(palette: string) {
   }
   if (palette === "built") {
     return "linear-gradient(to right, #2c7bb6, #ffffbf, #fdae61, #a6611a)";
+  }
+  if (palette === "burn") {
+    return "linear-gradient(to right, #006837, #ffffbf, #fdae61, #a60026)";
   }
   return "linear-gradient(to right, #a60026, #f46d43, #ffffbf, #66bd63, #006837)";
 }

@@ -14,6 +14,8 @@ ALL_IMAGERY_TOOLS = (
     "raster_inspect",
     "calculate_spectral_index",
     "render_band_composite",
+    "detect_objects",
+    "segment_landcover",
 )
 
 
