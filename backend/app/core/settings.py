@@ -137,6 +137,18 @@ class Settings(BaseSettings):
     rs_tools_mcp_memory_limit: str = "2g"
     rs_tools_mcp_cpus: float = 2.0
     rs_tools_mcp_network: str = "none"
+    rs_detect_docker_timeout_seconds: int = 300
+    rs_detect_mcp_image: str = "rs-detect-mcp:0.1.0"
+    rs_detect_mcp_memory_limit: str = "6g"
+    rs_detect_mcp_cpus: float = 4.0
+    rs_detect_mcp_network: str = "none"
+    rs_detect_mcp_gpus: str = "all"
+    rs_segment_docker_timeout_seconds: int = 300
+    rs_segment_mcp_image: str = "rs-segment-mcp:0.1.0"
+    rs_segment_mcp_memory_limit: str = "6g"
+    rs_segment_mcp_cpus: float = 4.0
+    rs_segment_mcp_network: str = "none"
+    rs_segment_mcp_gpus: str = "all"
 
     @property
     def cors_origin_list(self) -> list[str]:

@@ -24,6 +24,8 @@ _DEFAULT_TOOLS = {
     "raster_inspect",
     "calculate_spectral_index",
     "render_band_composite",
+    "detect_objects",
+    "segment_landcover",
 }
 
 _GUARD_ERROR_CODES = {"imagery_not_found_or_forbidden", "owner_required"}
