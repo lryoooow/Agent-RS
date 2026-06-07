@@ -24,6 +24,7 @@ class RSToolsMCPClient:
         memory_limit: str = "2g",
         cpus: float = 2.0,
         network: str = "none",
+        gpus: str | None = None,
     ) -> None:
         self.image = image
         self.container_imagery_root = container_imagery_root.rstrip("/")
@@ -31,6 +32,7 @@ class RSToolsMCPClient:
         self.memory_limit = memory_limit
         self.cpus = cpus
         self.network = network
+        self.gpus = gpus
 
     def host_to_container(self, host_path: Path, *, mount_root: Path) -> str:
         rel = host_path.resolve().relative_to(mount_root.resolve())
@@ -62,10 +64,16 @@ class RSToolsMCPClient:
             self.memory_limit,
             "--cpus",
             str(self.cpus),
-            "-v",
-            f"{mount_root}:{self.container_imagery_root}",
-            self.image,
         ]
+        if self.gpus:
+            command.extend(["--gpus", self.gpus])
+        command.extend(
+            [
+                "-v",
+                f"{mount_root}:{self.container_imagery_root}",
+                self.image,
+            ]
+        )
         logger.info("[RS Tools MCP] launch image=%s tool=%s mount_root=%s", self.image, tool_name, mount_root)
         return await StdioMCPClient(
             command=command,
