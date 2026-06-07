@@ -110,6 +110,11 @@ def _legend(index_type: str) -> dict:
         "ndbi": (-1.0, 1.0, "built"),
         "evi": (-1.0, 2.5, "vegetation"),
         "savi": (-1.0, 1.5, "vegetation"),
+        "gndvi": (-1.0, 1.0, "vegetation"),
+        "msavi": (-1.0, 1.0, "vegetation"),
+        "ndmi": (-1.0, 1.0, "water"),
+        "nbr": (-1.0, 1.0, "burn"),
+        "bsi": (-1.0, 1.0, "built"),
     }
     low, high, palette = ranges.get(normalized, (-1.0, 1.0, "spectral"))
     return {

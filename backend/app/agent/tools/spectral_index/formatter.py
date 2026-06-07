@@ -9,6 +9,11 @@ INDEX_LABELS = {
     "ndbi": "NDBI 建成区指数",
     "evi": "EVI 增强植被指数",
     "savi": "SAVI 土壤调节植被指数",
+    "gndvi": "GNDVI 绿光归一化植被指数",
+    "ndmi": "NDMI 植被水分指数",
+    "nbr": "NBR 火烧迹地指数",
+    "msavi": "MSAVI 改进土壤调节植被指数",
+    "bsi": "BSI 裸土指数",
 }
 
 

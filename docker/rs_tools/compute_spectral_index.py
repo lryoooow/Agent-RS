@@ -14,6 +14,11 @@ INDEX_OUTPUT_RANGES = {
     "ndbi": (-1.0, 1.0),
     "evi": (-1.0, 1.0),
     "savi": (-1.0, 1.0),
+    "gndvi": (-1.0, 1.0),
+    "ndmi": (-1.0, 1.0),
+    "nbr": (-1.0, 1.0),
+    "msavi": (-1.0, 1.0),
+    "bsi": (-1.0, 1.0),
 }
 
 
@@ -40,11 +45,11 @@ def compute(
         _validate_bands(src.count, index_type, blue_band, green_band, red_band, nir_band, swir_band)
         profile = src.profile.copy()
 
-        blue = _read(src, blue_band) if index_type == "evi" else None
-        green = _read(src, green_band) if index_type in {"ndwi", "mndwi"} else None
-        red = _read(src, red_band) if index_type in {"evi", "savi"} else None
-        nir = _read(src, nir_band) if index_type in {"ndwi", "ndbi", "evi", "savi"} else None
-        swir = _read(src, swir_band) if index_type in {"mndwi", "ndbi"} else None
+        blue = _read(src, blue_band) if index_type in {"evi", "bsi"} else None
+        green = _read(src, green_band) if index_type in {"ndwi", "mndwi", "gndvi"} else None
+        red = _read(src, red_band) if index_type in {"evi", "savi", "msavi", "bsi"} else None
+        nir = _read(src, nir_band) if index_type in {"ndwi", "ndbi", "evi", "savi", "gndvi", "ndmi", "nbr", "msavi", "bsi"} else None
+        swir = _read(src, swir_band) if index_type in {"mndwi", "ndbi", "ndmi", "nbr", "bsi"} else None
 
     if index_type == "ndwi":
         values = _safe_ratio(green - nir, green + nir)
@@ -54,8 +59,18 @@ def compute(
         values = _safe_ratio(swir - nir, swir + nir)
     elif index_type == "evi":
         values = _safe_ratio(2.5 * (nir - red), nir + 6 * red - 7.5 * blue + 1)
-    else:
+    elif index_type == "savi":
         values = _safe_ratio(1.5 * (nir - red), nir + red + 0.5)
+    elif index_type == "gndvi":
+        values = _safe_ratio(nir - green, nir + green)
+    elif index_type == "ndmi":
+        values = _safe_ratio(nir - swir, nir + swir)
+    elif index_type == "nbr":
+        values = _safe_ratio(nir - swir, nir + swir)
+    elif index_type == "msavi":
+        values = (2 * nir + 1 - np.sqrt(np.maximum((2 * nir + 1) ** 2 - 8 * (nir - red), 0.0))) / 2
+    else:
+        values = _safe_ratio((swir + red) - (nir + blue), (swir + red) + (nir + blue))
 
     values = np.clip(values, -1.0, 1.0)
     output_tif = f"{index_type}.tif"
@@ -84,6 +99,11 @@ def _validate_bands(count: int, index_type: str, blue: int, green: int, red: int
         "ndbi": {"nir": nir, "swir": swir},
         "evi": {"blue": blue, "red": red, "nir": nir},
         "savi": {"red": red, "nir": nir},
+        "gndvi": {"green": green, "nir": nir},
+        "ndmi": {"nir": nir, "swir": swir},
+        "nbr": {"nir": nir, "swir": swir},
+        "msavi": {"red": red, "nir": nir},
+        "bsi": {"blue": blue, "red": red, "nir": nir, "swir": swir},
     }[index_type]
     for name, band in required.items():
         if band < 1:
@@ -120,6 +140,11 @@ def _write_colored_png(values: np.ndarray, out_path: Path, index_type: str) -> N
         "ndbi": np.array([[44, 123, 182, 255], [255, 255, 191, 255], [253, 174, 97, 255], [166, 97, 26, 255]], dtype=np.float32),
         "evi": np.array([[166, 0, 38, 255], [255, 255, 191, 255], [102, 189, 99, 255], [0, 104, 55, 255]], dtype=np.float32),
         "savi": np.array([[166, 0, 38, 255], [255, 255, 191, 255], [102, 189, 99, 255], [0, 104, 55, 255]], dtype=np.float32),
+        "gndvi": np.array([[166, 0, 38, 255], [255, 255, 191, 255], [102, 189, 99, 255], [0, 104, 55, 255]], dtype=np.float32),
+        "msavi": np.array([[166, 0, 38, 255], [255, 255, 191, 255], [102, 189, 99, 255], [0, 104, 55, 255]], dtype=np.float32),
+        "ndmi": np.array([[120, 57, 30, 255], [240, 240, 180, 255], [49, 130, 189, 255], [8, 48, 107, 255]], dtype=np.float32),
+        "nbr": np.array([[0, 104, 55, 255], [255, 255, 191, 255], [253, 174, 97, 255], [166, 0, 38, 255]], dtype=np.float32),
+        "bsi": np.array([[44, 123, 182, 255], [255, 255, 191, 255], [253, 174, 97, 255], [166, 97, 26, 255]], dtype=np.float32),
     }
     positions = np.linspace(0, 1, len(ramps[index_type]), dtype=np.float32)
     rgba = np.empty((*valid.shape, 4), dtype=np.uint8)
