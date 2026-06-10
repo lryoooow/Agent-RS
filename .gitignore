@@ -7,6 +7,9 @@ build/
 __pycache__/
 .pytest_cache/
 .test-tmp/
+backend/.tmp_pytest/
+backend/.tmp_pytest_cache/
+backend/.tmp_pytest_run/
 *.pyc
 *.egg-info/
 backend/storage/
