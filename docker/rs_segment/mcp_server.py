@@ -26,6 +26,7 @@ TOOL_DEFINITIONS = [
                 "blue_band": {"type": "integer"},
             },
             "required": ["input_path", "output_dir"],
+            "additionalProperties": False,
         },
     },
 ]

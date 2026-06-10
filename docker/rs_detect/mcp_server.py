@@ -27,6 +27,7 @@ TOOL_DEFINITIONS = [
                 "score_threshold": {"type": "number"},
             },
             "required": ["input_path", "output_dir"],
+            "additionalProperties": False,
         },
     },
 ]

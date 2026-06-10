@@ -27,6 +27,30 @@ def invalid_imagery_id_result(tool_name: str) -> ToolRunResult:
     )
 
 
+def validate_band_indices(source_path: Path, bands: dict[str, int]) -> str | None:
+    """Validate 1-based raster band indices against the source image."""
+    import rasterio
+
+    below_range = {name: index for name, index in bands.items() if index < 1}
+    if below_range:
+        return f"波段索引必须从 1 开始，当前 {below_range}"
+
+    with rasterio.open(source_path) as src:
+        band_count = src.count
+    over_range = {name: index for name, index in bands.items() if index > band_count}
+    if over_range:
+        return f"影像只有 {band_count} 个波段，无法使用 {over_range}"
+    return None
+
+
+def invalid_bands_result(tool_name: str, detail: str) -> ToolRunResult:
+    return ToolRunResult(
+        tool_context=f"{tool_name}参数无效: {detail}",
+        error="invalid_bands",
+        metadata={"error_code": "invalid_bands", "execution_mode": "failed"},
+    )
+
+
 def imagery_not_found_result(imagery_id: str) -> ToolRunResult:
     return ToolRunResult(
         tool_context=f"影像 {imagery_id} 不存在，请先上传影像。",

@@ -3,10 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
-from app.agent.router import RequestRoute, classify_request_route
-from app.agent.prompting.scenarios import wants_imagery_tool, wants_ndvi_calculation
-from app.agent.safety_policy import SafetyPolicy
-from app.core.settings import get_settings
 from app.schemas.chat import ChatRequest
 
 ALL_IMAGERY_TOOLS = (
@@ -16,7 +12,19 @@ ALL_IMAGERY_TOOLS = (
     "render_band_composite",
     "detect_objects",
     "segment_landcover",
+    "cloud_shadow_mask",
+    "extract_water_mask",
+    "clip_reproject_raster",
+    "ocr_recognize",
 )
+
+# 文档工具走第二通道：吃 document_id（UUID）而非 imagery_id，
+# 因此与影像工具分开登记。新增文档工具时在此追加，并由回归测试守住。
+ALL_DOCUMENT_TOOLS = (
+    "parse_document",
+)
+
+ALL_CANDIDATE_TOOLS = ALL_IMAGERY_TOOLS + ALL_DOCUMENT_TOOLS
 
 
 @dataclass(frozen=True)
@@ -36,40 +44,16 @@ class AgentRoute:
 
 
 def build_agent_route(query: str, request: ChatRequest) -> AgentRoute:
-    if get_settings().agent_planner_mode.strip().lower() == "llm":
-        safety = SafetyPolicy().decide(query)
-        if safety.action == "skip":
-            return AgentRoute(
-                mode="direct_chat",
-                reason=safety.reason,
-                skip_retrieval=True,
-            )
+    if not query.strip():
         return AgentRoute(
-            mode="full_pipeline",
-            reason="llm_planner_route",
-            candidate_tools=ALL_IMAGERY_TOOLS,
-            candidate_agents=("web_search",),
-            skip_retrieval=False,
-        )
-
-    route = classify_request_route(query, request)
-    if route == RequestRoute.DIRECT_CHAT:
-        if wants_ndvi_calculation(query) or wants_imagery_tool(query):
-            return AgentRoute(
-                mode="full_pipeline",
-                reason="imagery_tool_override",
-                candidate_tools=ALL_IMAGERY_TOOLS,
-                skip_retrieval=False,
-            )
-        return AgentRoute(
-            mode=route.value,
-            reason="direct_chat_route",
+            mode="direct_chat",
+            reason="empty_query",
             skip_retrieval=True,
         )
     return AgentRoute(
-        mode=route.value,
-        reason="full_pipeline_route",
-        candidate_tools=ALL_IMAGERY_TOOLS,
+        mode="full_pipeline",
+        reason="llm_planner_route",
+        candidate_tools=ALL_CANDIDATE_TOOLS,
         candidate_agents=("web_search",),
         skip_retrieval=False,
     )

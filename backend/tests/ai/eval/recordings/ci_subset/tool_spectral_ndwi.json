@@ -1,0 +1,14 @@
+{
+  "case_id": "tool_spectral_ndwi",
+  "context_hash": "e94e428addf2e71893e2fb6f1e4129e867a630921001c82c746d106825085cba",
+  "key": "a1d802b1bc8541cf17526ec709c4c8a063923e9b29b03cdf40df12741f1726e9",
+  "model": "qwen3.7-max",
+  "prompt_hash": "707fb9a956243aae8988fe602875a3bfe164cfd138791f5ba7820f9934b003ad",
+  "query_hash": "2ec69fd0421ec4c98ddc45888f9aa21ca41e3a9e575d3fe46fbcae7709496456",
+  "raw_texts": [
+    "{\"action\":\"call\",\"capability\":\"calculate_spectral_index\",\"arguments\":{\"imagery_id\":\"94e758f38ede\",\"index_type\":\"ndwi\",\"reason\":\"用户请求计算NDWI水体指数\"},\"reason\":\"spectral_index_ndwi\"}"
+  ],
+  "recorded_at": "2026-06-10T06:53:53.156803+00:00",
+  "scope": "00000000-0000-4000-8000-000000000001|planner-eval-tool_spectral_ndwi|qwen3.7-max|mode:llm|full_pipeline|calculate_ndvi,calculate_spectral_index,clip_reproject_raster,cloud_shadow_mask,detect_objects,extract_water_mask,ocr_recognize,parse_document,raster_inspect,render_band_composite,segment_landcover,web_search|rag:0|memory:0",
+  "source": "live"
+}

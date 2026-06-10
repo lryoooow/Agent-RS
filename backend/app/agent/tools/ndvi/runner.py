@@ -1,16 +1,17 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import asyncio
 import logging
-from pathlib import Path
 
 from app.agent.tools.common import (
     IMAGERY_ID_PATTERN,
     execution_metadata,
     imagery_not_found_result,
+    invalid_bands_result,
     invalid_imagery_id_result,
     read_bounds,
     resolve_imagery_paths,
+    validate_band_indices,
 )
 from app.agent.tools.ndvi.formatter import format_ndvi_context
 from app.agent.tools.ndvi.schema import NDVIArguments
@@ -31,9 +32,9 @@ async def run_ndvi(args: NDVIArguments) -> ToolRunResult:
         return imagery_not_found_result(args.imagery_id)
     results_dir.mkdir(parents=True, exist_ok=True)
 
-    band_error = _validate_bands(source_path, args.red_band, args.nir_band)
+    band_error = validate_band_indices(source_path, {"red": args.red_band, "nir": args.nir_band})
     if band_error:
-        return _error_result(f"NDVI 计算参数无效: {band_error}", "invalid_bands")
+        return invalid_bands_result("NDVI 计算", band_error)
 
     settings = get_settings()
     if not settings.rs_tools_mcp_use_docker:
@@ -95,17 +96,6 @@ def _client(settings) -> RSToolsMCPClient:
         cpus=settings.rs_tools_mcp_cpus,
         network=settings.rs_tools_mcp_network,
     )
-
-
-def _validate_bands(source_path: Path, red_band: int, nir_band: int) -> str | None:
-    import rasterio
-
-    if red_band < 1 or nir_band < 1:
-        return f"波段索引必须从 1 开始，当前 red={red_band}, nir={nir_band}"
-    with rasterio.open(source_path) as src:
-        if red_band > src.count or nir_band > src.count:
-            return f"影像只有 {src.count} 个波段，当前 red={red_band}, nir={nir_band}"
-    return None
 
 
 def _error_result(message: str, code: str) -> ToolRunResult:

@@ -1,6 +1,7 @@
 import asyncio
 import json
 from types import SimpleNamespace
+from uuid import UUID
 
 import pytest
 
@@ -13,6 +14,18 @@ from app.core.settings import get_settings
 class FakeCompletions:
     async def create(self, **kwargs):
         assert kwargs["model"] == "client-model"
+        if kwargs.get("max_tokens"):
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(
+                            content='{"action":"none","capability":null,"arguments":{},"reason":"direct"}'
+                        ),
+                        finish_reason="stop",
+                    )
+                ],
+                usage=None,
+            )
         if kwargs["stream"] is True:
             return fake_stream()
         assert kwargs["messages"][0]["role"] == "system"
@@ -37,7 +50,19 @@ class FakeClient:
 
 
 class FailingStreamCompletions:
-    async def create(self, **_):
+    async def create(self, **kwargs):
+        if kwargs.get("max_tokens"):
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(
+                            content='{"action":"none","capability":null,"arguments":{},"reason":"direct"}'
+                        ),
+                        finish_reason="stop",
+                    )
+                ],
+                usage=None,
+            )
         raise RuntimeError("provider unavailable")
 
 
@@ -59,6 +84,45 @@ async def fake_stream():
         ],
         usage=None,
     )
+
+
+def _event_data(event: str, event_name: str) -> dict:
+    prefix = f"event: {event_name}\ndata: "
+    assert event.startswith(prefix)
+    assert event.endswith("\n\n")
+    return json.loads(event[len(prefix):-2])
+
+
+def _assert_meta_event(event: str, *, require_persistence_ids: bool) -> dict:
+    meta = _event_data(event, "meta")
+    assert meta["model"] == "client-model"
+    assert meta["provider"] == "openai-compatible"
+
+    persistence_keys = ("conversation_id", "user_message_id", "assistant_message_id")
+    if require_persistence_ids:
+        for key in persistence_keys:
+            assert isinstance(meta[key], str)
+            UUID(meta[key])
+    else:
+        for key in persistence_keys:
+            if key in meta:
+                assert isinstance(meta[key], str)
+                UUID(meta[key])
+    return meta
+
+
+def _assert_rag_trace_baseline(done_payload: dict) -> None:
+    rag_trace = done_payload["rag_trace"]
+    assert rag_trace["use_rag"] is False
+    assert rag_trace["use_memory"] is True
+
+
+@pytest.fixture(autouse=True)
+def deterministic_chat_service_environment(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("DATABASE_ENABLED", "false")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
 
 
 @pytest.mark.asyncio
@@ -108,16 +172,30 @@ async def test_chat_service_streams_sse_events(monkeypatch: pytest.MonkeyPatch) 
 
     events = [event async for event in service.stream_chat(request)]
 
-    assert events[0] == 'event: meta\ndata: {"model": "client-model", "provider": "openai-compatible"}\n\n'
+    _assert_meta_event(events[0], require_persistence_ids=False)
     assert events[1] == 'event: analysis_status\ndata: {"status": "analyzing", "label": "正在解析问题…"}\n\n'
-    assert events[2] == 'event: analysis_status\ndata: {"status": "preparing", "label": "正在整理内容…"}\n\n'
-    assert events[3] == 'event: analysis_status\ndata: {"status": "answering", "label": "正在组织回复…"}\n\n'
-    assert events[4] == 'event: analysis_status\ndata: {"status": "complete", "label": "思考完成"}\n\n'
-    assert events[5] == 'event: delta\ndata: {"content": "stream"}\n\n'
-    assert (
-        events[6]
-        == 'event: done\ndata: {"finish_reason": "stop", "retrieved_chunks": 0, "rag_trace": {"use_rag": false, "use_memory": true, "skipped": true, "reason": "direct_chat_route"}}\n\n'
-    )
+    assert events[2].startswith("event: agent_status\n")
+    assert '"status": "context_assembled"' in events[2]
+    assert events[3].startswith("event: agent_status\n")
+    assert '"status": "planner_started"' in events[3]
+    assert events[4].startswith("event: agent_status\n")
+    assert '"status": "planner_completed"' in events[4]
+    assert events[5].startswith("event: agent_status\n")
+    assert '"status": "planner_no_call"' in events[5]
+    assert events[6] == 'event: analysis_status\ndata: {"status": "preparing", "label": "正在整理内容…"}\n\n'
+    assert events[7] == 'event: analysis_status\ndata: {"status": "answering", "label": "正在组织回复…"}\n\n'
+    assert events[8] == 'event: analysis_status\ndata: {"status": "complete", "label": "思考完成"}\n\n'
+    assert events[9] == 'event: delta\ndata: {"content": "stream"}\n\n'
+    done = json.loads(events[10].split("data: ", 1)[1])
+    assert done["finish_reason"] == "stop"
+    assert done["retrieved_chunks"] == 0
+    _assert_rag_trace_baseline(done)
+    assert [event["stage"] for event in done["agent_trace"]["events"]] == [
+        "context_assembled",
+        "planner_started",
+        "planner_completed",
+        "planner_no_call",
+    ]
 
 
 @pytest.mark.asyncio
@@ -142,11 +220,19 @@ async def test_chat_service_streams_initial_status_before_provider_error(
 
     events = [event async for event in service.stream_chat(request)]
 
-    assert events[0] == 'event: meta\ndata: {"model": "client-model", "provider": "openai-compatible"}\n\n'
+    _assert_meta_event(events[0], require_persistence_ids=False)
     assert events[1] == 'event: analysis_status\ndata: {"status": "analyzing", "label": "正在解析问题…"}\n\n'
-    assert events[2] == 'event: analysis_status\ndata: {"status": "preparing", "label": "正在整理内容…"}\n\n'
-    assert events[3] == 'event: analysis_status\ndata: {"status": "answering", "label": "正在组织回复…"}\n\n'
-    assert events[4] == (
+    assert events[2].startswith("event: agent_status\n")
+    assert '"status": "context_assembled"' in events[2]
+    assert events[3].startswith("event: agent_status\n")
+    assert '"status": "planner_started"' in events[3]
+    assert events[4].startswith("event: agent_status\n")
+    assert '"status": "planner_completed"' in events[4]
+    assert events[5].startswith("event: agent_status\n")
+    assert '"status": "planner_no_call"' in events[5]
+    assert events[6] == 'event: analysis_status\ndata: {"status": "preparing", "label": "正在整理内容…"}\n\n'
+    assert events[7] == 'event: analysis_status\ndata: {"status": "answering", "label": "正在组织回复…"}\n\n'
+    assert events[8] == (
         'event: error\ndata: {"code": "PROVIDER_ERROR", '
         '"message": "AI provider request failed."}\n\n'
     )

@@ -1,0 +1,14 @@
+{
+  "case_id": "search_latest_policy",
+  "context_hash": "4ae9716fa3aeca9cd49ea60e92e4deb0e9e3e6ba5e09806a5c602ddcfb68d6ac",
+  "key": "e4cf9c668fa3ececb8bc4798e5bb872beea4fa26600305b232e95ba9c7365833",
+  "model": "qwen3.7-max",
+  "prompt_hash": "707fb9a956243aae8988fe602875a3bfe164cfd138791f5ba7820f9934b003ad",
+  "query_hash": "18f282a0b7d6b2a3ada961b68c1ccc87d9d8661c73f7080bed821b0b5523f4f8",
+  "raw_texts": [
+    "{\"action\":\"call\",\"capability\":\"web_search\",\"arguments\":{\"query\":\"国家自然资源部 最近发布 遥感相关政策\",\"reason\":\"需要检索最新的政府政策信息，属于实时外部知识\"},\"reason\":\"needs_latest_policy_info\"}"
+  ],
+  "recorded_at": "2026-06-10T06:54:12.326384+00:00",
+  "scope": "00000000-0000-4000-8000-000000000001|planner-eval-search_latest_policy|qwen3.7-max|mode:llm|full_pipeline|calculate_ndvi,calculate_spectral_index,clip_reproject_raster,cloud_shadow_mask,detect_objects,extract_water_mask,ocr_recognize,parse_document,raster_inspect,render_band_composite,segment_landcover,web_search|rag:0|memory:0",
+  "source": "live"
+}

@@ -1,0 +1,14 @@
+{
+  "case_id": "none_writing",
+  "context_hash": "4ae9716fa3aeca9cd49ea60e92e4deb0e9e3e6ba5e09806a5c602ddcfb68d6ac",
+  "key": "3dee5d4e23a29a1887e95bad587b333ff44fcc0499447499cb099f209a6df45f",
+  "model": "qwen3.7-max",
+  "prompt_hash": "707fb9a956243aae8988fe602875a3bfe164cfd138791f5ba7820f9934b003ad",
+  "query_hash": "c6e72edd3090f8748b784593e6a56e999b96c20c1e193f6e261fd90273866e3d",
+  "raw_texts": [
+    "{\"action\":\"none\",\"capability\":null,\"arguments\":{},\"reason\":\"writing_task\"}"
+  ],
+  "recorded_at": "2026-06-10T06:54:25.546996+00:00",
+  "scope": "00000000-0000-4000-8000-000000000001|planner-eval-none_writing|qwen3.7-max|mode:llm|full_pipeline|calculate_ndvi,calculate_spectral_index,clip_reproject_raster,cloud_shadow_mask,detect_objects,extract_water_mask,ocr_recognize,parse_document,raster_inspect,render_band_composite,segment_landcover,web_search|rag:0|memory:0",
+  "source": "live"
+}

@@ -1,0 +1,14 @@
+{
+  "case_id": "edge_non_owner_imagery",
+  "context_hash": "da53a8235a83efadcdc624260d6c42c8b7b09bbaa5c34bd2b0f9124122b8f546",
+  "key": "980908b56f56368a033e9cae6541547b36510609e47bb768bafaf65560be34ac",
+  "model": "qwen3.7-max",
+  "prompt_hash": "707fb9a956243aae8988fe602875a3bfe164cfd138791f5ba7820f9934b003ad",
+  "query_hash": "9ca9745abec849631efb38513d5c45bf7541f86502197c6d5a452d54f0c144d8",
+  "raw_texts": [
+    "{\"action\":\"call\",\"capability\":\"calculate_ndvi\",\"arguments\":{\"imagery_id\":\"aaaaaaaaaaaa\",\"reason\":\"用户请求计算NDVI\"},\"reason\":\"ndvi_calculation\"}"
+  ],
+  "recorded_at": "2026-06-10T06:54:33.247257+00:00",
+  "scope": "00000000-0000-4000-8000-000000000001|planner-eval-edge_non_owner_imagery|qwen3.7-max|mode:llm|full_pipeline|calculate_ndvi,calculate_spectral_index,clip_reproject_raster,cloud_shadow_mask,detect_objects,extract_water_mask,ocr_recognize,parse_document,raster_inspect,render_band_composite,segment_landcover,web_search|rag:0|memory:0",
+  "source": "live"
+}
