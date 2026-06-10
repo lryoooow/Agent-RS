@@ -96,6 +96,9 @@ DATABASE_ENABLED=false           # 不用知识库时保持 false
 
 IMAGERY_UPLOAD_DIR=storage/imagery
 RS_TOOLS_MCP_USE_DOCKER=true
+RS_DETECT_MCP_USE_DOCKER=true
+RS_SEGMENT_MCP_USE_DOCKER=true
+RS_DOC_MCP_USE_DOCKER=true
 ```
 
 ### 2. 构建遥感工具镜像
