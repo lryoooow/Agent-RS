@@ -7,9 +7,11 @@ from app.agent.tools.common import (
     IMAGERY_ID_PATTERN,
     execution_metadata,
     imagery_not_found_result,
+    invalid_bands_result,
     invalid_imagery_id_result,
     read_bounds,
     resolve_imagery_paths,
+    validate_band_indices,
 )
 from app.agent.tools.detect.formatter import format_detect_context
 from app.agent.tools.detect.schema import DetectArguments
@@ -30,8 +32,15 @@ async def run_detect(args: DetectArguments) -> ToolRunResult:
         return imagery_not_found_result(args.imagery_id)
     results_dir.mkdir(parents=True, exist_ok=True)
 
+    band_error = validate_band_indices(
+        source_path,
+        {"red": args.red_band, "green": args.green_band, "blue": args.blue_band},
+    )
+    if band_error:
+        return invalid_bands_result("目标检测", band_error)
+
     settings = get_settings()
-    if not settings.rs_tools_mcp_use_docker:
+    if not settings.rs_detect_mcp_use_docker:
         return _error_result("目标检测失败: RS Tools Docker MCP 未启用。", "mcp_disabled")
     payload = {
         "red_band": args.red_band,

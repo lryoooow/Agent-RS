@@ -19,11 +19,34 @@ async def health() -> dict:
         "web_search_configured": bool(settings.tavily_api_key.strip()),
         "storage_writable": storage_ok,
         "docker_available": docker_available,
-        "rs_tools_mcp": {
-            "use_docker": settings.rs_tools_mcp_use_docker,
-            "image": settings.rs_tools_mcp_image,
-            "docker_command_available": docker_available,
-        },
+        "rs_tools_mcp": _mcp_status(
+            use_docker=settings.rs_tools_mcp_use_docker,
+            image=settings.rs_tools_mcp_image,
+            docker_available=docker_available,
+        ),
+        "rs_detect_mcp": _mcp_status(
+            use_docker=settings.rs_detect_mcp_use_docker,
+            image=settings.rs_detect_mcp_image,
+            docker_available=docker_available,
+        ),
+        "rs_segment_mcp": _mcp_status(
+            use_docker=settings.rs_segment_mcp_use_docker,
+            image=settings.rs_segment_mcp_image,
+            docker_available=docker_available,
+        ),
+        "rs_doc_mcp": _mcp_status(
+            use_docker=settings.rs_doc_mcp_use_docker,
+            image=settings.rs_doc_mcp_image,
+            docker_available=docker_available,
+        ),
+    }
+
+
+def _mcp_status(*, use_docker: bool, image: str, docker_available: bool) -> dict:
+    return {
+        "use_docker": use_docker,
+        "image": image,
+        "docker_command_available": docker_available,
     }
 
 

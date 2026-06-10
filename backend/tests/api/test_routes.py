@@ -22,7 +22,18 @@ def test_health_route(monkeypatch, tmp_path) -> None:
     assert body["storage_writable"] is True
     assert "api_key_configured" in body
     assert "docker_available" in body
-    assert body["rs_tools_mcp"]["image"] == "rs-tools-mcp:0.1.0"
+    assert {
+        name: value["image"]
+        for name, value in body.items()
+        if name.endswith("_mcp")
+    } == {
+        "rs_tools_mcp": "rs-tools-mcp:0.1.0",
+        "rs_detect_mcp": "rs-detect-mcp:0.1.0",
+        "rs_segment_mcp": "rs-segment-mcp:0.1.0",
+        "rs_doc_mcp": "rs-doc-mcp:0.1.0",
+    }
+    for name in ("rs_tools_mcp", "rs_detect_mcp", "rs_segment_mcp", "rs_doc_mcp"):
+        assert set(body[name]) == {"use_docker", "image", "docker_command_available"}
 
 
 def test_config_route_does_not_leak_api_key(monkeypatch) -> None:

@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     ai_base_url: str = "https://api.openai.com/v1"
     ai_api_key: str = ""
     ai_default_model: str = "gpt-4.1-mini"
-    ai_thinking_budget: int = 2048
+    ai_thinking_budget: int = 512
     ai_timeout_seconds: float = 60
     ai_max_retries: int = 2
     ai_trust_env_proxy: bool = False
@@ -35,7 +35,7 @@ class Settings(BaseSettings):
     ai_context_max_summary_chars: int = 3000
     ai_context_max_memory_chars: int = 3000
     ai_context_max_rag_chars: int = 6000
-    ai_context_max_tool_chars: int = 3000
+    ai_context_max_tool_chars: int = 6000
     ai_context_max_imagery_chars: int = 2000
     ai_prompt_profile: str = "agent_rs_core_v1"
     ai_prompt_enable_dynamic_modules: bool = True
@@ -53,11 +53,11 @@ class Settings(BaseSettings):
     tavily_api_key: str = ""
     tavily_search_url: str = "https://api.tavily.com/search"
     tavily_search_depth: str = "basic"
-    agent_planning_model: str = "qwen3.6-flash"
-    agent_planner_mode: str = "legacy"
+    agent_planning_model: str = ""
     agent_planner_max_tokens: int = 256
     agent_web_search_max_calls: int = 1
     agent_web_search_max_results: int = 5
+    agent_web_search_country: str = "china"
     agent_web_search_min_score: float = 0.4
     agent_web_search_timeout_seconds: float = 15
     agent_web_search_input_max_chars: int = 2000
@@ -139,16 +139,24 @@ class Settings(BaseSettings):
     rs_tools_mcp_network: str = "none"
     rs_detect_docker_timeout_seconds: int = 300
     rs_detect_mcp_image: str = "rs-detect-mcp:0.1.0"
+    rs_detect_mcp_use_docker: bool = True
     rs_detect_mcp_memory_limit: str = "6g"
     rs_detect_mcp_cpus: float = 4.0
     rs_detect_mcp_network: str = "none"
     rs_detect_mcp_gpus: str = "all"
     rs_segment_docker_timeout_seconds: int = 300
     rs_segment_mcp_image: str = "rs-segment-mcp:0.1.0"
+    rs_segment_mcp_use_docker: bool = True
     rs_segment_mcp_memory_limit: str = "6g"
     rs_segment_mcp_cpus: float = 4.0
     rs_segment_mcp_network: str = "none"
     rs_segment_mcp_gpus: str = "all"
+    rs_doc_docker_timeout_seconds: int = 180
+    rs_doc_mcp_image: str = "rs-doc-mcp:0.1.0"
+    rs_doc_mcp_use_docker: bool = True
+    rs_doc_mcp_memory_limit: str = "4g"
+    rs_doc_mcp_cpus: float = 2.0
+    rs_doc_mcp_network: str = "none"
 
     @property
     def cors_origin_list(self) -> list[str]:
