@@ -7,12 +7,14 @@ from app.agent.tools.common import (
     IMAGERY_ID_PATTERN,
     execution_metadata,
     imagery_not_found_result,
+    invalid_bands_result,
     invalid_imagery_id_result,
     read_bounds,
     resolve_imagery_paths,
+    validate_band_indices,
 )
 from app.agent.tools.spectral_index.formatter import format_spectral_index_context
-from app.agent.tools.spectral_index.schema import SpectralIndexArguments
+from app.agent.tools.spectral_index.schema import SpectralIndexArguments, required_bands_for
 from app.agent.types import AgentArtifact, ToolRunResult
 from app.core.settings import get_settings
 from app.mcp.client import MCPCallError
@@ -29,6 +31,20 @@ async def run_spectral_index(args: SpectralIndexArguments) -> ToolRunResult:
     if source_path is None:
         return imagery_not_found_result(args.imagery_id)
     results_dir.mkdir(parents=True, exist_ok=True)
+
+    band_error = validate_band_indices(
+        source_path,
+        required_bands_for(
+            args.index_type,
+            blue_band=args.blue_band,
+            green_band=args.green_band,
+            red_band=args.red_band,
+            nir_band=args.nir_band,
+            swir_band=args.swir_band,
+        ),
+    )
+    if band_error:
+        return invalid_bands_result("光谱指数计算", band_error)
 
     settings = get_settings()
     if not settings.rs_tools_mcp_use_docker:

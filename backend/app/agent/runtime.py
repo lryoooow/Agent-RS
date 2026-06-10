@@ -154,6 +154,22 @@ class AgentRuntime:
             route=route,
         )
         if selection.tool_call is None and selection.agent_call is None:
+            if selection.planner_error_context:
+                final_context = await build_provider_request_context(
+                    request,
+                    user_id=user_id,
+                    tool_context=selection.planner_error_context,
+                    retrieved_context=initial_context.retrieved_context,
+                )
+                await self._add_event(
+                    trace,
+                    on_event,
+                    "final_answering",
+                    "能力规划未执行，正在生成直接回答",
+                    tool_context_chars=len(selection.planner_error_context),
+                    dispatch_kind="planner_error",
+                )
+                return AgentPlanResult(response=None, final_context=final_context, trace=trace)
             return AgentPlanResult(response=None, final_context=initial_context, trace=trace)
 
         if selection.tool_call is not None:

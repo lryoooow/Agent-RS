@@ -6,7 +6,19 @@ from pydantic import BaseModel, Field, model_validator
 CompositeMode = Literal["true_color", "false_color", "custom"]
 
 
+def required_bands_for_composite(mode: str, bands: list[int] | None) -> dict[str, int]:
+    if mode == "true_color":
+        return {"red": 3, "green": 2, "blue": 1}
+    if mode == "false_color":
+        return {"nir": 4, "red": 3, "green": 2}
+    if bands is None:
+        raise ValueError("custom mode requires bands")
+    return {"red": bands[0], "green": bands[1], "blue": bands[2]}
+
+
 class BandCompositeArguments(BaseModel):
+    model_config = {"extra": "forbid"}
+
     imagery_id: str = Field(pattern=r"^[a-f0-9]{12}$", description="已上传影像的 ID")
     mode: CompositeMode = Field(description="波段组合模式")
     bands: list[int] | None = Field(default=None, description="custom 模式下的 RGB 波段")

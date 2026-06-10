@@ -10,11 +10,7 @@ from app.agent.context.summarizer import build_context_summaries
 from app.agent.context.types import ContextAssembly
 from app.agent.embedding.service import get_embedding_service
 from app.agent.prompting.renderer import render_prompt_context
-from app.agent.prompting.scenarios import (
-    WEB_PLANNING_PROMPT,
-    latest_user_text,
-    wants_imagery_context,
-)
+from app.agent.prompting.scenarios import latest_user_text
 from app.agent.rag.formatter import format_retrieved_blocks
 from app.agent.rag.service import retrieve_rag_context
 from app.db.pool import fetch_optional_pool
@@ -116,7 +112,9 @@ async def build_provider_request_context(
         rag_context=rag_context,
         tool_context=tool_context,
         imagery_inventory=(
-            build_imagery_inventory(user_id) if should_include_imagery_inventory(query) else None
+            build_imagery_inventory(user_id)
+            if tool_context
+            else None
         ),
         max_total_chars=settings.context_max_total_chars,
         max_recent_chars=settings.ai_context_max_recent_chars,
@@ -277,12 +275,7 @@ async def _load_rag_context(
 async def build_planning_context(
     request: ChatRequest,
 ) -> list[dict[str, str]]:
-    messages: list[dict[str, str]] = [
-        {
-            "role": "system",
-            "content": WEB_PLANNING_PROMPT,
-        }
-    ]
+    messages: list[dict[str, str]] = []
     recent = (
         request.messages[-PLANNING_CONTEXT_RECENT_MESSAGES:]
         if len(request.messages) > PLANNING_CONTEXT_RECENT_MESSAGES
@@ -297,12 +290,6 @@ async def build_planning_context(
             }
         )
     return messages
-
-
-def should_include_imagery_inventory(query: str) -> bool:
-    if wants_imagery_context(query):
-        return True
-    return get_settings().agent_planner_mode.strip().lower() == "llm"
 
 
 def build_imagery_inventory(user_id: str | None) -> str | None:

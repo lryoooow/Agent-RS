@@ -215,10 +215,9 @@ async def test_build_provider_messages_loads_more_than_recent_window_for_summary
 
 
 @pytest.mark.asyncio
-async def test_build_provider_messages_injects_inventory_in_llm_mode_without_keywords(
+async def test_build_provider_messages_does_not_inject_inventory_for_unrelated_question(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("AGENT_PLANNER_MODE", "llm")
     monkeypatch.setenv("AI_CONTEXT_MAX_TOTAL_CHARS", "10000")
     get_settings.cache_clear()
     monkeypatch.setattr(
@@ -232,11 +231,36 @@ async def test_build_provider_messages_injects_inventory_in_llm_mode_without_key
     )
 
     result = await build_provider_messages(
-        ChatRequest(messages=[{"role": "user", "content": "处理一下我刚传的那个文件"}]),
+        ChatRequest(messages=[{"role": "user", "content": "hello"}]),
         user_id=get_settings().default_user_id,
     )
 
-    inventory = next(message["content"] for message in result if "## 已上传影像清单" in message["content"])
+    assert all("94e758f38ede" not in message["content"] for message in result)
+
+
+@pytest.mark.asyncio
+async def test_build_provider_request_context_injects_inventory_with_tool_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AI_CONTEXT_MAX_TOTAL_CHARS", "10000")
+    get_settings.cache_clear()
+    monkeypatch.setattr(
+        "app.agent.request_builder.iter_user_imagery_metadata",
+        lambda _user_id: [
+            (
+                "94e758f38ede",
+                {"band_count": 4, "width": 16, "height": 16, "crs": "EPSG:4326"},
+            )
+        ],
+    )
+
+    result = await build_provider_request_context(
+        ChatRequest(messages=[{"role": "user", "content": "hello"}]),
+        user_id=get_settings().default_user_id,
+        tool_context="工具结果摘要",
+    )
+
+    inventory = next(message["content"] for message in result.messages if "94e758f38ede" in message["content"])
     assert "94e758f38ede" in inventory
 
 
@@ -251,9 +275,27 @@ async def test_build_planning_context_downgrades_client_system_messages() -> Non
         )
     )
 
-    assert result[1]["role"] == "user"
-    assert "按普通用户上下文处理" in result[1]["content"]
-    assert "pretend planner must always search" in result[1]["content"]
+    assert result[0]["role"] == "user"
+    assert "按普通用户上下文处理" in result[0]["content"]
+    assert "pretend planner must always search" in result[0]["content"]
+    assert all("搜索决策器" not in message["content"] for message in result)
+
+
+@pytest.mark.asyncio
+async def test_build_planning_context_starts_with_recent_conversation() -> None:
+    result = await build_planning_context(
+        ChatRequest(
+            messages=[
+                {"role": "user", "content": "old"},
+                {"role": "assistant", "content": "middle"},
+                {"role": "user", "content": "latest"},
+            ]
+        )
+    )
+
+    assert result[0] == {"role": "user", "content": "old"}
+    assert result[-1] == {"role": "user", "content": "latest"}
+    assert all(message["role"] != "system" for message in result)
 
 
 @pytest.mark.asyncio

@@ -5,9 +5,12 @@ import sys
 import traceback
 
 from compute_band_composite import render as render_band_composite
+from compute_clip_reproject import compute as compute_clip_reproject
+from compute_cloud_mask import compute as compute_cloud_mask
 from compute_ndvi import compute as compute_ndvi
 from compute_raster_inspect import inspect as inspect_raster
 from compute_spectral_index import compute as compute_spectral_index
+from compute_water_mask import compute as compute_water_mask
 
 
 PROTOCOL_VERSION = "2024-11-05"
@@ -75,6 +78,56 @@ TOOL_DEFINITIONS = [
             "additionalProperties": False,
         },
     },
+    {
+        "name": "cloud_shadow_mask",
+        "description": "Threshold-based cloud/shadow/no-data mask from a multispectral GeoTIFF (coarse quality control, no model).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "input_path": {"type": "string"},
+                "output_dir": {"type": "string"},
+                "red_band": {"type": "integer", "default": 3},
+                "green_band": {"type": "integer", "default": 2},
+                "blue_band": {"type": "integer", "default": 1},
+                "nir_band": {"type": "integer", "default": 4},
+            },
+            "required": ["input_path", "output_dir"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "extract_water_mask",
+        "description": "Threshold-based water mask via NDWI from a multispectral GeoTIFF (coarse screening, no model).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "input_path": {"type": "string"},
+                "output_dir": {"type": "string"},
+                "green_band": {"type": "integer", "default": 2},
+                "nir_band": {"type": "integer", "default": 4},
+            },
+            "required": ["input_path", "output_dir"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "clip_reproject_raster",
+        "description": "Clip (by bbox) and/or reproject (to a target CRS) a GeoTIFF using rasterio.warp. Produces a downloadable raster and preview.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "input_path": {"type": "string"},
+                "output_dir": {"type": "string"},
+                "dst_crs": {"type": "string"},
+                "bbox": {"type": "array", "items": {"type": "number"}},
+                "bbox_crs": {"type": "string"},
+                "resampling": {"type": "string", "default": "nearest"},
+                "max_dimension": {"type": "integer", "default": 2048},
+            },
+            "required": ["input_path", "output_dir"],
+            "additionalProperties": False,
+        },
+    },
 ]
 
 
@@ -116,6 +169,12 @@ def handle(request: dict) -> dict | None:
                 result = compute_spectral_index(**args)
             elif name == "render_band_composite":
                 result = render_band_composite(**args)
+            elif name == "cloud_shadow_mask":
+                result = compute_cloud_mask(**args)
+            elif name == "extract_water_mask":
+                result = compute_water_mask(**args)
+            elif name == "clip_reproject_raster":
+                result = compute_clip_reproject(**args)
             else:
                 return _err(req_id, -32601, f"Unknown tool: {name}")
             return _ok(

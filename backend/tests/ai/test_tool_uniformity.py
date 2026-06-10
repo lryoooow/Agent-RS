@@ -10,6 +10,9 @@ MCP_TOOL_NAMES = {
     "raster_inspect",
     "calculate_spectral_index",
     "render_band_composite",
+    "cloud_shadow_mask",
+    "extract_water_mask",
+    "clip_reproject_raster",
 }
 
 

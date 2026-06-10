@@ -10,6 +10,8 @@ __pycache__/
 backend/.tmp_pytest/
 backend/.tmp_pytest_cache/
 backend/.tmp_pytest_run/
+backend/.tmp_pytest*/
+backend/tests/ai/eval/recordings/live_runs/
 *.pyc
 *.egg-info/
 backend/storage/

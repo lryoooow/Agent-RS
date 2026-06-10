@@ -2,10 +2,12 @@ from pydantic import BaseModel, Field, model_validator
 
 
 class SegmentArguments(BaseModel):
+    model_config = {"extra": "forbid"}
+
     imagery_id: str = Field(pattern=r"^[a-f0-9]{12}$", description="已上传影像的 ID")
-    red_band: int = Field(default=1, ge=1)
+    red_band: int = Field(default=3, ge=1)
     green_band: int = Field(default=2, ge=1)
-    blue_band: int = Field(default=3, ge=1)
+    blue_band: int = Field(default=1, ge=1)
     reason: str = Field(default="用户请求遥感地物语义分割", description="分割原因")
 
     @model_validator(mode="after")
@@ -25,9 +27,9 @@ SEGMENT_TOOL = {
             "type": "object",
             "properties": {
                 "imagery_id": {"type": "string", "description": "已上传影像的 ID"},
-                "red_band": {"type": "integer", "default": 1},
+                "red_band": {"type": "integer", "default": 3},
                 "green_band": {"type": "integer", "default": 2},
-                "blue_band": {"type": "integer", "default": 3},
+                "blue_band": {"type": "integer", "default": 1},
                 "reason": {"type": "string", "description": "分割原因说明"},
             },
             "required": ["imagery_id"],
