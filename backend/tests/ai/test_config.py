@@ -22,7 +22,8 @@ def test_env_provider_config_wins_by_default(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setenv("AI_BASE_URL", "https://env.example/v1")
     monkeypatch.setenv("AI_API_KEY", "env-key")
     monkeypatch.setenv("AI_DEFAULT_MODEL", "env-model")
-    monkeypatch.delenv("ALLOW_CLIENT_PROVIDER_CONFIG", raising=False)
+    # 显式关闭客户端配置，使断言不依赖部署 .env 的取值（.env 现默认开启兜底）。
+    monkeypatch.setenv("ALLOW_CLIENT_PROVIDER_CONFIG", "false")
     reset_settings()
 
     config = resolve_ai_config(

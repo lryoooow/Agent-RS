@@ -1,170 +1,203 @@
-import { lazy, Suspense, useState } from "react";
-import { ChatComposer } from "./components/ChatComposer";
-import { ErrorBoundary } from "./components/ErrorBoundary";
-import { Conversation } from "./components/conversation/Conversation";
-import { AppHeader } from "./components/AppHeader";
-import { AuthPanel } from "./components/auth/AuthPanel";
-import { HistoryPanel } from "./components/history/HistoryPanel";
-import { KnowledgePanel } from "./components/knowledge/KnowledgePanel";
-import type { GeospatialResult } from "./types";
-import { MemoryPanel } from "./components/memory/MemoryPanel";
-import { SettingsPanel } from "./components/settings/SettingsPanel";
-import { useAutoScroll } from "./hooks/useAutoScroll";
-import { useAutosizeTextarea } from "./hooks/useAutosizeTextarea";
-import { useAuth } from "./hooks/useAuth";
-import { useChatController } from "./hooks/useChatController";
+import { useEffect, useState } from "react";
+import { AnimatePresence } from "motion/react";
+import { MapView, layerKeyOf, type LayerUiState } from "./components/MapView";
+import { AgentChat } from "./components/AgentChat";
+import { RightPanel } from "./components/RightPanel";
+import { WelcomeScreen } from "./components/WelcomeScreen";
+import { TopBar } from "./components/TopBar";
+import { TaskBar } from "./components/TaskBar";
+import { ToolsPage } from "./components/ToolsPage";
 import { useSettings } from "./hooks/useSettings";
-
-const MapPanel = lazy(() =>
-  import("./components/map/MapPanel").then((module) => ({ default: module.MapPanel })),
-);
+import { useChatController } from "./hooks/useChatController";
+import { listConversations, type ConversationItem } from "./lib/conversations-api";
+import { AuthDialog } from "./components/panels/AuthDialog";
+import { DataModal, MemoryModal } from "./components/panels/DataModals";
+import type { GeospatialResult } from "./types";
 
 export default function App() {
   const settings = useSettings();
-  const auth = useAuth(settings.endpoint);
   const chat = useChatController({
     endpoint: settings.endpoint,
     systemPrompt: settings.systemPrompt,
     streamEnabled: settings.streamEnabled,
     useRag: settings.useRag,
+    providerConfig: settings.effectiveProviderConfig,
   });
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [knowledgeOpen, setKnowledgeOpen] = useState(false);
-  const [historyOpen, setHistoryOpen] = useState(false);
-  const [memoryOpen, setMemoryOpen] = useState(false);
-  const [authOpen, setAuthOpen] = useState(false);
-  const scrollRef = useAutoScroll<HTMLDivElement>([chat.turns, chat.loading]);
-  const textareaRef = useAutosizeTextarea(chat.input);
-  const isEmpty = chat.turns.length === 0;
 
+  const [view, setView] = useState<"welcome" | "chat">("welcome");
+  const [toolsOpen, setToolsOpen] = useState(false);
+  const [dataOpen, setDataOpen] = useState(false);
+  const [memoryOpen, setMemoryOpen] = useState(false);
+  const [conversations, setConversations] = useState<ConversationItem[]>([]);
+  const [layerUi, setLayerUi] = useState<LayerUiState>({});
+  const [hasImagery, setHasImagery] = useState(false);
+
+  // All geospatial results across the conversation become map/panel layers.
   const geospatialResults: GeospatialResult[] = chat.turns
     .filter((t) => t.geospatialResult)
     .map((t) => t.geospatialResult!);
 
+  // Load conversation history for the welcome screen.
+  useEffect(() => {
+    let cancelled = false;
+    listConversations(settings.endpoint)
+      .then((items) => {
+        if (!cancelled) setConversations(items);
+      })
+      .catch(() => {
+        if (!cancelled) setConversations([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [settings.endpoint, view]);
+
+  // Keep layerUi keys in sync with current results (default visible + 0.85 opacity).
+  useEffect(() => {
+    setLayerUi((prev) => {
+      const next: LayerUiState = {};
+      geospatialResults.forEach((result, idx) => {
+        const key = layerKeyOf(result, idx);
+        next[key] = prev[key] ?? { visible: true, opacity: result.type === "preview" ? 1 : 0.85 };
+      });
+      return next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chat.turns]);
+
+  const toggleLayer = (key: string) =>
+    setLayerUi((prev) => ({
+      ...prev,
+      [key]: { ...(prev[key] ?? { visible: true, opacity: 0.85 }), visible: !(prev[key]?.visible ?? true) },
+    }));
+
+  const setLayerOpacity = (key: string, v: number) =>
+    setLayerUi((prev) => ({
+      ...prev,
+      [key]: { ...(prev[key] ?? { visible: true, opacity: 0.85 }), opacity: v },
+    }));
+
+  const focusLayer = (_result: GeospatialResult) => {
+    // MapView owns fitBounds via its own focus button; this is a hook point kept
+    // for future per-layer camera control from the panel.
+  };
+
+  const handleImageryUploaded = (msg: string, result: GeospatialResult) => {
+    setHasImagery(true);
+    chat.addGeospatialResult(msg, result);
+  };
+
+  const startSession = (firstText?: string) => {
+    chat.resetConversation();
+    setHasImagery(false);
+    setLayerUi({});
+    setView("chat");
+    if (firstText) setTimeout(() => chat.sendMessage(firstText), 0);
+  };
+
+  const openSession = (id: string) => {
+    chat.resetConversation();
+    chat.setConversationId(id);
+    setHasImagery(false);
+    setLayerUi({});
+    setView("chat");
+  };
+
+  const goBack = () => setView("welcome");
+
+  const launchModel = (_intent: string, label: string) => {
+    setToolsOpen(false);
+    const prompt = `运行模型：${label}。请对当前已上传影像执行该分析，并将结果叠加到地图。`;
+    if (view !== "chat") {
+      startSession(prompt);
+    } else {
+      chat.sendMessage(prompt);
+    }
+  };
+
   return (
-    <div
-      className="size-full flex flex-col bg-background text-foreground"
-      style={{ fontFamily: "Inter, system-ui, sans-serif" }}
-    >
-      <AppHeader
-        isEmpty={isEmpty}
-        loading={chat.loading}
-        settingsOpen={settingsOpen}
-        knowledgeOpen={knowledgeOpen}
-        historyOpen={historyOpen}
-        memoryOpen={memoryOpen}
-        authOpen={authOpen}
-        userLabel={auth.user?.email ?? "default user"}
-        authenticated={Boolean(auth.user?.authenticated)}
-        onReset={chat.resetConversation}
-        onToggleSettings={() => {
-          setSettingsOpen((value) => !value);
-          setKnowledgeOpen(false);
-          setHistoryOpen(false);
-          setMemoryOpen(false);
-          setAuthOpen(false);
+    <div className="relative h-screen w-screen overflow-hidden bg-background text-foreground">
+      <MapView geospatialResults={geospatialResults} layerUi={layerUi} />
+
+      <TopBar
+        settings={{
+          endpoint: settings.endpoint,
+          systemPrompt: settings.systemPrompt,
+          streamEnabled: settings.streamEnabled,
+          useRag: settings.useRag,
+          modelLabel: settings.serverConfig?.default_model ?? "",
+          webSearchEnabled: settings.serverConfig?.web_search_enabled ?? false,
+          baseUrl: settings.baseUrl,
+          apiKey: settings.apiKey,
+          model: settings.model,
+          apiKeyConfigured: settings.serverConfig?.api_key_configured ?? false,
+          allowClientProviderConfig: settings.serverConfig?.allow_client_provider_config ?? false,
         }}
-        onToggleKnowledge={() => {
-          setKnowledgeOpen((value) => !value);
-          setSettingsOpen(false);
-          setHistoryOpen(false);
-          setMemoryOpen(false);
-          setAuthOpen(false);
+        onSave={(next) => {
+          settings.setEndpoint(next.endpoint);
+          settings.setSystemPrompt(next.systemPrompt);
+          settings.setStreamEnabled(next.streamEnabled);
+          settings.setUseRag(next.useRag);
+          settings.setBaseUrl(next.baseUrl);
+          settings.setApiKey(next.apiKey);
+          settings.setModel(next.model);
         }}
-        onToggleHistory={() => {
-          setHistoryOpen((value) => !value);
-          setSettingsOpen(false);
-          setKnowledgeOpen(false);
-          setMemoryOpen(false);
-          setAuthOpen(false);
-        }}
-        onToggleMemory={() => {
-          setMemoryOpen((value) => !value);
-          setSettingsOpen(false);
-          setKnowledgeOpen(false);
-          setHistoryOpen(false);
-          setAuthOpen(false);
-        }}
-        onToggleAuth={() => {
-          setAuthOpen((value) => !value);
-          setSettingsOpen(false);
-          setKnowledgeOpen(false);
-          setHistoryOpen(false);
-          setMemoryOpen(false);
-        }}
+        rightSlot={<AuthDialog endpoint={settings.endpoint} />}
+      />
+      <TaskBar
+        onOpenTools={() => setToolsOpen(true)}
+        onOpenData={() => setDataOpen(true)}
+        onOpenMemory={() => setMemoryOpen(true)}
       />
 
-      {settingsOpen && (
-        <SettingsPanel
-          endpoint={settings.endpoint}
-          systemPrompt={settings.systemPrompt}
-          streamEnabled={settings.streamEnabled}
-          useRag={settings.useRag}
-          serverConfig={settings.serverConfig}
-          configError={settings.configError}
-          onEndpointChange={settings.setEndpoint}
-          onSystemPromptChange={settings.setSystemPrompt}
-          onStreamEnabledChange={settings.setStreamEnabled}
-          onUseRagChange={settings.setUseRag}
-          onClearSettings={settings.clearSettings}
-        />
-      )}
+      <AnimatePresence>
+        {view === "chat" && (
+          <RightPanel
+            results={geospatialResults}
+            layerUi={layerUi}
+            onToggle={toggleLayer}
+            onOpacity={setLayerOpacity}
+            onFocus={focusLayer}
+          />
+        )}
+      </AnimatePresence>
 
-      {knowledgeOpen && <KnowledgePanel endpoint={settings.endpoint} />}
-      {historyOpen && <HistoryPanel endpoint={settings.endpoint} />}
-      {memoryOpen && <MemoryPanel endpoint={settings.endpoint} />}
-      {authOpen && (
-        <AuthPanel
-          user={auth.user}
-          loading={auth.loading}
-          error={auth.error}
-          onLogin={auth.signIn}
-          onRegister={auth.signUp}
-          onLogout={auth.signOut}
-        />
-      )}
+      <AnimatePresence>
+        {toolsOpen && <ToolsPage onClose={() => setToolsOpen(false)} onRun={launchModel} />}
+      </AnimatePresence>
 
-      <div className="flex flex-1 min-h-0">
-        <div className="flex min-w-0 flex-col" style={{ flex: "0 0 40%" }}>
-          <ErrorBoundary>
-            <Conversation
-              turns={chat.turns}
-              loading={chat.loading}
-              activeStream={chat.activeStream}
-              scrollRef={scrollRef}
-              onPickSuggestion={chat.sendMessage}
-            />
+      <AnimatePresence>
+        {dataOpen && <DataModal endpoint={settings.endpoint} onClose={() => setDataOpen(false)} />}
+      </AnimatePresence>
 
-            <ChatComposer
-              endpoint={settings.endpoint}
-              input={chat.input}
-              loading={chat.loading}
-              textareaRef={textareaRef}
-              onInputChange={chat.setInput}
-              onSubmit={chat.handleSubmit}
-              onKeyDown={chat.handleKeyDown}
-              onImageryUploaded={(content, result) => {
-                if (result) {
-                  chat.addGeospatialResult(content, result);
-                  return;
-                }
-                chat.addSystemNote(content);
-              }}
-            />
-          </ErrorBoundary>
-        </div>
+      <AnimatePresence>
+        {memoryOpen && (
+          <MemoryModal endpoint={settings.endpoint} onClose={() => setMemoryOpen(false)} />
+        )}
+      </AnimatePresence>
 
-        <div className="min-w-0" style={{ flex: "0 0 60%" }}>
-          <ErrorBoundary>
-            <Suspense fallback={<div className="h-full bg-[#1a1a2e] p-4 text-sm text-[#a0a0c0]">地图加载中...</div>}>
-              <MapPanel
-                endpoint={settings.endpoint}
-                geospatialResults={geospatialResults}
-              />
-            </Suspense>
-          </ErrorBoundary>
-        </div>
-      </div>
+      <AnimatePresence mode="wait">
+        {view === "welcome" ? (
+          <WelcomeScreen
+            key="welcome"
+            sessions={conversations}
+            onStart={startSession}
+            onOpenSession={openSession}
+          />
+        ) : (
+          <AgentChat
+            key="chat"
+            turns={chat.turns}
+            loading={chat.loading}
+            activeStream={chat.activeStream}
+            endpoint={settings.endpoint}
+            hasImagery={hasImagery}
+            onSend={chat.sendMessage}
+            onImageryUploaded={handleImageryUploaded}
+            onBack={goBack}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }

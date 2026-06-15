@@ -6,9 +6,11 @@ import type {
   AnalysisStatus,
   ChatResponse,
   ChatTurn,
+  DetectionClassInfo,
   GeospatialResult,
   LegendInfo,
   RasterCapabilities,
+  SegmentationClassInfo,
   ToolExecutionInfo,
   ToolResult,
   Usage,
@@ -147,14 +149,16 @@ function normalizeAgentStatus(value: unknown): AgentStatus | null {
   return null;
 }
 
-function parseGeospatialResult(value: unknown): GeospatialResult | undefined {
+export function parseGeospatialResult(value: unknown): GeospatialResult | undefined {
   if (!value || typeof value !== "object") return undefined;
   const candidate = value as Record<string, unknown>;
   if (
     candidate.type !== "preview" &&
     candidate.type !== "ndvi" &&
     candidate.type !== "spectral_index" &&
-    candidate.type !== "composite"
+    candidate.type !== "composite" &&
+    candidate.type !== "detection" &&
+    candidate.type !== "segmentation"
   ) {
     return undefined;
   }
@@ -181,6 +185,25 @@ function parseGeospatialResult(value: unknown): GeospatialResult | undefined {
       ...base,
       mode: candidate.mode,
       bands_used: candidate.bands_used,
+      execution: isExecution(candidate.execution) ? candidate.execution : undefined,
+    };
+  }
+  if (candidate.type === "detection") {
+    return {
+      type: "detection",
+      ...base,
+      detection_count: typeof candidate.detection_count === "number" ? candidate.detection_count : 0,
+      score_threshold: typeof candidate.score_threshold === "number" ? candidate.score_threshold : 0.5,
+      classes: parseDetectionClasses(candidate.classes),
+      execution: isExecution(candidate.execution) ? candidate.execution : undefined,
+    };
+  }
+  if (candidate.type === "segmentation") {
+    return {
+      type: "segmentation",
+      ...base,
+      total_pixels: typeof candidate.total_pixels === "number" ? candidate.total_pixels : 0,
+      classes: parseSegmentationClasses(candidate.classes),
       execution: isExecution(candidate.execution) ? candidate.execution : undefined,
     };
   }
@@ -214,6 +237,31 @@ function parseGeospatialResult(value: unknown): GeospatialResult | undefined {
     execution: isExecution(candidate.execution) ? candidate.execution : undefined,
     legend: parseLegend(candidate.legend),
   };
+}
+
+function parseDetectionClasses(value: unknown): DetectionClassInfo[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
+    .map((item) => ({
+      name: typeof item.name === "string" ? item.name : "",
+      label: typeof item.label === "string" ? item.label : typeof item.name === "string" ? item.name : "",
+      count: typeof item.count === "number" ? item.count : 0,
+      color: typeof item.color === "string" ? item.color : "#888888",
+    }));
+}
+
+function parseSegmentationClasses(value: unknown): SegmentationClassInfo[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
+    .map((item) => ({
+      name: typeof item.name === "string" ? item.name : "",
+      label: typeof item.label === "string" ? item.label : typeof item.name === "string" ? item.name : "",
+      pixel_count: typeof item.pixel_count === "number" ? item.pixel_count : 0,
+      percentage: typeof item.percentage === "number" ? item.percentage : 0,
+      color: typeof item.color === "string" ? item.color : "#888888",
+    }));
 }
 
 function parseToolResult(value: unknown): ToolResult | undefined {

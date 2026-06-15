@@ -1,44 +1,47 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
-  --font-size: 16px;
-  --background: #f4efe6;
-  --foreground: #1a1612;
-  --card: #faf6ee;
-  --card-foreground: #1a1612;
-  --popover: #faf6ee;
-  --popover-foreground: #1a1612;
-  --primary: #1a1612;
-  --primary-foreground: #f4efe6;
-  --secondary: #e8e1d3;
-  --secondary-foreground: #1a1612;
-  --muted: #eae3d4;
-  --muted-foreground: #6b6256;
-  --accent: #c2410c;
-  --accent-foreground: #faf6ee;
-  --destructive: #9f1239;
-  --destructive-foreground: #faf6ee;
-  --border: rgba(26, 22, 18, 0.12);
-  --input: transparent;
-  --input-background: #f3f3f5;
-  --switch-background: #cbced4;
+  --font-size: 14px;
+  /* Refined neutral graphite ground (Codex / Claude inspired) */
+  --background: #0e0f11;
+  --foreground: #ececed;
+  --card: #17181b;
+  --card-foreground: #ececed;
+  --popover: #1a1b1e;
+  --popover-foreground: #ececed;
+  /* Signal accent: refined teal pulled from the RSAgent mark */
+  --primary: #2bb8c2;
+  --primary-foreground: #04211f;
+  --secondary: #212327;
+  --secondary-foreground: #cdcfd3;
+  --muted: #1c1d20;
+  --muted-foreground: #8a8d93;
+  --accent: #163233;
+  --accent-foreground: #6fd8d3;
+  --destructive: #e8736b;
+  --destructive-foreground: #1a0606;
+  --border: rgba(255, 255, 255, 0.07);
+  --input: rgba(255, 255, 255, 0.04);
+  --input-background: #17181b;
+  --switch-background: #2c2e33;
   --font-weight-medium: 500;
   --font-weight-normal: 400;
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.646 0.222 41.116);
-  --chart-2: oklch(0.6 0.118 184.704);
-  --chart-3: oklch(0.398 0.07 227.392);
-  --chart-4: oklch(0.828 0.189 84.429);
-  --chart-5: oklch(0.769 0.188 70.08);
-  --radius: 0.625rem;
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: #030213;
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  --ring: #2bb8c2;
+  /* Layer / data semantics */
+  --chart-1: #2bb8c2;
+  --chart-2: #5aa9f0;
+  --chart-3: #9ed25a;
+  --chart-4: #e8b85a;
+  --chart-5: #e88bb6;
+  --radius: 0.75rem;
+  --sidebar: #131417;
+  --sidebar-foreground: #ececed;
+  --sidebar-primary: #2bb8c2;
+  --sidebar-primary-foreground: #04211f;
+  --sidebar-accent: #1c1d20;
+  --sidebar-accent-foreground: #6fd8d3;
+  --sidebar-border: rgba(255, 255, 255, 0.07);
+  --sidebar-ring: #2bb8c2;
 }
 
 .dark {

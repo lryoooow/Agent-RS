@@ -2,6 +2,8 @@
 @import './tailwind.css';
 @import './theme.css';
 
+/* Analysis status line animation — used by the streaming status indicator
+   migrated from the previous frontend (AnalysisStatusLine / chat composer). */
 @keyframes analysisStatusIn {
   from {
     opacity: 0;
