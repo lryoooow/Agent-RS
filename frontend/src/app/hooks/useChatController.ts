@@ -12,6 +12,7 @@ import type {
   ChatResponse,
   ChatTurn,
   GeospatialResult,
+  ProviderConfig,
 } from "../types";
 
 const CONVERSATION_STORAGE_KEY = "agent-rs.conversationId";
@@ -22,6 +23,8 @@ type ChatControllerSettings = {
   systemPrompt: string;
   streamEnabled: boolean;
   useRag: boolean;
+  // 模型直连兜底配置：仅当后端未配置 API Key 时由 useSettings 计算为非空，env 优先。
+  providerConfig?: ProviderConfig | null;
 };
 
 export function useChatController({
@@ -29,6 +32,7 @@ export function useChatController({
   systemPrompt,
   streamEnabled,
   useRag,
+  providerConfig,
 }: ChatControllerSettings) {
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [input, setInput] = useState("");
@@ -73,6 +77,7 @@ export function useChatController({
       stream: shouldStream,
       conversationId,
       useRag,
+      providerConfig,
     });
 
     if (shouldStream) {
@@ -155,6 +160,7 @@ export function useChatController({
     activeStream,
     conversationId,
     setInput,
+    setConversationId,
     sendMessage,
     handleSubmit,
     handleKeyDown,

@@ -216,6 +216,18 @@ export type StoredConfig = {
   systemPrompt?: string;
   streamEnabled?: boolean;
   useRag?: boolean;
+  // 模型直连兜底配置（后端 .env 未配置 AI_API_KEY 时启用）
+  baseUrl?: string;
+  apiKey?: string;
+  model?: string;
+};
+
+// 前端「模型直连」配置，对应后端 ChatRequest.provider_config。
+// 仅当后端未配置 API Key 时由 useSettings 下发，env 已配置则始终为 null（env 优先）。
+export type ProviderConfig = {
+  base_url?: string;
+  api_key?: string;
+  model?: string;
 };
 
 export type ChatRequestBody = {
@@ -225,6 +237,7 @@ export type ChatRequestBody = {
   conversation_id?: string;
   use_memory?: boolean;
   use_rag?: boolean;
+  provider_config?: ProviderConfig;
 };
 
 export type KnowledgeDocument = {
