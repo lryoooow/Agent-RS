@@ -154,6 +154,68 @@ class _ReplayCompletions:
         return self._owner._next_response(kwargs)
 
 
+def load_historical_recording(recordings_dir: Path, context: RecordingContext) -> dict[str, Any]:
+    path = recording_path(recordings_dir, context)
+    if not path.exists():
+        raise MissingRecordingError(f"Missing planner recording for {context.case_id}: {path}")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    _assert_historical_recording(payload, context, path)
+    return payload
+
+
+def _assert_historical_recording(payload: dict[str, Any], context: RecordingContext, path: Path) -> None:
+    expected = {
+        "case_id": context.case_id,
+        "scope": context.scope,
+        "query_hash": context.query_hash,
+        "context_hash": context.context_hash,
+        "model": context.model,
+    }
+    mismatches = {
+        name: {"expected": expected_value, "actual": payload.get(name)}
+        for name, expected_value in expected.items()
+        if payload.get(name) != expected_value
+    }
+    if mismatches:
+        raise StaleRecordingError(f"Stale historical planner recording for {context.case_id}: {path}; {mismatches}")
+    raw_texts = payload.get("raw_texts")
+    if not isinstance(raw_texts, list) or not all(isinstance(item, str) for item in raw_texts):
+        raise StaleRecordingError(f"Historical planner recording has no raw_texts list: {path}")
+
+
+class HistoricalReplayClient:
+    """Replay a recorded prompt version without requiring the current prompt hash to match.
+
+    This is for prompt-version comparisons: old runs must remain scoreable after the
+    prompt changes, while still pinning the case context, model, scope, and raw text.
+    Strict CI replay should continue to use ReplayClient.
+    """
+
+    def __init__(self, recordings_dir: Path, context: RecordingContext) -> None:
+        payload = load_historical_recording(recordings_dir, context)
+        self._raw_texts = list(payload["raw_texts"])
+        self._context = context
+        self._calls = 0
+        self.chat = SimpleNamespace(completions=_HistoricalReplayCompletions(self))
+
+    def _next_response(self) -> Any:
+        if self._calls >= len(self._raw_texts):
+            raise MissingRecordingError(
+                f"Historical recording for {self._context.case_id} has no response #{self._calls + 1}"
+            )
+        text = self._raw_texts[self._calls]
+        self._calls += 1
+        return _response_from_text(text)
+
+
+class _HistoricalReplayCompletions:
+    def __init__(self, owner: HistoricalReplayClient) -> None:
+        self._owner = owner
+
+    async def create(self, **_kwargs):
+        return self._owner._next_response()
+
+
 class LiveRecordingClient:
     def __init__(self, base_client: Any, recordings_dir: Path, context: RecordingContext) -> None:
         self._base_client = base_client

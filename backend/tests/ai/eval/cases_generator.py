@@ -9,6 +9,7 @@ from typing import Iterable
 
 from tests.ai.eval.cases import (
     DOCUMENT_ID,
+    ImageryFixture,
     OTHER_IMAGE,
     OTHER_IMAGERY_ID,
     OWNED_IMAGE,
@@ -19,6 +20,18 @@ from tests.ai.eval.cases import (
 
 GENERATED_CASE_COUNT = 300
 PROMPT_NEAR_THRESHOLD = 0.72
+MULTI_AMBIGUOUS_INVENTORY = OWNED_IMAGE + (
+    ImageryFixture("bbbbbbbbbbbb"),
+    ImageryFixture("cccccccccccc"),
+)
+_MISSING_ID_TASKS = ("NDVI", "水体掩膜", "地物分割", "云检测", "重投影")
+_MISSING_ID_CAPABILITIES = {
+    "NDVI": ("calculate_ndvi", {}),
+    "水体掩膜": ("extract_water_mask", {}),
+    "地物分割": ("segment_landcover", {}),
+    "云检测": ("cloud_shadow_mask", {}),
+    "重投影": ("clip_reproject_raster", {"dst_crs": "EPSG:4326"}),
+}
 
 FEW_SHOT_QUERIES: tuple[str, ...] = (
     "你好",
@@ -43,9 +56,10 @@ FEW_SHOT_QUERIES: tuple[str, ...] = (
 
 def generate_generated_cases(target_count: int = GENERATED_CASE_COUNT) -> tuple[PlannerEvalCase, ...]:
     counts = _target_counts(target_count)
+    pronoun_call_count = _missing_id_pronoun_call_count(counts["none"])
     cases = (
-        _generate_simple(counts["simple"])
-        + _generate_none(counts["none"])
+        _generate_simple(counts["simple"] - pronoun_call_count)
+        + _generate_none(counts["none"], multi_ambiguous_count=pronoun_call_count)
         + _generate_multiple(counts["multiple"])
         + _generate_parallel(counts["parallel"])
     )
@@ -334,7 +348,7 @@ def _simple_case(slug: str, index: int) -> PlannerEvalCase:
     raise ValueError(f"unknown simple slug: {slug}")
 
 
-def _generate_none(total: int) -> tuple[PlannerEvalCase, ...]:
+def _generate_none(total: int, *, multi_ambiguous_count: int = 0) -> tuple[PlannerEvalCase, ...]:
     kinds = ("negation", "concept", "missing_id", "non_owner", "general", "contradiction")
     counts: Counter[str] = Counter()
     cases: list[PlannerEvalCase] = []
@@ -343,7 +357,26 @@ def _generate_none(total: int) -> tuple[PlannerEvalCase, ...]:
             break
         counts[kind] += 1
         cases.append(_none_case(kind, counts[kind]))
+    for index in range(1, multi_ambiguous_count + 1):
+        cases.append(_none_case("multi_ambiguous", index))
     return tuple(cases)
+
+
+def _missing_id_pronoun_call_count(none_total: int) -> int:
+    kinds = ("negation", "concept", "missing_id", "non_owner", "general", "contradiction")
+    missing_id_index = 0
+    pronoun_calls = 0
+    produced = 0
+    for kind in cycle(kinds):
+        if produced >= none_total:
+            break
+        produced += 1
+        if kind != "missing_id":
+            continue
+        missing_id_index += 1
+        if missing_id_index % 3 != 2:
+            pronoun_calls += 1
+    return pronoun_calls
 
 
 def _none_case(kind: str, index: int) -> PlannerEvalCase:
@@ -378,7 +411,7 @@ def _none_case(kind: str, index: int) -> PlannerEvalCase:
             imagery_inventory=OWNED_IMAGE,
         )
     if kind == "missing_id":
-        task = _pick(("NDVI", "水体掩膜", "地物分割", "云检测", "重投影"), index)
+        task = _pick(_MISSING_ID_TASKS, index)
         query = _pick(
             (
                 "计算刚才那张图的{task}",
@@ -387,7 +420,24 @@ def _none_case(kind: str, index: int) -> PlannerEvalCase:
             ),
             index,
         ).format(task=task)
-        return _case(f"gen_none_missing_id_{index:03d}", query, "none", None, category="none_missing_id")
+        if index % 3 == 2:
+            return _case(
+                f"gen_none_missing_id_{index:03d}",
+                query,
+                "none",
+                None,
+                category="none_explicit_no_id",
+            )
+        capability, extra_args = _MISSING_ID_CAPABILITIES[task]
+        return _case(
+            f"gen_missing_id_pronoun_call_{index:03d}",
+            query,
+            "call",
+            capability,
+            category="simple",
+            expected_arguments_subset={"imagery_id": PRIMARY_IMAGERY_ID, **extra_args},
+            notes="唯一影像清单 + 指代词；新口径允许补全为该唯一自有影像。",
+        )
     if kind == "non_owner":
         task = _pick(("NDVI", "水体掩膜", "云阴影掩膜", "目标检测", "重投影"), index)
         query = "请对影像 {img} 做{task}".format(img=OTHER_IMAGERY_ID, task=task)
@@ -428,6 +478,25 @@ def _none_case(kind: str, index: int) -> PlannerEvalCase:
             None,
             category="none_contradiction",
             imagery_inventory=OWNED_IMAGE,
+        )
+    if kind == "multi_ambiguous":
+        task = _pick(_MISSING_ID_TASKS, index)
+        query = _pick(
+            (
+                "给刚才那张图做{task}",
+                "处理上面那景的{task}",
+                "这张图先跑{task}",
+            ),
+            index,
+        ).format(task=task)
+        return _case(
+            f"gen_none_multi_ambiguous_{index:03d}",
+            query,
+            "none",
+            None,
+            category="none_multi_ambiguous",
+            imagery_inventory=MULTI_AMBIGUOUS_INVENTORY,
+            notes="多张自有影像 + 纯指代词；新口径下必须 none，要求用户指明。",
         )
     raise ValueError(f"unknown none kind: {kind}")
 
@@ -717,6 +786,76 @@ def _case(
         source="generated",
         scoring=scoring,  # type: ignore[arg-type]
     )
+
+
+def _burned_case(
+    source_case_id: str,
+    query: str,
+    capability: str,
+    imagery_id: str,
+) -> PlannerEvalCase:
+    return _case(
+        f"burned_heldout_v1_{source_case_id}",
+        query,
+        "call",
+        capability,
+        category="simple",
+        imagery_inventory=(ImageryFixture(imagery_id),),
+        expected_arguments_subset={"imagery_id": imagery_id},
+        notes=f"copy-and-burn from sealed heldout-v1 mismatch {source_case_id}; heldout-v1 itself is not recomputed.",
+    )
+
+
+HELDOUT_V1_BURNED_CASES: tuple[PlannerEvalCase, ...] = (
+    _burned_case(
+        "heldout_neg_missing_id_116",
+        "麻烦了，对刚才传的那个直接做 水体掩膜，今天要",
+        "extract_water_mask",
+        "a3ac6264c04d",
+    ),
+    _burned_case(
+        "heldout_neg_missing_id_128",
+        "急用，就这张图，跑 NDVI，拜托拜托",
+        "calculate_ndvi",
+        "e3b9889a65b4",
+    ),
+    _burned_case(
+        "heldout_neg_missing_id_152",
+        "急用，就这张图，跑 云检测 麻烦尽快",
+        "cloud_shadow_mask",
+        "fa45af27311a",
+    ),
+    _burned_case(
+        "heldout_noise_badid_000",
+        "对了，472782 这景帮我做NDVI，ID 我记不全了 麻烦尽快",
+        "calculate_ndvi",
+        "472782c6a3d6",
+    ),
+    _burned_case(
+        "heldout_noise_badid_005",
+        "在吗？想请教下，好像是 e284c9？给它做地物分割，拜托拜托",
+        "segment_landcover",
+        "e284c927a9c7",
+    ),
+    _burned_case(
+        "heldout_noise_badid_018",
+        "麻烦了，d7e66faa 这景帮我做NDVI，ID 我记不全了 麻烦尽快",
+        "calculate_ndvi",
+        "d7e66faaf142",
+    ),
+    _burned_case(
+        "heldout_noise_badid_022",
+        "麻烦了，216283 这景帮我做地物分割，ID 我记不全了",
+        "segment_landcover",
+        "216283ab91c0",
+    ),
+    _burned_case(
+        "heldout_noise_badid_024",
+        "急用，c1d2gab7ff59 做个云检测，记错了的话你帮我看下清单，拜托拜托",
+        "cloud_shadow_mask",
+        "c1d25ab7ff59",
+    ),
+)
 
 
 def _with_prompt_near(case: PlannerEvalCase) -> PlannerEvalCase:

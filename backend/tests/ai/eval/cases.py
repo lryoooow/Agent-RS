@@ -9,8 +9,12 @@ from app.agent.tool_registry import TOOLS
 
 
 EvalAction = Literal["none", "call"]
-# source: golden=手写锚点(prompt-near 风险高), generated=模板批量产出
-EvalSource = Literal["golden", "generated"]
+# source 标明用例所属层（决定它能不能当泛化结论）：
+#   golden    = 手写锚点(prompt-near 风险高)            ┐ 二者合称 dev-set，
+#   generated = 模板批量产出                            ┘ 已用于诊断+调 prompt，只能调试不能下泛化结论
+#   heldout       = 冻结盲测集，场景先行生成，只判不调（见 heldout_generator.py）
+#   random_stress = 多 seed 随机压力集，看分布不看单次（见 stress_generator.py）
+EvalSource = Literal["golden", "generated", "heldout", "random_stress"]
 # scoring: main=计入主准确率; diagnostic_unsupported=系统暂不支持(如多工具并行), 只进诊断块
 EvalScoring = Literal["main", "diagnostic_unsupported"]
 
@@ -51,6 +55,9 @@ class PlannerEvalCase:
     user_id: str | None = DEFAULT_USER_ID
     imagery_inventory: tuple[ImageryFixture, ...] = ()
     document_context: str = ""
+    # 历史对话干扰（random-stress 用）：注入到 planner 上下文的前序轮次。
+    # 默认空 → dev-set / heldout 行为与哈希完全不变（不入 context_hash，见 harness.build_recording_context）。
+    history: tuple[dict[str, str], ...] = ()
     route: AgentRoute = field(default_factory=default_route)
     expected_arguments_subset: dict[str, object] = field(default_factory=dict)
     # web_search 复合检索只在确定性评测里校验多 query 结构；语义质量留给独立 judge 诊断。
@@ -60,6 +67,9 @@ class PlannerEvalCase:
     prompt_near: bool = False
     use_memory: bool = False
     use_rag: bool = False
+    # 数据集层标识与可复现元数据：dev-set 用例留空；heldout/random_stress 写入冻结信息。
+    dataset: str = ""
+    seed: int | None = None
 
     @property
     def conversation_id(self) -> str:
@@ -356,6 +366,10 @@ def _bfcl_bucket(case: PlannerEvalCase) -> str:
     return case.category
 
 
+def _is_burned_heldout_v1_case(case: PlannerEvalCase) -> bool:
+    return case.case_id.startswith("burned_heldout_v1_")
+
+
 def _ratio(count: int, total: int) -> float:
     return (count / total) if total else 0.0
 
@@ -384,7 +398,7 @@ def validate_cases(cases: tuple[PlannerEvalCase, ...] | None = None) -> None:
                 errors.append(f"{case.case_id}: query count expectations are only valid for web_search calls")
             if case.min_query_count < 2:
                 errors.append(f"{case.case_id}: compound web_search must require at least 2 queries")
-        if case.source not in {"golden", "generated"}:
+        if case.source not in {"golden", "generated", "heldout", "random_stress"}:
             errors.append(f"{case.case_id}: invalid source {case.source}")
         if case.scoring not in {"main", "diagnostic_unsupported"}:
             errors.append(f"{case.case_id}: invalid scoring {case.scoring}")
@@ -420,12 +434,13 @@ def validate_cases(cases: tuple[PlannerEvalCase, ...] | None = None) -> None:
         errors.append(f"missing required none cases: {sorted(required_none_cases - none_categories)}")
 
     generated_cases = [case for case in cases if case.source == "generated"]
-    if generated_cases:
+    generated_ratio_cases = [case for case in generated_cases if not _is_burned_heldout_v1_case(case)]
+    if generated_ratio_cases:
         bucket_counts: dict[str, int] = {}
-        for case in generated_cases:
+        for case in generated_ratio_cases:
             bucket = _bfcl_bucket(case)
             bucket_counts[bucket] = bucket_counts.get(bucket, 0) + 1
-        generated_total = len(generated_cases)
+        generated_total = len(generated_ratio_cases)
         none_ratio = _ratio(bucket_counts.get("none", 0), generated_total)
         if none_ratio < 0.30:
             errors.append(f"generated none ratio must be >= 30%, got {none_ratio:.3f}")
@@ -462,12 +477,17 @@ def validate_cases(cases: tuple[PlannerEvalCase, ...] | None = None) -> None:
         raise ValueError("; ".join(errors))
 
 
-from tests.ai.eval.cases_generator import generate_generated_cases  # noqa: E402
+from tests.ai.eval.cases_generator import HELDOUT_V1_BURNED_CASES, generate_generated_cases  # noqa: E402
 
 
-GENERATED_CASES: tuple[PlannerEvalCase, ...] = generate_generated_cases()
+GENERATED_CASES: tuple[PlannerEvalCase, ...] = generate_generated_cases() + HELDOUT_V1_BURNED_CASES
 EVAL_CASES: tuple[PlannerEvalCase, ...] = GOLDEN_CASES + GENERATED_CASES
 CI_REPLAY_CASES: tuple[PlannerEvalCase, ...] = GOLDEN_CASES
+
+# dev-set = golden + generated。已被用于诊断与调 prompt，分数只作调试参考，不能当泛化结论。
+# heldout / random_stress 是独立的冻结/随机层，不进 EVAL_CASES（保持 330 不变量），
+# 由各自生成器按需加载（heldout_generator.py / stress_generator.py）。
+DEV_SET_CASES: tuple[PlannerEvalCase, ...] = EVAL_CASES
 
 
 validate_cases()

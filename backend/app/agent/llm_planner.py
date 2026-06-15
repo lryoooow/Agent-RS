@@ -182,11 +182,17 @@ def _planner_prompt(capabilities: list[RegisteredCapability]) -> str:
         "只输出 JSON 对象，不输出 Markdown，不输出解释。\n"
         'JSON 格式: {"action":"none|call","capability":string|null,"arguments":object,"reason":string}\n'
         "action=call 时 capability 必须来自可用能力列表，arguments 必须符合该能力 schema。\n"
-        "不要猜测 imagery_id；只有当前用户影像清单或对话上下文明确出现的可用 ID 才能用于遥感工具。\n"
+        "不要凭空编造 imagery_id；只能使用当前用户影像清单或对话上下文中可用的完整 ID。\n"
+        "如果当前影像清单恰好只有一张自有影像，用户用“这张图”“刚才那张图”“上面那景”等指代词，或给出可唯一匹配的残缺/写错 imagery_id，可以使用清单里的完整 imagery_id。\n"
+        "如果影像清单有多张图：当用户给出的残缺/写错 imagery_id 能在清单里唯一匹配到一张完整 ID（前缀一致或仅个别字符出入且只匹配一张），用那张的完整 ID 调用；若只用指代词没给 ID 片段、或残缺 ID 能匹配到多张、或匹配不到任何一张，则选择 none 并请用户指明影像，不要在多个候选里随意猜一张。\n"
+        "如果用户显式说没有提供影像 ID、没有可用影像 ID、没有提供文档 ID，选择 none；显式否定优先于系统清单。\n"
         "普通解释、代码、翻译、数学、写作任务选择 none。\n"
+        "如果用户明确说不要调用工具、不要计算、先别处理、只解释概念或只讲原理，选择 none。\n"
+        "如果用户把工具或算法用于明显不匹配的任务，选择 none，不要硬凑最接近的工具。例如：用 NDVI 检测船只、用重投影识别车辆、用 OCR 判断植被覆盖率。\n"
         "需要实时、最新、外部验证、天气、价格、官网、来源时选择 web_search。\n"
         "复合问题(同时包含多个独立检索意图，如实时天气 + 出行攻略)调用 web_search 时，"
         "用 arguments.queries 给每个意图各写一条聚焦检索词；单一意图问题只用 query 即可。\n"
+        "系统当前一次只能执行一个非搜索工具；如果用户要求多个遥感工具步骤，选择第一个可独立执行的工具，后续步骤等待下一轮或工作流能力支持。\n"
         "有影像但用户只问概念或含义时仍选择 none，不要因为看到影像清单就调用工具。\n"
         "示例:\n"
         '用户: 你好 -> {"action":"none","capability":null,"arguments":{},"reason":"greeting"}\n'
@@ -206,6 +212,8 @@ def _planner_prompt(capabilities: list[RegisteredCapability]) -> str:
         '用户: 识别影像 94e758f38ede 上的文字 / 读出这张扫描地图里的注记 -> {"action":"call","capability":"ocr_recognize","arguments":{"imagery_id":"94e758f38ede","reason":"用户请求识别影像中的文字"},"reason":"ocr_recognize"}\n'
         '用户: 总结文档 3f2a1b4c-5d6e-7f80-9a1b-2c3d4e5f6071 / 把整篇文档的要点列出来 -> {"action":"call","capability":"parse_document","arguments":{"document_id":"3f2a1b4c-5d6e-7f80-9a1b-2c3d4e5f6071","reason":"用户请求总结整篇文档"},"reason":"parse_document"}\n'
         '用户: 计算刚才那张图的 NDVI，但没有可用影像 ID -> {"action":"none","capability":null,"arguments":{},"reason":"missing_imagery_id"}\n'
+        '用户: (清单有 47ab9c20f1e3、8d3f00aa1122 两张) 给 47ab9c 这张做水体掩膜（ID没记全）-> {"action":"call","capability":"extract_water_mask","arguments":{"imagery_id":"47ab9c20f1e3","reason":"残缺ID唯一匹配清单中一张"},"reason":"unique_prefix_match"}\n'
+        '用户: (清单有 47ab9c20f1e3、47ab9c885566 两张) 给 47ab9c 这张做水体掩膜（ID没记全）-> {"action":"none","capability":null,"arguments":{},"reason":"ambiguous_imagery_multiple_candidates"}\n'
         "可用能力:\n"
         "detect_objects 和 segment_landcover 默认按 GF-2 波序 red=3, green=2, blue=1；非 GF-2 或用户明确说明 RGB 波序时，应显式设置 red_band/green_band/blue_band。\n"
         + "\n".join(capability_lines)

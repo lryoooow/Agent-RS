@@ -1,14 +1,14 @@
 {
   "case_id": "tool_band_false_color",
   "context_hash": "e94e428addf2e71893e2fb6f1e4129e867a630921001c82c746d106825085cba",
-  "key": "d50f48f9b8388da81b37ce142b6458acb55c6f7a6e5c89ef54e8c9d2a7805f85",
+  "key": "ab9cb1eeb6ed7cbff78aa1bdc62720d911f44266faa7f328dafa93aa938ddb78",
   "model": "qwen3.7-max",
-  "prompt_hash": "707fb9a956243aae8988fe602875a3bfe164cfd138791f5ba7820f9934b003ad",
+  "prompt_hash": "7ed474c2c16250d386dce445bef5b6bb645fcc015d58a938f55ec9947bcdcf56",
   "query_hash": "c53ef8759a1154994c0ed3ff8b0f945b7a88ea1360f25171cff9494ef1948435",
   "raw_texts": [
     "{\"action\":\"call\",\"capability\":\"render_band_composite\",\"arguments\":{\"imagery_id\":\"94e758f38ede\",\"mode\":\"false_color\",\"reason\":\"用户请求假彩色渲染预览\"},\"reason\":\"user_requests_false_color_composite\"}"
   ],
-  "recorded_at": "2026-06-10T06:53:56.734861+00:00",
+  "recorded_at": "2026-06-11T02:41:23.805388+00:00",
   "scope": "00000000-0000-4000-8000-000000000001|planner-eval-tool_band_false_color|qwen3.7-max|mode:llm|full_pipeline|calculate_ndvi,calculate_spectral_index,clip_reproject_raster,cloud_shadow_mask,detect_objects,extract_water_mask,ocr_recognize,parse_document,raster_inspect,render_band_composite,segment_landcover,web_search|rag:0|memory:0",
   "source": "live"
 }

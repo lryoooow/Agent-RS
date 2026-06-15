@@ -19,6 +19,7 @@ from tests.ai.eval.cases_generator import (
     stable_case_fingerprint,
 )
 from tests.ai.eval.clients import (
+    HistoricalReplayClient,
     MissingRecordingError,
     ReplayClient,
     StaleRecordingError,
@@ -62,8 +63,8 @@ def _result(**overrides) -> CaseResult:
 def test_eval_cases_are_valid_and_cover_inventory() -> None:
     validate_cases()
     assert len(GOLDEN_CASES) == 30
-    assert len(GENERATED_CASES) == 300
-    assert len(EVAL_CASES) == 330
+    assert len(GENERATED_CASES) == 308
+    assert len(EVAL_CASES) == 338
 
 
 def test_case_validation_rejects_unknown_capability() -> None:
@@ -114,11 +115,61 @@ def test_generated_cases_cover_required_arguments_and_adversarial_shapes() -> No
     assert {
         "none_negation",
         "none_concept",
-        "none_missing_id",
+        "none_explicit_no_id",
+        "none_multi_ambiguous",
         "edge_non_owner",
         "none_contradiction",
         "unsupported_multi_tool",
     }.issubset(categories)
+
+
+def test_devset_pronoun_unique_image_is_call_and_explicit_no_id_is_none() -> None:
+    pronoun = [case for case in GENERATED_CASES if case.case_id.startswith("gen_missing_id_pronoun_call_")]
+    explicit = [case for case in GENERATED_CASES if case.category == "none_explicit_no_id"]
+
+    assert len(pronoun) == 10
+    assert len(explicit) == 5
+    for case in pronoun:
+        assert case.expected_action == "call", case.case_id
+        assert case.expected_capability in {
+            "calculate_ndvi",
+            "extract_water_mask",
+            "segment_landcover",
+            "cloud_shadow_mask",
+            "clip_reproject_raster",
+        }
+        assert case.expected_arguments_subset["imagery_id"] == "94e758f38ede"
+        assert case.category == "simple"
+    for case in explicit:
+        assert case.expected_action == "none", case.case_id
+        assert case.expected_capability is None
+        assert not case.expected_arguments_subset
+
+
+def test_devset_multi_image_pronoun_none_compensates_ratio() -> None:
+    ambiguous = [case for case in GENERATED_CASES if case.category == "none_multi_ambiguous"]
+
+    assert len(ambiguous) == 10
+    for case in ambiguous:
+        assert case.expected_action == "none", case.case_id
+        assert case.expected_capability is None
+        assert len(case.imagery_inventory) >= 2
+        assert all(item.owner_user_id == case.user_id for item in case.imagery_inventory)
+
+
+def test_burned_heldout_v1_cases_are_locked_as_devset_regressions() -> None:
+    burned = [case for case in GENERATED_CASES if case.case_id.startswith("burned_heldout_v1_")]
+
+    assert len(burned) == 8
+    for case in burned:
+        assert case.source == "generated"
+        assert case.category == "simple"
+        assert case.expected_action == "call"
+        assert case.expected_capability
+        assert len(case.imagery_inventory) == 1
+        imagery_id = case.expected_arguments_subset.get("imagery_id")
+        assert imagery_id == case.imagery_inventory[0].imagery_id
+        assert imagery_id not in {"94e758f38ede", "aaaaaaaaaaaa"}
 
 
 def test_metrics_algorithm_counts_accuracy_confusion_fp_fn_and_attribution() -> None:
@@ -309,11 +360,11 @@ async def test_argument_subset_mismatch_gets_specific_reason(tmp_path: Path) -> 
 
 
 @pytest.mark.asyncio
-async def test_replay_accuracy_uses_recordings_and_validated_selection(tmp_path: Path) -> None:
+async def test_historical_replay_accuracy_uses_recordings_and_validated_selection(tmp_path: Path) -> None:
     results = await run_cases(
         CI_REPLAY_CASES,
         tmp_root=tmp_path,
-        client_factory=lambda context: ReplayClient(RECORDINGS_DIR, context),
+        client_factory=lambda context: HistoricalReplayClient(RECORDINGS_DIR, context),
         config=default_eval_config(_recorded_model()),
     )
 
@@ -363,6 +414,76 @@ async def test_replay_stale_metadata_fails(tmp_path: Path) -> None:
             tmp_root=tmp_path / "run",
             client_factory=lambda context: ReplayClient(recordings, context),
         )
+
+
+@pytest.mark.asyncio
+async def test_historical_replay_allows_old_prompt_hash_but_checks_context(tmp_path: Path) -> None:
+    case = next(item for item in CI_REPLAY_CASES if item.case_id == "tool_ndvi")
+    config = default_eval_config("historical-prompt-model")
+    recordings = tmp_path / "recordings"
+    setup_root = tmp_path / "setup"
+    setup_root.mkdir()
+
+    from tests.ai.eval.harness import _patched_env, _request_for_case, _write_imagery_fixtures
+    from app.agent.search.cache import get_planner_decision_cache
+    from app.core.settings import get_settings
+
+    imagery_root = setup_root / "imagery"
+    imagery_root.mkdir()
+    _write_imagery_fixtures(imagery_root, case)
+    with _patched_env(
+        {
+            "DATABASE_ENABLED": "false",
+            "IMAGERY_UPLOAD_DIR": str(imagery_root),
+            "TAVILY_API_KEY": "planner-eval-tavily-key",
+            "AGENT_WEB_SEARCH_MAX_CALLS": "3",
+        }
+    ):
+        get_settings.cache_clear()
+        get_planner_decision_cache().clear()
+        context = build_recording_context(case, request=_request_for_case(case), config=config)
+        path = write_recording(
+            recordings,
+            context,
+            raw_texts=[
+                json.dumps(
+                    {
+                        "action": "call",
+                        "capability": "calculate_ndvi",
+                        "arguments": {
+                            "imagery_id": "94e758f38ede",
+                            "reason": "historical prompt output",
+                        },
+                        "reason": "ndvi_calculation",
+                    },
+                    ensure_ascii=False,
+                )
+            ],
+            source="test_historical_replay",
+        )
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload["prompt_hash"] = "old-prompt-hash"
+        payload["key"] = "old-key"
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    with pytest.raises(StaleRecordingError):
+        await run_cases(
+            (case,),
+            tmp_root=tmp_path / "strict",
+            client_factory=lambda context: ReplayClient(recordings, context),
+            config=config,
+        )
+
+    results = await run_cases(
+        (case,),
+        tmp_root=tmp_path / "historical",
+        client_factory=lambda context: HistoricalReplayClient(recordings, context),
+        config=config,
+    )
+
+    assert len(results) == 1
+    assert results[0].correct
+    assert results[0].actual_capability == "calculate_ndvi"
 
 
 def test_recordings_store_raw_text_not_parsed_decisions() -> None:

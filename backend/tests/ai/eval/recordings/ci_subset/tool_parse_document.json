@@ -1,14 +1,14 @@
 {
   "case_id": "tool_parse_document",
   "context_hash": "10557768bc3a4356483886a1f3b35723412a3a23c53fb49dbc1f1e719bef8475",
-  "key": "de00944e6c59c82d0bd0109cb44b2c6ebe5ad72dbf136c90d63bb53e7b16a286",
+  "key": "7326d0ebd6cc415ce382cbb378e0a70a49d78d8d91bf8d6d1475d2375a451731",
   "model": "qwen3.7-max",
-  "prompt_hash": "707fb9a956243aae8988fe602875a3bfe164cfd138791f5ba7820f9934b003ad",
+  "prompt_hash": "7ed474c2c16250d386dce445bef5b6bb645fcc015d58a938f55ec9947bcdcf56",
   "query_hash": "f9090a3f8270859f9ccf2db70cbb7db044d0031e0e28568ab86e74e616d00b00",
   "raw_texts": [
     "{\"action\":\"call\",\"capability\":\"parse_document\",\"arguments\":{\"document_id\":\"11111111-1111-1111-1111-111111111111\",\"reason\":\"用户请求总结文档重点\"},\"reason\":\"user_requests_document_summary\"}"
   ],
-  "recorded_at": "2026-06-10T06:54:06.949158+00:00",
+  "recorded_at": "2026-06-11T02:41:39.638775+00:00",
   "scope": "00000000-0000-4000-8000-000000000001|planner-eval-tool_parse_document|qwen3.7-max|mode:llm|full_pipeline|calculate_ndvi,calculate_spectral_index,clip_reproject_raster,cloud_shadow_mask,detect_objects,extract_water_mask,ocr_recognize,parse_document,raster_inspect,render_band_composite,segment_landcover,web_search|rag:0|memory:0",
   "source": "live"
 }
