@@ -1,14 +1,14 @@
 {
   "case_id": "search_latest_dataset",
   "context_hash": "4ae9716fa3aeca9cd49ea60e92e4deb0e9e3e6ba5e09806a5c602ddcfb68d6ac",
-  "key": "03c212b8b4c0c4ca7e5cc6aa8b5dc431e31cf5732357a35eb4a22c9cc3839e1f",
+  "key": "bc67e6f08224256047ac9c809bded405906f6f8dd6c9045a5dbcd9addae082f8",
   "model": "qwen3.7-max",
-  "prompt_hash": "707fb9a956243aae8988fe602875a3bfe164cfd138791f5ba7820f9934b003ad",
+  "prompt_hash": "7ed474c2c16250d386dce445bef5b6bb645fcc015d58a938f55ec9947bcdcf56",
   "query_hash": "fe5fd74a719c2a0bcc10fc32254f223d221e1cd2b74f250d669c22cbefb89e38",
   "raw_texts": [
     "{\"action\":\"call\",\"capability\":\"web_search\",\"arguments\":{\"query\":\"2026年最新公开洪水遥感数据集\",\"reason\":\"需要检索2026年最新的公开洪水遥感数据集信息，属于实时/最新外部资源查询\"},\"reason\":\"latest_public_dataset_search\"}"
   ],
-  "recorded_at": "2026-06-10T06:54:16.760263+00:00",
+  "recorded_at": "2026-06-11T02:41:53.412439+00:00",
   "scope": "00000000-0000-4000-8000-000000000001|planner-eval-search_latest_dataset|qwen3.7-max|mode:llm|full_pipeline|calculate_ndvi,calculate_spectral_index,clip_reproject_raster,cloud_shadow_mask,detect_objects,extract_water_mask,ocr_recognize,parse_document,raster_inspect,render_band_composite,segment_landcover,web_search|rag:0|memory:0",
   "source": "live"
 }

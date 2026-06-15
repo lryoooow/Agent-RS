@@ -1,14 +1,14 @@
 {
   "case_id": "tool_water_mask",
   "context_hash": "e94e428addf2e71893e2fb6f1e4129e867a630921001c82c746d106825085cba",
-  "key": "106ae2e1a1919ff8ea8f75cc29a39c3b1b9a0c2746161d7d753af336dc875af0",
+  "key": "2adf9826fcd4f09165647d719d723fd35cd89c095388a52503ab4ba5f6be1e3e",
   "model": "qwen3.7-max",
-  "prompt_hash": "707fb9a956243aae8988fe602875a3bfe164cfd138791f5ba7820f9934b003ad",
+  "prompt_hash": "7ed474c2c16250d386dce445bef5b6bb645fcc015d58a938f55ec9947bcdcf56",
   "query_hash": "2cfff6107eda95f3b8f729ba24ebb92b8d66fd0594c0d59aac1e0f2dedde0022",
   "raw_texts": [
     "{\"action\":\"call\",\"capability\":\"extract_water_mask\",\"arguments\":{\"imagery_id\":\"94e758f38ede\",\"reason\":\"用户请求提取水体范围\"},\"reason\":\"extract_water_mask\"}"
   ],
-  "recorded_at": "2026-06-10T06:54:00.507871+00:00",
+  "recorded_at": "2026-06-11T02:41:29.590695+00:00",
   "scope": "00000000-0000-4000-8000-000000000001|planner-eval-tool_water_mask|qwen3.7-max|mode:llm|full_pipeline|calculate_ndvi,calculate_spectral_index,clip_reproject_raster,cloud_shadow_mask,detect_objects,extract_water_mask,ocr_recognize,parse_document,raster_inspect,render_band_composite,segment_landcover,web_search|rag:0|memory:0",
   "source": "live"
 }

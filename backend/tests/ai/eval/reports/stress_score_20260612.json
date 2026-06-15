@@ -1,0 +1,106 @@
+{
+  "dataset": "random-stress",
+  "seeds": [
+    40010,
+    40020,
+    40030
+  ],
+  "target_per_seed": 1000,
+  "scored_at": "2026-06-12T10:07:44.624265+00:00",
+  "per_seed": {
+    "40010": {
+      "samples": 1000,
+      "valid": 1000,
+      "main": 933,
+      "accuracy": 0.9936,
+      "hard_neg": 294,
+      "hn_fp": 5,
+      "hn_fp_rate": 0.017,
+      "positive": 639,
+      "pos_fn": 1,
+      "pos_recall": 0.9984,
+      "planner_invalid": 0,
+      "harness_error": 0
+    },
+    "40020": {
+      "samples": 1000,
+      "valid": 1000,
+      "main": 933,
+      "accuracy": 0.985,
+      "hard_neg": 304,
+      "hn_fp": 11,
+      "hn_fp_rate": 0.0362,
+      "positive": 629,
+      "pos_fn": 3,
+      "pos_recall": 0.9952,
+      "planner_invalid": 0,
+      "harness_error": 0
+    },
+    "40030": {
+      "samples": 1000,
+      "valid": 1000,
+      "main": 933,
+      "accuracy": 0.985,
+      "hard_neg": 298,
+      "hn_fp": 8,
+      "hn_fp_rate": 0.0268,
+      "positive": 635,
+      "pos_fn": 6,
+      "pos_recall": 0.9906,
+      "planner_invalid": 0,
+      "harness_error": 0
+    }
+  },
+  "aggregate": {
+    "accuracy": {
+      "mean": 0.9879,
+      "worst": 0.985,
+      "stdev": 0.0041,
+      "per_seed": {
+        "40010": 0.9936,
+        "40020": 0.985,
+        "40030": 0.985
+      }
+    },
+    "hn_fp_rate": {
+      "mean": 0.0267,
+      "worst": 0.0362,
+      "stdev": 0.0078,
+      "per_seed": {
+        "40010": 0.017,
+        "40020": 0.0362,
+        "40030": 0.0268
+      }
+    },
+    "pos_recall": {
+      "mean": 0.9947,
+      "worst": 0.9906,
+      "stdev": 0.0032,
+      "per_seed": {
+        "40010": 0.9984,
+        "40020": 0.9952,
+        "40030": 0.9906
+      }
+    },
+    "planner_invalid": {
+      "mean": 0.0,
+      "worst": 0,
+      "stdev": 0.0,
+      "per_seed": {
+        "40010": 0,
+        "40020": 0,
+        "40030": 0
+      }
+    },
+    "harness_error": {
+      "mean": 0.0,
+      "worst": 0,
+      "stdev": 0.0,
+      "per_seed": {
+        "40010": 0,
+        "40020": 0,
+        "40030": 0
+      }
+    }
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "dataset": "heldout-v1",
+  "dataset_hash": "cdb1f1370f19f7166002b2827b85ca7d60b637b5f19805c68bde738d87531a57",
+  "run_id": "heldout-v1__7ed474c2c162__qwen3.7-max",
+  "prompt_hash": "7ed474c2c16250d386dce445bef5b6bb645fcc015d58a938f55ec9947bcdcf56",
+  "model": "qwen3.7-max",
+  "scored_at": "2026-06-11T10:21:04.922876+00:00",
+  "totals": {
+    "all": 1000,
+    "valid": 1000
+  },
+  "main": {
+    "samples": 933,
+    "accuracy": 0.9914,
+    "fp": 8,
+    "fn": 0
+  },
+  "hard_negative": {
+    "samples": 325,
+    "fp": 8,
+    "fp_rate": 0.0246
+  },
+  "positive": {
+    "samples": 608,
+    "fn": 0,
+    "wrong_capability_or_args": 0,
+    "recall": 1.0
+  },
+  "diagnostic_unsupported": {
+    "samples": 67,
+    "fp": 66
+  },
+  "prompt_near_excluded": 0,
+  "hallucinated_ids": 0,
+  "non_owner_bypass": 0,
+  "planner_invalid": {
+    "count": 0,
+    "rate": 0.0
+  },
+  "attribution": {
+    "planner_mismatch": 74
+  }
+}

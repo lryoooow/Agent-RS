@@ -1,14 +1,14 @@
 {
   "case_id": "none_programming",
   "context_hash": "4ae9716fa3aeca9cd49ea60e92e4deb0e9e3e6ba5e09806a5c602ddcfb68d6ac",
-  "key": "9643a1c6b87d98840333aadc52c5a3afbc6f029e23a492612bbc436a6156b792",
+  "key": "83e2677ee6be5b344b07a1d04346c8c87312ef327feec7d2d87314ba82fce593",
   "model": "qwen3.7-max",
-  "prompt_hash": "707fb9a956243aae8988fe602875a3bfe164cfd138791f5ba7820f9934b003ad",
+  "prompt_hash": "7ed474c2c16250d386dce445bef5b6bb645fcc015d58a938f55ec9947bcdcf56",
   "query_hash": "818f9d2a3376498340cabf21638eb7b5e6311e5c92c202f930706c1a96957fb9",
   "raw_texts": [
     "{\"action\":\"none\",\"capability\":null,\"arguments\":{},\"reason\":\"coding_task\"}"
   ],
-  "recorded_at": "2026-06-10T06:54:27.351261+00:00",
+  "recorded_at": "2026-06-11T02:42:06.939464+00:00",
   "scope": "00000000-0000-4000-8000-000000000001|planner-eval-none_programming|qwen3.7-max|mode:llm|full_pipeline|calculate_ndvi,calculate_spectral_index,clip_reproject_raster,cloud_shadow_mask,detect_objects,extract_water_mask,ocr_recognize,parse_document,raster_inspect,render_band_composite,segment_landcover,web_search|rag:0|memory:0",
   "source": "live"
 }

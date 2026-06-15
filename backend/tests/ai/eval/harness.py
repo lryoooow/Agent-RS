@@ -49,6 +49,8 @@ class CaseResult:
     error: str | None = None
     expected_arguments_subset: dict[str, object] = field(default_factory=dict)
     actual_arguments: dict[str, object] = field(default_factory=dict)
+    # planner 输出最终解析失败（planner_invalid 事件）；区分"模型答 none"与"输出炸了被当 none"。
+    planner_invalid: bool = False
 
     @property
     def expected_label(self) -> str:
@@ -153,7 +155,7 @@ async def run_case(
             route=case.route,
         )
 
-        raw_action, raw_capability = _raw_decision_from_trace(trace)
+        raw_action, raw_capability, planner_invalid = _raw_decision_from_trace(trace)
         validation_error = _validation_error_from_trace(trace)
         actual_action, actual_capability, actual_arguments = _actual_selection(selection)
         correct = _is_correct(
@@ -195,6 +197,7 @@ async def run_case(
             validation_error=validation_error,
             expected_arguments_subset=dict(case.expected_arguments_subset),
             actual_arguments=actual_arguments,
+            planner_invalid=planner_invalid,
         )
 
 
@@ -257,6 +260,55 @@ def build_recording_context(
         prompt_hash=prompt_hash,
         model=config.model,
     )
+
+
+def write_observations_jsonl(
+    path: Path,
+    results: tuple[CaseResult, ...],
+    *,
+    dataset: str = "",
+    dataset_hash: str = "",
+    prompt_hash: str = "",
+    model: str = "",
+    seed: int | None = None,
+) -> Path:
+    """逐 CaseResult 写一行 JSON 的本地观测（替代 langfuse 的行级记录）。
+
+    run 级字段（dataset/dataset_hash/prompt_hash/model/seed）由调用方从 manifest/config 传入，
+    保证与同次 score 报告同源；result 级字段从 CaseResult 取。
+    latency_ms 恒为 null——replay 秒回不是真实延迟，按规划「禁止当真实延迟上报」。
+    """
+
+    import json
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines: list[str] = []
+    for result in results:
+        row = {
+            "case_id": result.case_id,
+            "query_hash": stable_hash(result.query),
+            "dataset": dataset,
+            "dataset_hash": dataset_hash,
+            "prompt_hash": prompt_hash,
+            "model": model,
+            "seed": seed,
+            "category": result.category,
+            "scoring": result.scoring,
+            "expected": result.expected_label,
+            "actual": result.actual_label,
+            "raw_action": result.raw_action,
+            "raw_capability": result.raw_capability,
+            "correct": result.correct,
+            "attribution": result.attribution,
+            "validation_error": result.validation_error,
+            "mismatch_reason": result.mismatch_reason,
+            "planner_invalid": result.planner_invalid,
+            "error": result.error,
+            "latency_ms": None,
+        }
+        lines.append(json.dumps(row, ensure_ascii=False, sort_keys=True))
+    path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+    return path
 
 
 def compute_metrics(results: tuple[CaseResult, ...]) -> EvalMetrics:
@@ -326,6 +378,9 @@ def _request_for_case(case: PlannerEvalCase) -> ChatRequest:
     messages = []
     if case.document_context:
         messages.append({"role": "system", "content": case.document_context})
+    # 历史干扰轮次（random-stress 用；heldout/dev-set 的 history 为空 → messages 逐字节不变）。
+    for msg in case.history:
+        messages.append({"role": msg["role"], "content": msg["content"]})
     messages.append({"role": "user", "content": case.query})
     return ChatRequest(
         messages=messages,
@@ -364,15 +419,15 @@ def stable_json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
 
 
-def _raw_decision_from_trace(trace: AgentTrace) -> tuple[str, str | None]:
+def _raw_decision_from_trace(trace: AgentTrace) -> tuple[str, str | None, bool]:
     for event in reversed(trace.events):
         if event.stage == "planner_completed":
             action = str(event.metadata.get("action") or "none")
             capability = event.metadata.get("capability")
-            return action, str(capability) if capability else None
+            return action, str(capability) if capability else None, False
         if event.stage == "planner_invalid":
-            return "none", None
-    return "none", None
+            return "none", None, True
+    return "none", None, False
 
 
 def _validation_error_from_trace(trace: AgentTrace) -> str | None:
