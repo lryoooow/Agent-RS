@@ -4,7 +4,7 @@ import json
 import uuid
 from typing import Any
 
-from app.db.sanitize import sanitize_json, sanitize_text
+from app.db.sanitize import parse_jsonb, sanitize_json, sanitize_text
 from app.db.vector import encode_vector
 from app.schemas.chat import ChatMessage
 
@@ -132,4 +132,5 @@ async def list_conversation_messages(
         """,
         *params,
     )
-    return [dict(row) for row in reversed(rows)]
+    # jsonb 列经 asyncpg 读回为字符串，归一成 dict|None（与写入侧 json.dumps 对称）。
+    return [{**dict(row), "metadata_json": parse_jsonb(row["metadata_json"])} for row in reversed(rows)]

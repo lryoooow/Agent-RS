@@ -186,6 +186,7 @@ def _planner_prompt(capabilities: list[RegisteredCapability]) -> str:
         "如果当前影像清单恰好只有一张自有影像，用户用“这张图”“刚才那张图”“上面那景”等指代词，或给出可唯一匹配的残缺/写错 imagery_id，可以使用清单里的完整 imagery_id。\n"
         "如果影像清单有多张图：当用户给出的残缺/写错 imagery_id 能在清单里唯一匹配到一张完整 ID（前缀一致或仅个别字符出入且只匹配一张），用那张的完整 ID 调用；若只用指代词没给 ID 片段、或残缺 ID 能匹配到多张、或匹配不到任何一张，则选择 none 并请用户指明影像，不要在多个候选里随意猜一张。\n"
         "如果用户显式说没有提供影像 ID、没有可用影像 ID、没有提供文档 ID，选择 none；显式否定优先于系统清单。\n"
+        "不要凭空编造 document_id。判别只看一条：系统是否在上下文中注入了文档信息（如“用户已上传需要解析的文档”）或此前轮次已出现该文档。只要有这类文档证据，用户给出 document_id 要求解析/总结文档，就调用 parse_document；只有在完全没有任何文档证据时，用户口头报出的 document_id 才一律选择 none 并请用户先上传或指明文档。\n"
         "普通解释、代码、翻译、数学、写作任务选择 none。\n"
         "如果用户明确说不要调用工具、不要计算、先别处理、只解释概念或只讲原理，选择 none。\n"
         "如果用户把工具或算法用于明显不匹配的任务，选择 none，不要硬凑最接近的工具。例如：用 NDVI 检测船只、用重投影识别车辆、用 OCR 判断植被覆盖率。\n"
@@ -210,7 +211,9 @@ def _planner_prompt(capabilities: list[RegisteredCapability]) -> str:
         '用户: 提取影像 94e758f38ede 里的水体/圈出水域范围 -> {"action":"call","capability":"extract_water_mask","arguments":{"imagery_id":"94e758f38ede","reason":"用户请求水体提取"},"reason":"extract_water_mask"}\n'
         '用户: 把影像 94e758f38ede 重投影到 EPSG:4326 / 按范围裁剪 -> {"action":"call","capability":"clip_reproject_raster","arguments":{"imagery_id":"94e758f38ede","dst_crs":"EPSG:4326","reason":"用户请求裁剪/重投影"},"reason":"clip_reproject_raster"}\n'
         '用户: 识别影像 94e758f38ede 上的文字 / 读出这张扫描地图里的注记 -> {"action":"call","capability":"ocr_recognize","arguments":{"imagery_id":"94e758f38ede","reason":"用户请求识别影像中的文字"},"reason":"ocr_recognize"}\n'
-        '用户: 总结文档 3f2a1b4c-5d6e-7f80-9a1b-2c3d4e5f6071 / 把整篇文档的要点列出来 -> {"action":"call","capability":"parse_document","arguments":{"document_id":"3f2a1b4c-5d6e-7f80-9a1b-2c3d4e5f6071","reason":"用户请求总结整篇文档"},"reason":"parse_document"}\n'
+        '用户: (系统已注入：用户已上传需要解析的文档) 总结文档 3f2a1b4c-5d6e-7f80-9a1b-2c3d4e5f6071 / 把整篇文档的要点列出来 -> {"action":"call","capability":"parse_document","arguments":{"document_id":"3f2a1b4c-5d6e-7f80-9a1b-2c3d4e5f6071","reason":"用户请求总结整篇文档"},"reason":"parse_document"}\n'
+        '用户: (系统已注入：用户已上传需要解析的文档) 文档 3f2a1b4c-5d6e-7f80-9a1b-2c3d4e5f6071 帮我总结要点，里面图片文字不重要 -> {"action":"call","capability":"parse_document","arguments":{"document_id":"3f2a1b4c-5d6e-7f80-9a1b-2c3d4e5f6071","reason":"用户要总结文档全文，图片OCR非主诉求"},"reason":"parse_document_not_ocr"}\n'
+        '用户: (上下文没有任何文档) 解析文档 3f2a1b4c-5d6e-7f80-9a1b-2c3d4e5f6071 -> {"action":"none","capability":null,"arguments":{},"reason":"no_document_evidence"}\n'
         '用户: 计算刚才那张图的 NDVI，但没有可用影像 ID -> {"action":"none","capability":null,"arguments":{},"reason":"missing_imagery_id"}\n'
         '用户: (清单有 47ab9c20f1e3、8d3f00aa1122 两张) 给 47ab9c 这张做水体掩膜（ID没记全）-> {"action":"call","capability":"extract_water_mask","arguments":{"imagery_id":"47ab9c20f1e3","reason":"残缺ID唯一匹配清单中一张"},"reason":"unique_prefix_match"}\n'
         '用户: (清单有 47ab9c20f1e3、47ab9c885566 两张) 给 47ab9c 这张做水体掩膜（ID没记全）-> {"action":"none","capability":null,"arguments":{},"reason":"ambiguous_imagery_multiple_candidates"}\n'

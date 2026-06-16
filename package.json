@@ -3,9 +3,10 @@
   "private": true,
   "version": "0.1.0",
   "scripts": {
-    "dev:frontend": "npm --prefix frontend run dev",
-    "build:frontend": "npm --prefix frontend run build",
-    "dev:backend": "python -m uvicorn app.main:app --app-dir backend --host 0.0.0.0 --port 3000 --reload --reload-exclude storage/* --reload-exclude storage/**/*",
+    "dev:frontend": "npm --prefix Agent-frontend run dev",
+    "build:frontend": "npm --prefix Agent-frontend run build",
+    "typecheck:frontend": "npm --prefix Agent-frontend run type-check",
+    "dev:backend": "python -m uvicorn app.main:app --app-dir backend --host 0.0.0.0 --port 3000 --reload --reload-dir backend",
     "test:backend": "python -m pytest backend/tests"
   }
 }
