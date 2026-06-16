@@ -3,7 +3,7 @@
 import json
 from typing import Any
 
-from app.db.sanitize import sanitize_json, sanitize_text
+from app.db.sanitize import parse_jsonb, sanitize_json, sanitize_text
 from app.db.vector import encode_vector
 
 
@@ -73,7 +73,8 @@ async def list_memories(conn, *, user_id: str, limit: int = 100) -> list[dict[st
         user_id,
         limit,
     )
-    return [dict(row) for row in rows]
+    # jsonb 列经 asyncpg 读回为字符串，归一成 dict|None（与写入侧 json.dumps 对称）。
+    return [{**dict(row), "metadata": parse_jsonb(row["metadata"])} for row in rows]
 
 
 async def delete_memory(conn, *, user_id: str, memory_id: str) -> bool:

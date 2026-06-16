@@ -23,8 +23,10 @@ def read_imagery_metadata(imagery_id: str) -> dict[str, Any] | None:
 def read_metadata_file(meta_file: Path) -> dict[str, Any] | None:
     try:
         return json.loads(meta_file.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        logger.warning("Invalid imagery metadata skipped: %s", meta_file, exc_info=True)
+    except (OSError, json.JSONDecodeError) as exc:
+        # 幻觉/不存在的 imagery_id 查找会高频走到这里（红队约 20% case）；只记一行原因，
+        # 不带 exc_info——满栈 traceback 对"文件不存在"无诊断价值，徒增日志噪声。
+        logger.warning("Invalid imagery metadata skipped: %s (%s)", meta_file, exc)
         return None
 
 

@@ -9,6 +9,9 @@ _IMAGERY_TOOLS = set(ALL_IMAGERY_TOOLS)
 
 # 文档工具吃 document_id，文档在 DB 里按 user_id 隔离（get_document 会按 owner 过滤）。
 # 这里只做"必须有用户身份"的前置校验，真正的归属由 DB 查询保证。
+# 注：document_id 的 UUID 格式由 ParseDocumentArguments 的 pydantic pattern 在本 guard 之前
+# 校验（plan_validator.py:54 / child.py:67 先 model_validate 再调本函数），故此处不再重复格式检查；
+# 红队 hallucinated_document_id 穿透（编造的是合法格式 UUID）的根因修复在 planner prompt 层。
 _DOCUMENT_TOOLS = set(ALL_DOCUMENT_TOOLS)
 
 

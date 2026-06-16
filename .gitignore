@@ -16,6 +16,8 @@ backend/.tmp_redteam*/
 backend/tests/ai/eval/recordings/live_runs/
 backend/tests/ai/eval/recordings/heldout_v1/live_run/
 backend/tests/ai/eval/recordings/heldout_v2/live_run/
+backend/tests/ai/eval/recordings/heldout_v3/live_run/
+backend/tests/ai/eval/recordings/heldout_v4/live_run/
 backend/tests/ai/eval/recordings/stress_runs/
 backend/tests/ai/eval/reports/*observations*.jsonl
 backend/tests/redteam/recordings/redteam_runs/
