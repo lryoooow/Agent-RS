@@ -12,14 +12,6 @@ export type ToolBubble = {
 };
 
 const RUNNING: ReadonlySet<AgentStatus> = new Set<AgentStatus>([
-  "context_assembled",
-  "planning",
-  "planning_fallback",
-  "planner_started",
-  "planner_completed",
-  "planner_selected",
-  "classifier_force",
-  "tool_requested",
   "child_agent_running",
   "tool_execution_started",
 ]);
@@ -39,7 +31,8 @@ const ERROR: ReadonlySet<AgentStatus> = new Set<AgentStatus>([
   "tool_unavailable",
 ]);
 
-// 这些状态不该显示成工具气泡：要么是"直接回答/进入正文"，要么是无信息的跳过态。
+// 这些状态不该显示成工具气泡：要么是"直接回答/进入正文"，要么是无信息的跳过态，
+// 要么是用户不关心的内部规划步骤（规划阶段对用户是噪声，只展示"理解→执行具体工具→组织回复"）。
 const HIDDEN: ReadonlySet<AgentStatus> = new Set<AgentStatus>([
   "final_answering",
   "direct_answer",
@@ -47,6 +40,15 @@ const HIDDEN: ReadonlySet<AgentStatus> = new Set<AgentStatus>([
   "classifier_skip",
   "cache_hit_skip",
   "cache_hit_search",
+  // 规划阶段：不再向用户展示"规划工具/判断是否联网/请求调用工具"等中间步骤。
+  "context_assembled",
+  "planning",
+  "planning_fallback",
+  "planner_started",
+  "planner_completed",
+  "planner_selected",
+  "classifier_force",
+  "tool_requested",
 ]);
 
 const FALLBACK_LABEL: Record<string, string> = {
@@ -79,4 +81,9 @@ export function toolBubbleForTurn(turn: ChatTurn): ToolBubble | null {
   if (DONE.has(status)) return { status: "done", label };
   if (RUNNING.has(status)) return { status: "running", label };
   return { status: "running", label };
+}
+
+// 规划等内部步骤不展示给用户：顶部进度行也不应被它们的 label 覆盖（否则会闪现"正在判断是否需要联网"）。
+export function isHiddenAgentStatus(status: AgentStatus): boolean {
+  return HIDDEN.has(status);
 }

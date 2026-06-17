@@ -1,5 +1,6 @@
 import type { Dispatch, SetStateAction } from "react";
 import type { StreamHandlers } from "./sse";
+import { isHiddenAgentStatus } from "./agent-status";
 import { appendToTurn, updateAnalysisStatus, uid, updateTurn } from "./turns";
 import type {
   AgentStatus,
@@ -46,6 +47,14 @@ export function createStreamHandlers(
       const status = normalizeAgentStatus(data.status);
       if (!status) return;
       const label = typeof data.label === "string" ? data.label : undefined;
+      // 规划等内部步骤：记录 agentStatus（气泡层已过滤不显示），但不覆盖顶部进度行，
+      // 否则"正在理解"会被"正在判断是否需要联网/规划能力调用"等噪声闪掉。
+      if (isHiddenAgentStatus(status)) {
+        setTurns((prev) =>
+          updateTurn(prev, assistantId, { agentStatus: status, agentLabel: label }),
+        );
+        return;
+      }
       setTurns((prev) =>
         updateTurn(prev, assistantId, {
           agentStatus: status,

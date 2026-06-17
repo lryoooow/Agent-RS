@@ -315,3 +315,7 @@ def test_planner_prompt_contains_restraint_and_new_tool_examples() -> None:
     assert "segment_landcover" in prompt
     assert "index_type\":\"nbr" in prompt
     assert "red=3, green=2, blue=1" in prompt
+    # 文档通道防线（红队 hallucinated_document_id 穿透的根因修复）必须留在 prompt：
+    # 禁令 + "无文档证据→none" 反例。谁删谁红，防复发。
+    assert "不要凭空编造 document_id" in prompt
+    assert "no_document_evidence" in prompt

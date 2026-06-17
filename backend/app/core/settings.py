@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     ai_base_url: str = "https://api.openai.com/v1"
     ai_api_key: str = ""
     ai_default_model: str = "gpt-4.1-mini"
-    ai_thinking_budget: int = 512
+    ai_thinking_budget: int = 128
     ai_timeout_seconds: float = 60
     ai_max_retries: int = 2
     ai_trust_env_proxy: bool = False
@@ -45,7 +45,10 @@ class Settings(BaseSettings):
     ai_system_prompt_language: str = "zh-CN"
     ai_assistant_name: str = "Agent-RS Assistant"
 
-    allow_client_provider_config: bool = False
+    # 默认 True：本地 clone 场景下 env 未填 AI_API_KEY 时，降级用前端配置页填的值
+    # （resolve_ai_config 的 client_xxx or settings.xxx 链保证 env 已填时前端留空仍走 env）。
+    # 公网多用户部署应设 false，锁定服务端密钥、禁止客户端覆盖。
+    allow_client_provider_config: bool = True
     allow_user_extra_instructions: bool = True
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
     max_json_body_bytes: int = 2_000_000
@@ -81,6 +84,14 @@ class Settings(BaseSettings):
     database_url: str = ""
     database_pool_min_size: int = 1
     database_pool_max_size: int = 5
+
+    # 存储后端：留空=自动推断（DATABASE_ENABLED=true 走 postgres，否则 sqlite）；
+    # 也可显式写 sqlite / postgres 强制。sqlite 下登录/记忆/历史/文档知识库
+    # 全部落本地单文件库，clone 即用、零服务器。
+    storage_backend: str = ""
+    sqlite_path: str = "backend/storage/agent_rs.db"
+    # RAG 检索引擎：仅预留开关，当前只有 builtin（现有 hybrid+RRF+rerank+MMR）。
+    rag_engine: str = "builtin"
 
     default_user_id: str = "00000000-0000-4000-8000-000000000001"
     default_workspace_id: str = "00000000-0000-4000-8000-000000000001"
@@ -161,6 +172,30 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    @property
+    def resolved_storage_backend(self) -> str:
+        """最终生效的存储后端。
+
+        显式配置 STORAGE_BACKEND 优先；留空时自动推断：
+        DATABASE_ENABLED=true → postgres（保护维护者既有云库），否则 sqlite（本地零依赖）。
+        """
+        explicit = self.storage_backend.strip().lower()
+        if explicit in ("sqlite", "postgres"):
+            return explicit
+        return "postgres" if self.database_enabled else "sqlite"
+
+    @property
+    def storage_active(self) -> bool:
+        """持久化能力是否可用：postgres 后端需 DATABASE_ENABLED，sqlite 恒可用。
+
+        替代散落各处的 `database_enabled` 判断——后者只认 Postgres，
+        会让 SQLite 模式下文档/记忆/RAG/会话等闸口被误关。
+        """
+        backend = self.resolved_storage_backend
+        if backend == "sqlite":
+            return True
+        return self.database_enabled
 
     @property
     def context_max_total_chars(self) -> int:

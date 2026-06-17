@@ -28,13 +28,12 @@ def resolve_ai_config(
     provider_config: ProviderConfig | None = None,
 ) -> ResolvedAIConfig:
     settings = get_settings()
-    client_config_allowed = settings.allow_client_provider_config
-    provider_config = provider_config if client_config_allowed else None
-
+    # 前端配置页填的 provider_config 始终参与降级：填了就用、留空则回落 env。
+    # 是否「采用前端值」不再由服务端开关门控——这正是 client_xxx or settings.xxx 链的语义。
     client_base_url = _clean(provider_config.base_url if provider_config else None)
     client_api_key = _clean(provider_config.api_key if provider_config else None)
     client_model = _clean(provider_config.model if provider_config else None)
-    request_model = _clean(request_model) if client_config_allowed else None
+    request_model = _clean(request_model)
 
     base_url = client_base_url or _clean(settings.ai_base_url)
     api_key = client_api_key or _clean(settings.ai_api_key)

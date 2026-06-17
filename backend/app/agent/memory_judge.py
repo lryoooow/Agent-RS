@@ -50,7 +50,7 @@ async def maybe_store_memory(
     source_message_id: str,
 ) -> None:
     settings = get_settings()
-    if not settings.database_enabled or not settings.memory_judge_enabled:
+    if not settings.storage_active or not settings.memory_judge_enabled:
         return
     if len(user_content.strip()) < settings.memory_judge_min_user_chars:
         return

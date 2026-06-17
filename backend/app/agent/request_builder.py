@@ -141,7 +141,7 @@ async def build_provider_messages(request: ChatRequest, *, user_id: str | None =
 
 async def _resolve_context_messages(request: ChatRequest, *, user_id: str | None) -> list:
     settings = get_settings()
-    if not settings.database_enabled or not request.conversation_id:
+    if not settings.storage_active or not request.conversation_id:
         return request.messages
     pool = await fetch_optional_pool()
     if pool is None:
@@ -172,7 +172,7 @@ async def _resolve_retrieved_context(
         use_memory=request.use_memory,
         query_chars=len(query),
     )
-    if not settings.database_enabled or not query or not (request.use_memory or request.use_rag):
+    if not settings.storage_active or not query or not (request.use_memory or request.use_rag):
         return RetrievedContext(rag_trace={"use_rag": request.use_rag, "use_memory": request.use_memory})
     pool = await fetch_optional_pool()
     if pool is None:

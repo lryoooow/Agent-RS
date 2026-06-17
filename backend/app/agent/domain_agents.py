@@ -5,6 +5,7 @@ from dataclasses import replace
 from typing import Any, Awaitable, Callable
 
 from app.agent.child import ToolChildAgent
+from app.agent.prompting.scenarios import tool_running_label
 from app.agent.types import AgentEvent, AgentTrace, RuntimeToolCall, ToolRunResult
 
 AgentEventCallback = Callable[[AgentEvent], Awaitable[None]]
@@ -98,7 +99,7 @@ class DomainToolAgent:
         child_run_id = uuid.uuid4().hex
         event = trace.add(
             "child_agent_running",
-            f"{self.domain_label}子 Agent 接管：{tool_call.name}",
+            tool_running_label(tool_call.name),
             tool_name=tool_call.name,
             agent_name=self.domain_name,
             domain=self.domain_name,

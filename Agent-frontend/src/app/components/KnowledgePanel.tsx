@@ -104,7 +104,7 @@ export function KnowledgePanel({ endpoint }: { endpoint: string }) {
         <input
           ref={fileRef}
           type="file"
-          accept=".txt,.md,.markdown,.pdf,.docx"
+          accept=".txt,.md,.markdown,.pdf,.docx,.pptx,.xlsx"
           className="hidden"
           onChange={(e) => {
             handleUpload(e.target.files?.[0]);

@@ -19,6 +19,8 @@ def format_search_context(
         f"搜索原因: {reason}",
         "",
         "请在回答中使用 [S1] [S2] 等标记引用对应来源。",
+        "优先使用搜索结果中的事实回答；结果与已有知识冲突时以搜索结果为准并标注来源。",
+        "不要逐条罗列搜索结果，而是整合提炼后自然融入回答。",
     ]
     if policy:
         lines.extend(["", "Tool policy:", trim_to_budget(policy, 600) or ""])

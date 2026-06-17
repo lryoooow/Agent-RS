@@ -43,7 +43,7 @@ async def prepare_persistence(
     user_id = get_current_user_id()
     context = PersistenceContext(user_id=user_id, user_content=latest_user_content(request))
     settings = get_settings()
-    if not settings.database_enabled:
+    if not settings.storage_active:
         context.conversation_id = request.conversation_id
         return context
 

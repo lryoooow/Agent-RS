@@ -5,7 +5,7 @@ from typing import Any, Awaitable, Callable
 
 from pydantic import ValidationError
 
-from app.agent.prompting.scenarios import tool_ready_label, tool_request_label
+from app.agent.prompting.scenarios import tool_ready_label, tool_request_label, tool_running_label
 from app.agent.tool_guards import validate_tool_access
 from app.agent.tool_registry import get_tool
 from app.agent.types import AgentEvent, AgentTrace, RuntimeToolCall, ToolRunResult
@@ -112,7 +112,7 @@ class ToolChildAgent:
             trace,
             on_event,
             "child_agent_running",
-            f"正在执行工具: {tool_call.name}",
+            tool_running_label(tool_call.name),
             tool_name=tool_call.name,
             agent_name="tool_child_agent",
             parent_run_id=self.parent_run_id,
@@ -124,7 +124,7 @@ class ToolChildAgent:
             trace,
             on_event,
             "tool_execution_started",
-            "工具执行已开始",
+            tool_running_label(tool_call.name),
             tool_name=tool_call.name,
             agent_name="tool_child_agent",
             parent_run_id=self.parent_run_id,

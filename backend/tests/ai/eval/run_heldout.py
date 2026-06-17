@@ -31,6 +31,10 @@ from tests.ai.eval.heldout_generator import (
     HELDOUT_V1_SEED,
     HELDOUT_V2_DATASET,
     HELDOUT_V2_SEED,
+    HELDOUT_V3_DATASET,
+    HELDOUT_V3_SEED,
+    HELDOUT_V4_DATASET,
+    HELDOUT_V4_SEED,
     dataset_hash,
     generate_heldout_cases,
     heldout_summary,
@@ -53,6 +57,8 @@ REPORTS_DIR = EVAL_DIR / "reports"
 _VERSIONS = {
     "v1": {"dataset": HELDOUT_DATASET, "seed": HELDOUT_V1_SEED, "dirname": "heldout_v1"},
     "v2": {"dataset": HELDOUT_V2_DATASET, "seed": HELDOUT_V2_SEED, "dirname": "heldout_v2"},
+    "v3": {"dataset": HELDOUT_V3_DATASET, "seed": HELDOUT_V3_SEED, "dirname": "heldout_v3"},
+    "v4": {"dataset": HELDOUT_V4_DATASET, "seed": HELDOUT_V4_SEED, "dirname": "heldout_v4"},
 }
 DATASET = HELDOUT_DATASET
 SEED = HELDOUT_V1_SEED
@@ -413,7 +419,7 @@ async def _score(args: argparse.Namespace) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="heldout freeze/live/seal/score（--version v1|v2）")
-    parser.add_argument("--version", choices=("v1", "v2"), default="v1",
+    parser.add_argument("--version", choices=("v1", "v2", "v3", "v4"), default="v1",
                         help="数据集版本：v1=历史证据(默认)，v2=修正口径后全新冻结盲测")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("freeze")

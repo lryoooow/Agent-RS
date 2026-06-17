@@ -20,6 +20,7 @@ import { SUGGESTIONS } from "../data/rs";
 import type { ChatTurn } from "../types";
 import { toolBubbleForTurn, type ToolBubble } from "../lib/agent-status";
 import { GeospatialSummary } from "./GeospatialSummary";
+import { Markdown } from "./Markdown";
 
 const ANALYSIS_FALLBACK: Record<string, string> = {
   analyzing: "正在解析问题...",
@@ -80,13 +81,17 @@ function AssistantTurn({ turn, streaming }: { turn: ChatTurn; streaming: boolean
         )}
         {turn.content && (
           <div
-            className={`rounded-xl px-3 py-2 text-[13px] leading-relaxed whitespace-pre-wrap break-words ${
+            className={`rounded-xl px-3 py-2 text-[13px] leading-relaxed break-words ${
               turn.error
-                ? "border border-destructive/30 bg-destructive/5 text-foreground"
+                ? "border border-destructive/30 bg-destructive/5 text-foreground whitespace-pre-wrap"
                 : "border border-border bg-card text-card-foreground"
             }`}
           >
-            {turn.content}
+            {turn.error ? (
+              turn.content
+            ) : (
+              <Markdown>{turn.content}</Markdown>
+            )}
             {streaming && (
               <span className="ml-0.5 inline-block h-3.5 w-1.5 animate-pulse bg-primary align-middle" />
             )}

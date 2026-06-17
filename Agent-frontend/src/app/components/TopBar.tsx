@@ -33,7 +33,6 @@ export function TopBar({ settings, auth }: { settings: Settings; auth: Auth }) {
   const [baseUrl, setBaseUrl] = useState(settings.providerConfig?.base_url ?? "");
   const [apiKey, setApiKey] = useState(settings.providerConfig?.api_key ?? "");
 
-  const allowProvider = settings.serverConfig?.allow_client_provider_config === true;
   const displayModel = settings.model || settings.serverConfig?.default_model || "默认模型";
 
   const sync = () => {
@@ -50,11 +49,10 @@ export function TopBar({ settings, auth }: { settings: Settings; auth: Auth }) {
     settings.setSystemPrompt(system);
     settings.setStreamEnabled(stream);
     settings.setUseRag(useRag);
-    if (allowProvider) {
-      settings.setProviderConfig(
-        baseUrl.trim() || apiKey.trim() ? { base_url: baseUrl, api_key: apiKey } : null,
-      );
-    }
+    // 输入框默认空：填了就透传，留空则后端按 client_xxx or env 链回落到 .env 配置。
+    settings.setProviderConfig(
+      baseUrl.trim() || apiKey.trim() ? { base_url: baseUrl, api_key: apiKey } : null,
+    );
     setOpen(false);
   };
 
@@ -120,26 +118,27 @@ export function TopBar({ settings, auth }: { settings: Settings; auth: Auth }) {
                 className="bg-input-background font-mono text-[12px]"
               />
             </Field>
-            {allowProvider && (
-              <div className="grid grid-cols-2 gap-3">
-                <Field label="API Key">
-                  <Input
-                    type="password"
-                    value={apiKey}
-                    placeholder="YOUR_API_KEY_HERE"
-                    onChange={(e) => setApiKey(e.target.value)}
-                    className="bg-input-background font-mono text-[12px]"
-                  />
-                </Field>
-                <Field label="Provider Base URL">
-                  <Input
-                    value={baseUrl}
-                    onChange={(e) => setBaseUrl(e.target.value)}
-                    className="bg-input-background font-mono text-[12px]"
-                  />
-                </Field>
-              </div>
-            )}
+            {/* API Key / Base URL 无条件常显，默认空。env 配了用 env，留空则用这里填的值，
+                都没有时后端抛 CONFIG_ERROR 提醒。是否采用前端值由后端降级链决定，前端不门控。 */}
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="API Key（留空用服务端 .env）">
+                <Input
+                  type="password"
+                  value={apiKey}
+                  placeholder="sk-..."
+                  onChange={(e) => setApiKey(e.target.value)}
+                  className="bg-input-background font-mono text-[12px]"
+                />
+              </Field>
+              <Field label="Provider Base URL（留空用服务端 .env）">
+                <Input
+                  value={baseUrl}
+                  placeholder="https://.../v1"
+                  onChange={(e) => setBaseUrl(e.target.value)}
+                  className="bg-input-background font-mono text-[12px]"
+                />
+              </Field>
+            </div>
             <Field label="System Prompt">
               <Textarea
                 rows={3}

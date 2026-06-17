@@ -20,7 +20,7 @@ async def run_parse_document(args: ParseDocumentArguments) -> ToolRunResult:
         return _error_result("解析文档参数无效: document_id 必须是 UUID。", "invalid_document_id")
 
     settings = get_settings()
-    if not settings.database_enabled:
+    if not settings.storage_active:
         return _error_result("文档读取失败: 数据库未启用。", "database_disabled")
 
     pool = await fetch_optional_pool()

@@ -4,9 +4,9 @@ from app.schemas.chat import ChatMessage
 DEFAULT_PROMPT_PROFILE = "agent_rs_core_v1"
 
 PROMPT_PROFILES: dict[str, tuple[str, ...]] = {
-    DEFAULT_PROMPT_PROFILE: ("core_identity_v1", "security_boundary_v1", "context_priority_v1"),
+    DEFAULT_PROMPT_PROFILE: ("core_identity_v1", "security_boundary_v1", "context_priority_v1", "output_format_v1"),
     # Legacy alias for existing deployments that still set AI_PROMPT_PROFILE to the old value.
-    "chatbot_core_v1": ("core_identity_v1", "security_boundary_v1", "context_priority_v1"),
+    "chatbot_core_v1": ("core_identity_v1", "security_boundary_v1", "context_priority_v1", "output_format_v1"),
 }
 
 PROMPT_MODULES: dict[str, PromptModule] = {
@@ -41,16 +41,6 @@ DOCUMENT_KEYWORDS = (
     "提取",
     "字段",
 )
-FORMAT_KEYWORDS = (
-    "json",
-    "表格",
-    "markdown",
-    "代码",
-    "配置",
-    "命令",
-    "步骤",
-    "清单",
-)
 
 
 def select_prompt_modules(
@@ -77,8 +67,6 @@ def select_prompt_modules(
     if enable_dynamic_modules:
         if _contains_any(text, DOCUMENT_KEYWORDS) or _has_long_user_message(messages):
             module_names.append("document_task_v1")
-        if _contains_any(text, FORMAT_KEYWORDS):
-            module_names.append("output_format_v1")
     if has_conversation_summary or has_memory:
         module_names.append("memory_policy_v1")
     if has_rag_context:
