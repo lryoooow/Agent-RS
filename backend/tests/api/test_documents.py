@@ -38,6 +38,9 @@ def fake_schedule_task(coro):
 
 
 def test_documents_route_reports_database_disabled(monkeypatch) -> None:
+    # DATABASE_DISABLED now requires the postgres backend explicitly disabled;
+    # the default (sqlite) backend keeps documents enabled locally.
+    monkeypatch.setenv("STORAGE_BACKEND", "postgres")
     monkeypatch.setenv("DATABASE_ENABLED", "false")
     client = make_client()
 
@@ -51,6 +54,7 @@ def test_documents_route_reports_database_disabled(monkeypatch) -> None:
 
 
 def test_documents_list_reports_database_disabled(monkeypatch) -> None:
+    monkeypatch.setenv("STORAGE_BACKEND", "postgres")
     monkeypatch.setenv("DATABASE_ENABLED", "false")
     client = make_client()
 
@@ -58,6 +62,25 @@ def test_documents_list_reports_database_disabled(monkeypatch) -> None:
 
     assert response.status_code == 503
     assert response.json()["detail"]["code"] == "DATABASE_DISABLED"
+
+
+async def _empty_list_documents(*_, **__):
+    return []
+
+
+def test_documents_enabled_on_sqlite_backend(monkeypatch) -> None:
+    # The feature's core promise: with no cloud Postgres, the default sqlite
+    # backend keeps the knowledge base usable (no DATABASE_DISABLED).
+    monkeypatch.setenv("STORAGE_BACKEND", "sqlite")
+    monkeypatch.setenv("DATABASE_ENABLED", "false")
+    monkeypatch.setattr("app.api.routes.documents.fetch_optional_pool", fake_fetch_optional_pool)
+    monkeypatch.setattr("app.api.routes.documents.list_documents", _empty_list_documents)
+    client = make_client()
+
+    response = client.get("/api/documents")
+
+    assert response.status_code == 200
+    assert response.json() == {"documents": []}
 
 
 def test_documents_list_returns_documents(monkeypatch) -> None:

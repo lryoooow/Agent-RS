@@ -1,0 +1,19 @@
+{
+  "case_count": 1000,
+  "created_at": "2026-06-16T03:23:20.077996+00:00",
+  "dataset_hash": "aeeab8e8643463f2cfab445e87328e188253d83f082a3650e0746c66ddd0102d",
+  "dataset_id": "heldout-v4",
+  "diagnostic_unsupported": 67,
+  "expected_call": 643,
+  "expected_none": 357,
+  "kinds": {
+    "boundary": 200,
+    "compound": 100,
+    "hard_negative": 300,
+    "noise": 50,
+    "positive": 350
+  },
+  "label_policy": "rule-derived(derive_label)+manual-stratified-spot-check-12.5%",
+  "prompt_near": 0,
+  "seed": 20260617
+}

@@ -1,6 +1,9 @@
 import pytest
 
-from app.db.repositories.vector_search import search_hybrid_rrf
+# Pin to the PostgreSQL implementation: this FakeConn mimics PG SQL (ts_rank_cd/
+# content_tsv), so it must test _pg regardless of STORAGE_BACKEND. The _sqlite
+# hybrid path is covered against a real SQLite DB in test_sqlite_backend.py.
+from app.db.repositories._pg.vector_search import search_hybrid_rrf
 
 
 class FakeConn:

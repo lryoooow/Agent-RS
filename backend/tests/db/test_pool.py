@@ -27,8 +27,17 @@ def settings(**overrides):
         "database_url": "postgresql://user:pass@127.0.0.1:15432/app",
         "database_pool_min_size": 1,
         "database_pool_max_size": 5,
+        # These tests exercise the PostgreSQL pool path explicitly.
+        "storage_backend": "postgres",
+        "sqlite_path": "backend/storage/agent_rs.db",
     }
     values.update(overrides)
+    # Mirror Settings.resolved_storage_backend so init_db_pool branches correctly.
+    explicit = str(values["storage_backend"]).strip().lower()
+    if explicit in ("sqlite", "postgres"):
+        values["resolved_storage_backend"] = explicit
+    else:
+        values["resolved_storage_backend"] = "postgres" if values["database_enabled"] else "sqlite"
     return SimpleNamespace(**values)
 
 

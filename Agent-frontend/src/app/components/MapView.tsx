@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
-import { Layers, Crosshair, Eye, EyeOff, Plus, Minus } from "lucide-react";
+import { Layers, Crosshair, Eye, EyeOff, Plus, Minus, Search, Loader2 } from "lucide-react";
 import type { RSLayer } from "../lib/layers";
 
 // 默认视图（无影像时的世界中心，随首个带 bounds 的结果 fitBounds 覆盖）。
@@ -48,6 +48,46 @@ export function MapView({ layers }: { layers: RSLayer[] }) {
   const [coords, setCoords] = useState<[number, number]>(DEFAULT_CENTER);
   const [zoom, setZoom] = useState(DEFAULT_ZOOM);
   const [labels, setLabels] = useState(false);
+  const searchMarkerRef = useRef<maplibregl.Marker | null>(null);
+  const [searchText, setSearchText] = useState("");
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+
+  // 地名搜索：Nominatim 公开地理编码（无需 key），取首个结果 flyTo 并落一个临时标记。
+  const runSearch = async () => {
+    const q = searchText.trim();
+    const map = mapRef.current;
+    if (!q || searching || !map) return;
+    setSearching(true);
+    setSearchError(null);
+    try {
+      const url =
+        "https://nominatim.openstreetmap.org/search?format=json&limit=1&q=" +
+        encodeURIComponent(q);
+      const resp = await fetch(url, { headers: { "Accept-Language": "zh-CN,zh" } });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data: Array<{ lon: string; lat: string }> = await resp.json();
+      if (!data.length) {
+        setSearchError("未找到该位置");
+        return;
+      }
+      const lng = Number(data[0].lon);
+      const lat = Number(data[0].lat);
+      if (!Number.isFinite(lng) || !Number.isFinite(lat)) {
+        setSearchError("位置坐标无效");
+        return;
+      }
+      searchMarkerRef.current?.remove();
+      searchMarkerRef.current = new maplibregl.Marker({ color: "#2dd4bf" })
+        .setLngLat([lng, lat])
+        .addTo(map);
+      map.flyTo({ center: [lng, lat], zoom: 12, duration: 900 });
+    } catch {
+      setSearchError("搜索失败，请重试");
+    } finally {
+      setSearching(false);
+    }
+  };
 
   // 带地理坐标的图层走 image source 叠加；无坐标的走缩略图兜底。
   const geoLayers = layers.filter(
@@ -171,6 +211,37 @@ export function MapView({ layers }: { layers: RSLayer[] }) {
   return (
     <div className="absolute inset-0 overflow-hidden bg-background">
       <div ref={ref} className="size-full" />
+
+      {/* 地名搜索框（右上角，避开左侧聊天面板与顶部读数条） */}
+      <div className="absolute right-4 top-[116px] z-10 w-[240px]">
+        <div className="flex items-center gap-1.5 rounded-full border border-border bg-card/80 px-3 py-1.5 backdrop-blur-md focus-within:border-primary/50">
+          {searching ? (
+            <Loader2 className="size-3.5 shrink-0 animate-spin text-primary" />
+          ) : (
+            <Search className="size-3.5 shrink-0 text-muted-foreground" />
+          )}
+          <input
+            value={searchText}
+            onChange={(e) => {
+              setSearchText(e.target.value);
+              if (searchError) setSearchError(null);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                void runSearch();
+              }
+            }}
+            placeholder="搜索地点，回车定位"
+            className="w-full bg-transparent text-[12px] text-foreground placeholder:text-muted-foreground focus:outline-none"
+          />
+        </div>
+        {searchError && (
+          <div className="mt-1 rounded-md bg-card/80 px-2.5 py-1 text-[11px] text-destructive backdrop-blur-md">
+            {searchError}
+          </div>
+        )}
+      </div>
 
       {/* 无地理坐标结果：缩略图兜底（所有无坐标图层按原图比例叠放，影像在底/结果在上，object-contain 完整不裁剪） */}
       {thumbnailLayers.length > 0 && (

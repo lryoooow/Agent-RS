@@ -15,9 +15,6 @@ import type {
   ProviderConfig,
 } from "../types";
 
-const CONVERSATION_STORAGE_KEY = "agent-rs.conversationId";
-const LEGACY_CONVERSATION_STORAGE_KEY = "chatbot.conversationId";
-
 type ChatControllerSettings = {
   endpoint: string;
   systemPrompt: string;
@@ -39,10 +36,12 @@ export function useChatController({
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [activeStream, setActiveStream] = useState(false);
-  const [conversationId, setConversationIdState] = useState<string | null>(() =>
-    window.localStorage.getItem(CONVERSATION_STORAGE_KEY) ??
-    window.localStorage.getItem(LEGACY_CONVERSATION_STORAGE_KEY),
-  );
+  // 会话 id 不再从 localStorage 恢复：欢迎页/刷新一律视为新对话（初始 null）。
+  // 「接着上次聊」只通过历史列表显式 loadConversation 进入，避免旧 id 隐式泄漏到新对话。
+  const [conversationId, setConversationIdState] = useState<string | null>(null);
+  // 用 ref 持有「发请求那一刻的真值」：resetConversation 后即便 setState 尚未重渲染、
+  // sendMessage 拿到的是旧闭包，也能从 ref 读到已清空的 id，杜绝旧会话历史串联（stale closure 根因）。
+  const conversationIdRef = useRef<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -52,31 +51,29 @@ export function useChatController({
   }, []);
 
   function setConversationId(nextConversationId: string | null) {
+    conversationIdRef.current = nextConversationId;
     setConversationIdState(nextConversationId);
-    if (nextConversationId) {
-      window.localStorage.setItem(CONVERSATION_STORAGE_KEY, nextConversationId);
-      window.localStorage.removeItem(LEGACY_CONVERSATION_STORAGE_KEY);
-      return;
-    }
-    window.localStorage.removeItem(CONVERSATION_STORAGE_KEY);
-    window.localStorage.removeItem(LEGACY_CONVERSATION_STORAGE_KEY);
   }
 
   async function sendMessage(text: string) {
     const trimmed = text.trim();
     if (!trimmed || loading) return;
 
+    // 从 ref 读取「此刻」的会话 id，而非闭包里可能过期的 state：
+    // startSession 先 resetConversation()（异步清空 state）再 setTimeout 调本函数，
+    // 闭包捕获的 conversationId 仍是旧值，唯有 ref 已同步为 null。
+    const activeConversationId = conversationIdRef.current;
     const userTurn: ChatTurn = { id: uid(), role: "user", content: trimmed };
     const assistantId = uid();
     const shouldStream = streamEnabled;
-    const requestMessages = conversationId
+    const requestMessages = activeConversationId
       ? [...latestGeospatialContext(turns), { role: "user" as const, content: trimmed }]
       : toModelHistory(turns, trimmed);
     const body = buildChatRequestBody({
       messages: requestMessages,
       systemPrompt,
       stream: shouldStream,
-      conversationId,
+      conversationId: activeConversationId,
       useRag,
       model,
       providerConfig,

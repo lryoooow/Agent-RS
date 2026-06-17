@@ -28,8 +28,9 @@ async def test_build_provider_messages_uses_settings_boundaries(monkeypatch: pyt
     result = await build_provider_messages(request)
 
     assert result[0]["role"] == "system"
-    assert "模块版本：core_identity_v1" in result[0]["content"]
-    assert "模块版本：context_priority_v1" in result[0]["content"]
+    # prompt 优化连带：内部"模块版本：xxx"标识已删除（防泄漏），改断言身份正文在场。
+    assert "遥感影像分析智能体" in result[0]["content"]
+    assert "模块版本" not in result[0]["content"]
     assert "默认使用中文回复" in result[0]["content"]
     assert result[1]["role"] == "system"
     assert "## 会话额外要求" in result[1]["content"]
@@ -84,7 +85,7 @@ async def test_build_provider_messages_dynamically_adds_prompt_modules(
     result = await build_provider_messages(request)
 
     assert "文档处理规则" in result[0]["content"]
-    assert "输出格式规则" in result[0]["content"]
+    assert "回答格式" in result[0]["content"]  # output_format 标题已从"输出格式规则"改为"回答格式"
 
 
 @pytest.mark.asyncio
@@ -378,3 +379,74 @@ async def test_build_provider_request_context_skip_retrieval_does_not_call_retri
         "reason": "direct_chat_route",
     }
     assert result.messages[-1] == {"role": "user", "content": "你好"}
+
+
+@pytest.mark.asyncio
+async def test_conversation_id_governs_whether_db_history_is_pulled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """历史串联 bug 的行为契约（历史重复点回归守门）。
+
+    根因：前端 conversationId 曾从 localStorage 隐式恢复 + startSession 的 stale 闭包，
+    导致「新对话」误带上一轮的 conversation_id，后端据此把旧会话整段历史拉回当上下文，
+    造成跨对话记忆串联（如新对话却复述上一轮的上海天气）。前端已修（id 不再隐式恢复、
+    sendMessage 从 ref 读真值）。本用例锁死后端那一侧的可观测契约：
+      · 带 conversation_id  → 走 list_recent_messages 拉回旧历史（历史会话功能，正常）。
+      · 不带 conversation_id → 绝不触碰 DB 历史，只用本次 request.messages（新对话必须干净）。
+    这样一旦前端清空逻辑回归，旧历史是否串联可由「请求是否带 id」直接定位，方向不跑偏。
+    """
+    pulled: dict[str, bool] = {"called": False}
+
+    class FakeAcquire:
+        async def __aenter__(self):
+            return object()
+
+        async def __aexit__(self, *_):
+            return None
+
+    class FakePool:
+        def acquire(self):
+            return FakeAcquire()
+
+    async def fake_fetch_optional_pool():
+        return FakePool()
+
+    async def fake_list_recent_messages(_conn, *, conversation_id: str, limit: int):
+        pulled["called"] = True
+        return [
+            ChatMessage(role="user", content="上一轮：上海今天天气如何"),
+            ChatMessage(role="assistant", content="上海今天多云，气温 20 度"),
+            ChatMessage(role="user", content="新对话的第一句"),
+        ]
+
+    monkeypatch.setenv("DATABASE_ENABLED", "true")
+    monkeypatch.setenv("AI_CONTEXT_MAX_RECENT_MESSAGES", "2")
+    monkeypatch.setenv("AI_CONTEXT_MAX_TOTAL_CHARS", "10000")
+    get_settings.cache_clear()
+    monkeypatch.setattr("app.agent.request_builder.fetch_optional_pool", fake_fetch_optional_pool)
+    monkeypatch.setattr("app.agent.request_builder.list_recent_messages", fake_list_recent_messages)
+
+    # ① 带旧 conversation_id：旧历史（上海天气）被拉回，证明串联确由「请求带 id」触发。
+    with_id = await build_provider_messages(
+        ChatRequest(
+            conversation_id="00000000-0000-4000-8000-000000000999",
+            messages=[{"role": "user", "content": "新对话的第一句"}],
+            use_memory=False,
+            use_rag=False,
+        )
+    )
+    assert pulled["called"] is True
+    assert any("上海" in message["content"] for message in with_id)
+
+    # ② 不带 conversation_id（前端修复后的新对话）：DB 历史绝不被触碰，旧天气不出现。
+    pulled["called"] = False
+    without_id = await build_provider_messages(
+        ChatRequest(
+            messages=[{"role": "user", "content": "新对话的第一句"}],
+            use_memory=False,
+            use_rag=False,
+        )
+    )
+    assert pulled["called"] is False
+    assert all("上海" not in message["content"] for message in without_id)
+    assert without_id[-1] == {"role": "user", "content": "新对话的第一句"}

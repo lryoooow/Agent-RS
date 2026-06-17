@@ -36,6 +36,24 @@ TOOL_READY_LABELS: dict[str, str] = {
 }
 
 
+# 执行阶段（child_agent_running）展示的"正在做什么"标签：用具体能力名替代统一的"正在执行工具"。
+# 覆盖 domain_agents.TOOL_DOMAIN 登记的全部工具 + web_search；未登记走兜底。
+TOOL_RUNNING_LABELS: dict[str, str] = {
+    "web_search": "正在联网搜索",
+    "calculate_ndvi": "正在计算 NDVI",
+    "calculate_spectral_index": "正在计算光谱指数",
+    "render_band_composite": "正在渲染波段组合",
+    "raster_inspect": "正在进行影像质检",
+    "segment_landcover": "正在进行地物分类",
+    "detect_objects": "正在进行目标检测",
+    "cloud_shadow_mask": "正在生成云/阴影掩膜",
+    "extract_water_mask": "正在提取水体掩膜",
+    "clip_reproject_raster": "正在裁剪/重投影影像",
+    "parse_document": "正在解析文档",
+    "ocr_recognize": "正在识别影像文字",
+}
+
+
 def latest_user_text(messages: list[ChatMessage]) -> str:
     for message in reversed(messages):
         if message.role == "user":
@@ -53,3 +71,7 @@ def tool_request_label(tool_name: str) -> str:
 
 def tool_ready_label(tool_name: str) -> str:
     return TOOL_READY_LABELS.get(tool_name, "工具结果已整理")
+
+
+def tool_running_label(tool_name: str) -> str:
+    return TOOL_RUNNING_LABELS.get(tool_name, f"正在执行工具：{tool_name}")

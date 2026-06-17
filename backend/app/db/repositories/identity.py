@@ -1,45 +1,7 @@
-﻿from __future__ import annotations
+"""Facade: dispatches to the active storage backend (_pg or _sqlite)."""
+from app.core.settings import get_settings
 
-from app.core.settings import Settings
-
-
-async def ensure_default_identity(conn, settings: Settings) -> tuple[str, str]:
-    await conn.execute(
-        """
-        INSERT INTO agent_rs.users (
-          id, email, password_hash, name, email_verified, is_active
-        )
-        VALUES ($1::uuid, $2, $3, $4, true, true)
-        ON CONFLICT (email) DO UPDATE
-        SET name = EXCLUDED.name,
-            is_active = true
-        """,
-        settings.default_user_id,
-        settings.default_user_email,
-        "disabled",
-        settings.default_user_name,
-    )
-    await conn.execute(
-        """
-        INSERT INTO agent_rs.workspaces (
-          id, name, slug, owner_user_id, metadata_json
-        )
-        VALUES ($1::uuid, $2, $3, $4::uuid, '{}'::jsonb)
-        ON CONFLICT (slug) DO UPDATE
-        SET name = EXCLUDED.name
-        """,
-        settings.default_workspace_id,
-        settings.default_workspace_name,
-        settings.default_workspace_slug,
-        settings.default_user_id,
-    )
-    await conn.execute(
-        """
-        INSERT INTO agent_rs.memberships (id, workspace_id, user_id, role)
-        VALUES (gen_random_uuid(), $1::uuid, $2::uuid, 'owner')
-        ON CONFLICT (workspace_id, user_id) DO NOTHING
-        """,
-        settings.default_workspace_id,
-        settings.default_user_id,
-    )
-    return settings.default_user_id, settings.default_workspace_id
+if get_settings().resolved_storage_backend == "sqlite":
+    from app.db.repositories._sqlite.identity import *  # noqa: F401,F403
+else:
+    from app.db.repositories._pg.identity import *  # noqa: F401,F403

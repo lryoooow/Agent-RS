@@ -9,7 +9,7 @@ from typing import Any
 
 from app.core.settings import Settings
 
-SUPPORTED_EXTENSIONS = {".txt", ".md", ".markdown", ".pdf", ".docx"}
+SUPPORTED_EXTENSIONS = {".txt", ".md", ".markdown", ".pdf", ".docx", ".pptx", ".xlsx"}
 TEXT_EXTENSIONS = {".txt", ".md", ".markdown"}
 OCR_INSTALL_HINT = (
     "OCR dependencies are unavailable. Install macOS dependencies with "
@@ -49,7 +49,7 @@ def parse_uploaded_document(
     if extension not in SUPPORTED_EXTENSIONS:
         raise DocumentParseError(
             "UNSUPPORTED_DOCUMENT_TYPE",
-            "Only txt, md, markdown, pdf, and docx files are supported.",
+            "Only txt, md, markdown, pdf, docx, pptx, and xlsx files are supported.",
         )
 
     base_metadata = {
@@ -66,6 +66,12 @@ def parse_uploaded_document(
         metadata = {**base_metadata, "parser": parser, "ocr_used": False}
     elif extension == ".pdf":
         content, doc_type, metadata = _parse_pdf(data, base_metadata, settings)
+    elif extension == ".pptx":
+        content, metadata = _parse_pptx(data, base_metadata)
+        doc_type = "pptx"
+    elif extension == ".xlsx":
+        content, metadata = _parse_xlsx(data, base_metadata)
+        doc_type = "xlsx"
     else:
         content, metadata = _parse_docx(data, base_metadata)
         doc_type = "docx"
@@ -244,6 +250,81 @@ def _parse_docx(data: bytes, base_metadata: dict[str, Any]) -> tuple[str, dict[s
                 parts.append(table_text)
 
     return "\n\n".join(parts), {**base_metadata, "parser": "python-docx", "ocr_used": False}
+
+
+def _parse_pptx(data: bytes, base_metadata: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    from pptx import Presentation
+
+    try:
+        presentation = Presentation(BytesIO(data))
+    except Exception as exc:
+        raise DocumentParseError("PPTX_PARSE_FAILED", "Could not parse the pptx file.") from exc
+
+    slide_texts: list[str] = []
+    slide_count = 0
+    for slide in presentation.slides:
+        slide_count += 1
+        parts: list[str] = []
+        for shape in slide.shapes:
+            if shape.has_text_frame:
+                text = "\n".join(
+                    para.text.strip()
+                    for para in shape.text_frame.paragraphs
+                    if para.text.strip()
+                )
+                if text:
+                    parts.append(text)
+            if shape.has_table:
+                rows = [
+                    "\t".join(cell.text.strip() for cell in row.cells if cell.text.strip())
+                    for row in shape.table.rows
+                ]
+                table_text = "\n".join(row for row in rows if row)
+                if table_text:
+                    parts.append(table_text)
+        if parts:
+            slide_texts.append("\n".join(parts))
+
+    content = "\n\n".join(slide_texts)
+    return content, {
+        **base_metadata,
+        "parser": "python-pptx",
+        "ocr_used": False,
+        "slide_count": slide_count,
+    }
+
+
+def _parse_xlsx(data: bytes, base_metadata: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    from openpyxl import load_workbook
+
+    try:
+        # read_only 流式读取省内存；data_only 取缓存值而非公式串。
+        workbook = load_workbook(BytesIO(data), read_only=True, data_only=True)
+    except Exception as exc:
+        raise DocumentParseError("XLSX_PARSE_FAILED", "Could not parse the xlsx file.") from exc
+
+    try:
+        sheet_blocks: list[str] = []
+        sheet_count = 0
+        for worksheet in workbook.worksheets:
+            sheet_count += 1
+            row_texts: list[str] = []
+            for row in worksheet.iter_rows(values_only=True):
+                cells = [str(value).strip() for value in row if value is not None and str(value).strip()]
+                if cells:
+                    row_texts.append("\t".join(cells))
+            if row_texts:
+                sheet_blocks.append(f"# {worksheet.title}\n" + "\n".join(row_texts))
+    finally:
+        workbook.close()
+
+    content = "\n\n".join(sheet_blocks)
+    return content, {
+        **base_metadata,
+        "parser": "openpyxl",
+        "ocr_used": False,
+        "sheet_count": sheet_count,
+    }
 
 
 def _normalize_content(content: str) -> str:

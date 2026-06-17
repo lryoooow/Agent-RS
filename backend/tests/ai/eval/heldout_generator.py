@@ -44,6 +44,19 @@ HELDOUT_DATASET = "heldout-v1"
 HELDOUT_V2_SEED = 20260620
 HELDOUT_V2_DATASET = "heldout-v2"
 
+# heldout-v3：全新 seed，验证 2026-06-16 文档通道防线（prompt 加"无 document_context 证据不编造
+# document_id"禁令）后泛化未回归。v2 已 sealed（prompt_hash 4215710f，文档防线之前），换 prompt
+# 必须开全新冻结盲测（manifest 状态机铁律：sealed run 禁止换 prompt 重采）。v3 含 54 条带证据的
+# parse_document 正例（验放行不被压 none）+ 25 条无证据文档题（验防线挡得住），双向实测文档防线。
+HELDOUT_V3_SEED = 20260616
+HELDOUT_V3_DATASET = "heldout-v3"
+
+# heldout-v4：v3（prompt_hash 699e0633）暴露文档防线"改过头"回归——15 条带证据的 parse_document
+# 正例被压成 none（main 99.68%→98.39%）。修 prompt 禁令措辞（判别只看"有无文档证据"，有证据即放行）
+# + 补 not_ocr 边界正例后，开 v4 全新 seed 复测修复效果（prompt_hash cfc0ee41）。v3 留作"修复前"证据。
+HELDOUT_V4_SEED = 20260617
+HELDOUT_V4_DATASET = "heldout-v4"
+
 # 配比 35/30/20/10/5。
 _RATIO = {
     "positive": 0.35,

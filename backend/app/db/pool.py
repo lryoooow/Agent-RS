@@ -14,6 +14,21 @@ _pool_initialized = False
 async def init_db_pool() -> None:
     global _pool, _pool_initialized
     settings = get_settings()
+
+    # SQLite 本地后端：建库建表，返回适配器池（接口与 asyncpg 池一致）。
+    if settings.resolved_storage_backend == "sqlite":
+        if _pool is not None or _pool_initialized:
+            return
+        try:
+            from app.db.sqlite_pool import create_sqlite_pool
+
+            _pool = await create_sqlite_pool(settings.sqlite_path)
+        except Exception:
+            logger.exception("Failed to initialize SQLite pool; storage disabled until restart.")
+            _pool = None
+        _pool_initialized = True
+        return
+
     if not settings.database_enabled:
         _pool = None
         _pool_initialized = True

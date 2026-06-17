@@ -197,7 +197,7 @@ async def upload_document(
             status_code=400,
             detail={
                 "code": "UNSUPPORTED_DOCUMENT_TYPE",
-                "message": "Only txt, md, markdown, pdf, and docx files are supported.",
+                "message": "Only txt, md, markdown, pdf, docx, pptx, and xlsx files are supported.",
             },
         )
     parsed_metadata = _parse_form_metadata(metadata)
@@ -622,7 +622,7 @@ async def remove_document(document_id: str) -> DocumentDeleteResponse:
 
 async def _require_document_db():
     settings = get_settings()
-    if not settings.database_enabled:
+    if not settings.storage_active:
         raise HTTPException(
             status_code=503,
             detail={"code": "DATABASE_DISABLED", "message": "Database is not enabled."},

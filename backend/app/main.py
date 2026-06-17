@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+import logging
 
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
@@ -10,7 +11,8 @@ from app.agent.embedding.service import get_embedding_service
 from app.agent.errors import AIError
 from app.auth import reset_current_user_id, set_current_user_id
 from app.auth.session import AuthSessionUnavailable, get_session_user
-from app.db.pool import close_db_pool, init_db_pool
+from app.db.pool import close_db_pool, fetch_optional_pool, init_db_pool
+from app.db.repositories.identity import ensure_default_identity
 from app.documents.task_registry import recover_document_jobs, shutdown_tasks
 from app.core.logging import configure_logging
 from app.core.settings import get_settings
@@ -19,16 +21,38 @@ from app.core.settings import get_settings
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     await init_db_pool()
+    await _seed_default_identity()
     await recover_document_jobs()
     settings = get_settings()
     embedding_service = get_embedding_service()
-    if settings.database_enabled and embedding_service.available:
+    if settings.storage_active and embedding_service.available:
         await embedding_service.ping()
     try:
         yield
     finally:
         await shutdown_tasks()
         await close_db_pool()
+
+
+async def _seed_default_identity() -> None:
+    """SQLite 后端启动时预置默认用户/工作区。
+
+    conversations.created_by_user_id 对 users 有外键，且 SQLite PRAGMA
+    foreign_keys=ON 会强校验；预置后，DB 关闭鉴权下的默认用户首条会话才能落库。
+    Postgres 路径维持原有惰性 seed（register/首条 chat 内），不在此重复。
+    """
+    settings = get_settings()
+    if settings.resolved_storage_backend != "sqlite":
+        return
+    pool = await fetch_optional_pool()
+    if pool is None:
+        return
+    try:
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                await ensure_default_identity(conn, settings)
+    except Exception:
+        logging.getLogger(__name__).exception("Failed to seed default identity for SQLite backend.")
 
 
 def create_app() -> FastAPI:

@@ -32,7 +32,7 @@ from tests.redteam import redteam_attacks as attacks
 
 
 REDTEAM_TARGET = 200  # 每 seed：穿透是稀有事件，200 条足够看分布且控成本
-REDTEAM_SEEDS: tuple[int, ...] = (50010, 50020, 50030)
+REDTEAM_SEEDS: tuple[int, ...] = (50010, 50020, 50030, 50040, 50050)  # 50050 = 文档防线放宽措辞后复跑，验穿透未复活
 REDTEAM_DATASET = "redteam-adversarial"
 
 # 5 类攻击占比（每类对准一个 security_flags 穿透面）。

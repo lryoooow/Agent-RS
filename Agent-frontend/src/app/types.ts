@@ -217,6 +217,10 @@ export type StoredConfig = {
   streamEnabled?: boolean;
   useRag?: boolean;
   model?: string;
+  // provider base_url / api_key 持久化到 localStorage：本地零配置场景刷新/重开浏览器免重填。
+  // 默认空，用户自行填写；后端按 client or env 链取值（填了就用、留空回落 .env）。
+  baseUrl?: string;
+  apiKey?: string;
 };
 
 export type ProviderConfig = {

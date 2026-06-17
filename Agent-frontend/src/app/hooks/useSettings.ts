@@ -17,14 +17,26 @@ export function useSettings() {
   const [streamEnabled, setStreamEnabled] = useState(stored.streamEnabled ?? true);
   const [useRag, setUseRag] = useState(stored.useRag ?? false);
   const [model, setModel] = useState(stored.model ?? "");
-  // provider_config 仅当后端 allow_client_provider_config=true 时透传，不持久化 api_key 到 localStorage。
-  const [providerConfig, setProviderConfig] = useState<ProviderConfig | null>(null);
+  // provider_config（base_url/api_key）按本地零配置需求持久化到 localStorage，刷新后自动回填。
+  // 默认空，由用户在配置页自行填写；后端 resolve_ai_config 按 client or env 链取值（填了就用、空则回落 .env）。
+  const [providerConfig, setProviderConfig] = useState<ProviderConfig | null>(() =>
+    stored.baseUrl || stored.apiKey
+      ? { base_url: stored.baseUrl ?? "", api_key: stored.apiKey ?? "" }
+      : null,
+  );
   const [serverConfig, setServerConfig] = useState<ConfigResponse | null>(null);
   const [configError, setConfigError] = useState("");
 
   useEffect(() => {
-    saveConfig({ systemPrompt, streamEnabled, useRag, model });
-  }, [systemPrompt, streamEnabled, useRag, model]);
+    saveConfig({
+      systemPrompt,
+      streamEnabled,
+      useRag,
+      model,
+      baseUrl: providerConfig?.base_url,
+      apiKey: providerConfig?.api_key,
+    });
+  }, [systemPrompt, streamEnabled, useRag, model, providerConfig]);
 
   useEffect(() => {
     let cancelled = false;

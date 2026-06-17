@@ -35,3 +35,23 @@ def test_non_weather_search_context_does_not_add_weather_boundary() -> None:
 
     assert count == 0
     assert "天气类回答边界" not in context
+
+
+def test_search_context_carries_citation_rules() -> None:
+    # 问题2根因修复：原"联网搜索结果使用规则"（[S1][S2] 引用、整合提炼、冲突以搜索为准）
+    # 已从 tool_policy 移到这里——只在真正联网搜索时注入，避免污染地物分割等非搜索任务。
+    context, _ = format_search_context(
+        query="最新遥感大模型进展",
+        reason="latest research",
+        search_result={
+            "results": [
+                {"title": "RS Foundation Models", "url": "https://example.com/rs", "content": "综述。"}
+            ]
+        },
+        max_chars=4000,
+    )
+
+    assert "[S1] [S2]" in context
+    assert "以搜索结果为准" in context
+    assert "整合提炼" in context
+
