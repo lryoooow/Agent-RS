@@ -41,3 +41,5 @@ backend/backend/storage/
 /storage/
 ~$*.docx
 *.docx
+CLAUDE.md
+AGENTS.md
