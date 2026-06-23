@@ -3,6 +3,10 @@ from app.agent.context.history import build_recent_dialogue_messages
 from app.agent.context.types import ContextAssembly, ContextBlock
 from app.schemas.chat import ChatMessage
 
+# 为"最近一条消息"（通常是用户当前提问）预留的保底 token 数。可选块（RAG/摘要/
+# 工具/记忆）一律在此预留之外分配预算，避免它们把真正的用户问题挤成 1 字符。
+MIN_LATEST_USER_TOKENS = 256
+
 
 def assemble_context(
     *,
@@ -15,6 +19,7 @@ def assemble_context(
     memory: str | None = None,
     rag_context: str | None = None,
     tool_context: str | None = None,
+    prior_analysis_results: str | None = None,
     imagery_inventory: str | None = None,
     max_total_chars: int | None = None,
     max_recent_chars: int | None = None,
@@ -24,6 +29,7 @@ def assemble_context(
     max_memory_chars: int | None = None,
     max_rag_chars: int | None = None,
     max_tool_chars: int | None = None,
+    max_prior_results_chars: int | None = None,
     max_imagery_chars: int | None = None,
 ) -> ContextAssembly:
     payload = [{"role": "system", "content": system_prompt.strip()}]
@@ -32,6 +38,10 @@ def assemble_context(
     used_tokens = estimate_tokens(system_prompt.strip())
     remaining_tokens = _remaining(max_total_chars, used_tokens)
 
+    # 先为最近一条消息（当前用户提问）预留保底预算，可选块只能动用预留之外的额度。
+    reserved = _reserved_latest_tokens(messages)
+    optional_budget = _optional_budget(remaining_tokens, reserved)
+
     for block in sorted(
         _optional_blocks(
             user_extra_instructions=user_extra_instructions,
@@ -39,12 +49,14 @@ def assemble_context(
             memory=memory,
             rag_context=rag_context,
             tool_context=tool_context,
+            prior_analysis_results=prior_analysis_results,
             imagery_inventory=imagery_inventory,
             max_user_extra_chars=max_user_extra_chars,
             max_summary_chars=max_summary_chars,
             max_memory_chars=max_memory_chars,
             max_rag_chars=max_rag_chars,
             max_tool_chars=max_tool_chars,
+            max_prior_results_chars=max_prior_results_chars,
             max_imagery_chars=max_imagery_chars,
         ),
         key=lambda item: item.priority,
@@ -54,7 +66,7 @@ def assemble_context(
         if not content:
             continue
 
-        content = trim_to_budget(content, remaining_tokens)
+        content = trim_to_budget(content, optional_budget)
         if not content:
             dropped_blocks.append(block.name)
             continue
@@ -63,8 +75,9 @@ def assemble_context(
         included_blocks.append(block.name)
         used_tokens += estimate_tokens(content)
         remaining_tokens = _remaining(max_total_chars, used_tokens)
+        optional_budget = _optional_budget(remaining_tokens, reserved)
 
-    recent_budget = _recent_budget(max_recent_chars, remaining_tokens)
+    recent_budget = _recent_budget(max_recent_chars, remaining_tokens, reserved)
     recent_messages, recent_truncated = build_recent_dialogue_messages(
         messages,
         max_messages=max_recent_messages,
@@ -91,12 +104,34 @@ def _remaining(max_total_chars: int | None, used_chars: int) -> int | None:
     return max(max_total_chars - used_chars, 0)
 
 
-def _recent_budget(max_recent_chars: int | None, remaining_chars: int | None) -> int | None:
+def _reserved_latest_tokens(messages: list[ChatMessage]) -> int:
+    """最近一条消息（当前提问）的保底预算：不超过它本身长度，上限 MIN_LATEST_USER_TOKENS。"""
+    if not messages:
+        return 0
+    latest_tokens = estimate_tokens(messages[-1].content)
+    return min(MIN_LATEST_USER_TOKENS, latest_tokens)
+
+
+def _optional_budget(remaining_tokens: int | None, reserved: int) -> int | None:
+    """可选块可用预算 = 总剩余预算扣掉给最近消息预留的部分（不为负）。无总预算时不限。"""
+    if remaining_tokens is None:
+        return None
+    return max(remaining_tokens - reserved, 0)
+
+
+def _recent_budget(
+    max_recent_chars: int | None,
+    remaining_chars: int | None,
+    reserved: int = 0,
+) -> int | None:
     if remaining_chars is None:
         return max_recent_chars
+    # 即便可选块占满了总预算，最近消息也至少拿到 reserved 的保底额度，
+    # 不再被截成 1 字符（reserved 来自该消息真实长度，不会过量膨胀上下文）。
+    floor = max(remaining_chars, reserved)
     if max_recent_chars is None or max_recent_chars <= 0:
-        return remaining_chars
-    return min(max_recent_chars, remaining_chars)
+        return floor
+    return max(min(max_recent_chars, remaining_chars), reserved)
 
 
 def _optional_blocks(
@@ -106,12 +141,14 @@ def _optional_blocks(
     memory: str | None,
     rag_context: str | None,
     tool_context: str | None,
+    prior_analysis_results: str | None,
     imagery_inventory: str | None,
     max_user_extra_chars: int | None,
     max_summary_chars: int | None,
     max_memory_chars: int | None,
     max_rag_chars: int | None,
     max_tool_chars: int | None,
+    max_prior_results_chars: int | None,
     max_imagery_chars: int | None,
 ) -> list[ContextBlock]:
     return [
@@ -186,6 +223,18 @@ def _optional_blocks(
             priority=75,
             budget_chars=max_tool_chars,
             source="tools",
+        ),
+        ContextBlock(
+            name="prior_analysis_results",
+            role="system",
+            content=_format_block(
+                "本对话已产出的分析结果",
+                "以下为本对话此前真实执行的工具结果（地物分类/检测/指数等），可直接引用其中数值，不得声称未执行过这些分析。",
+                prior_analysis_results,
+            ),
+            priority=74,
+            budget_chars=max_prior_results_chars,
+            source="prior_results",
         ),
     ]
 

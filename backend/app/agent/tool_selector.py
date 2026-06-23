@@ -70,7 +70,7 @@ class TaskSelector:
                 add_event=add_event,
             )
 
-        validated = PlanValidator().validate(decision, route=route, user_id=user_id)
+        validated = await PlanValidator().validate(decision, route=route, user_id=user_id)
         if validated.validation_error:
             stage = (
                 "capability_guard_rejected"

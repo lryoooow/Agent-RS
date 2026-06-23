@@ -48,10 +48,10 @@ async def run_clip_reproject(args: ClipReprojectArguments) -> ToolRunResult:
         )
     except (FileNotFoundError, asyncio.TimeoutError, MCPCallError) as exc:
         logger.warning("Clip/reproject failed: %s", exc)
-        return _error_result(f"裁剪/重投影失败: {exc}", "mcp_error")
+        return _error_result("裁剪/重投影失败，请稍后重试或检查影像与服务状态。", "mcp_error")
     except Exception as exc:
         logger.exception("Clip/reproject unexpected error: %s", exc)
-        return _error_result(f"裁剪/重投影失败: {exc}", "unexpected_error")
+        return _error_result("裁剪/重投影失败，请稍后重试或检查影像与服务状态。", "unexpected_error")
 
     result_filename = str(stats.get("output_png") or "clip_reproject_colored.png")
     bounds = stats.get("bounds_wgs84")

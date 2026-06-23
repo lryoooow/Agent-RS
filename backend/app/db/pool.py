@@ -15,20 +15,6 @@ async def init_db_pool() -> None:
     global _pool, _pool_initialized
     settings = get_settings()
 
-    # SQLite 本地后端：建库建表，返回适配器池（接口与 asyncpg 池一致）。
-    if settings.resolved_storage_backend == "sqlite":
-        if _pool is not None or _pool_initialized:
-            return
-        try:
-            from app.db.sqlite_pool import create_sqlite_pool
-
-            _pool = await create_sqlite_pool(settings.sqlite_path)
-        except Exception:
-            logger.exception("Failed to initialize SQLite pool; storage disabled until restart.")
-            _pool = None
-        _pool_initialized = True
-        return
-
     if not settings.database_enabled:
         _pool = None
         _pool_initialized = True
@@ -62,6 +48,26 @@ async def init_db_pool() -> None:
         logger.exception("Failed to initialize database pool; database disabled until restart.")
         _pool = None
         _pool_initialized = True
+        return
+
+    # 启动时幂等建/补 schema：docker compose up + 启动后端即自带最新表结构，免手动 sql.apply。
+    # 已按 schema_migrations 记录跳过已应用版本，重复启动零副作用；失败只告警，不阻断启动
+    # （库刚拉起尚未就绪等场景，由后续请求经 fetch_optional_pool 容错）。
+    await _ensure_schema()
+
+
+async def _ensure_schema() -> None:
+    if _pool is None:
+        return
+    try:
+        from sql.apply import run_migrations
+
+        async with _pool.acquire() as conn:
+            applied = await run_migrations(conn, log=None)
+        if applied:
+            logger.info("Applied %d database migration(s): %s", len(applied), ", ".join(applied))
+    except Exception:
+        logger.exception("Schema migration on startup failed; run `python -m sql.apply` manually.")
 
 
 async def close_db_pool() -> None:

@@ -11,6 +11,12 @@ TOOL_FINAL_PROMPTS: dict[str, str] = {
     "render_band_composite": "正在基于波段组合结果生成回答",
     "detect_objects": "正在基于目标检测结果生成回答",
     "segment_landcover": "正在基于地物分割结果生成回答",
+    "cloud_shadow_mask": "正在基于云/阴影掩膜结果生成回答",
+    "extract_water_mask": "正在基于水体掩膜结果生成回答",
+    "clip_reproject_raster": "正在基于裁剪/重投影结果生成回答",
+    "parse_document": "正在基于文档解析结果生成回答",
+    "ocr_recognize": "正在基于影像文字识别结果生成回答",
+    "generate_report": "正在基于分析报告生成回答",
 }
 
 
@@ -22,6 +28,12 @@ TOOL_REQUEST_LABELS: dict[str, str] = {
     "render_band_composite": "请求调用波段组合渲染",
     "detect_objects": "请求调用目标检测",
     "segment_landcover": "请求调用地物分割",
+    "cloud_shadow_mask": "请求调用云/阴影掩膜",
+    "extract_water_mask": "请求调用水体掩膜提取",
+    "clip_reproject_raster": "请求调用裁剪/重投影",
+    "parse_document": "请求调用文档解析",
+    "ocr_recognize": "请求调用影像文字识别",
+    "generate_report": "请求生成分析报告",
 }
 
 
@@ -33,6 +45,12 @@ TOOL_READY_LABELS: dict[str, str] = {
     "render_band_composite": "波段组合结果已整理",
     "detect_objects": "目标检测结果已整理",
     "segment_landcover": "地物分割结果已整理",
+    "cloud_shadow_mask": "云/阴影掩膜结果已整理",
+    "extract_water_mask": "水体掩膜结果已整理",
+    "clip_reproject_raster": "裁剪/重投影结果已整理",
+    "parse_document": "文档解析结果已整理",
+    "ocr_recognize": "影像文字识别结果已整理",
+    "generate_report": "分析报告已生成",
 }
 
 
@@ -51,6 +69,7 @@ TOOL_RUNNING_LABELS: dict[str, str] = {
     "clip_reproject_raster": "正在裁剪/重投影影像",
     "parse_document": "正在解析文档",
     "ocr_recognize": "正在识别影像文字",
+    "generate_report": "正在生成分析报告",
 }
 
 

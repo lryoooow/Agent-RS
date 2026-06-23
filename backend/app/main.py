@@ -1,5 +1,4 @@
 from contextlib import asynccontextmanager
-import logging
 
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
@@ -9,10 +8,10 @@ from fastapi.responses import JSONResponse
 from app.api.routes import router as api_router
 from app.agent.embedding.service import get_embedding_service
 from app.agent.errors import AIError
+from app.agent.tool_jobs import start_tool_job_worker, stop_tool_job_worker
 from app.auth import reset_current_user_id, set_current_user_id
 from app.auth.session import AuthSessionUnavailable, get_session_user
-from app.db.pool import close_db_pool, fetch_optional_pool, init_db_pool
-from app.db.repositories.identity import ensure_default_identity
+from app.db.pool import close_db_pool, init_db_pool
 from app.documents.task_registry import recover_document_jobs, shutdown_tasks
 from app.core.logging import configure_logging
 from app.core.settings import get_settings
@@ -21,8 +20,9 @@ from app.core.settings import get_settings
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     await init_db_pool()
-    await _seed_default_identity()
+    await _ensure_object_storage_ready()
     await recover_document_jobs()
+    start_tool_job_worker()
     settings = get_settings()
     embedding_service = get_embedding_service()
     if settings.storage_active and embedding_service.available:
@@ -30,29 +30,33 @@ async def lifespan(_: FastAPI):
     try:
         yield
     finally:
+        await stop_tool_job_worker()
         await shutdown_tasks()
         await close_db_pool()
 
 
-async def _seed_default_identity() -> None:
-    """SQLite 后端启动时预置默认用户/工作区。
+async def _ensure_object_storage_ready() -> None:
+    """minio 后端：启动时幂等建桶，免手动 mc。本地后端无需任何操作。
 
-    conversations.created_by_user_id 对 users 有外键，且 SQLite PRAGMA
-    foreign_keys=ON 会强校验；预置后，DB 关闭鉴权下的默认用户首条会话才能落库。
-    Postgres 路径维持原有惰性 seed（register/首条 chat 内），不在此重复。
+    失败只告警不阻断启动（与 schema 迁移同策略）：MinIO 刚拉起尚未就绪等场景，
+    由后续上传/读取按需重试；本地后端则压根不会走到这里的建桶分支。
     """
     settings = get_settings()
-    if settings.resolved_storage_backend != "sqlite":
-        return
-    pool = await fetch_optional_pool()
-    if pool is None:
+    if settings.storage_backend.strip().lower() != "minio":
         return
     try:
-        async with pool.acquire() as conn:
-            async with conn.transaction():
-                await ensure_default_identity(conn, settings)
+        from app.storage.object_store import get_object_store
+
+        store = get_object_store()
+        ensure_bucket = getattr(store, "ensure_bucket", None)
+        if ensure_bucket is not None:
+            await ensure_bucket()
     except Exception:
-        logging.getLogger(__name__).exception("Failed to seed default identity for SQLite backend.")
+        import logging
+
+        logging.getLogger(__name__).exception(
+            "MinIO 桶初始化失败；确认 MinIO 已启动并检查 MINIO_* 配置。"
+        )
 
 
 def create_app() -> FastAPI:

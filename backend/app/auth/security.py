@@ -7,7 +7,10 @@ import hmac
 import os
 import secrets
 
-PASSWORD_ITERATIONS = 210_000
+# PBKDF2-HMAC-SHA256 工作因子。对齐 OWASP 2025 Password Storage 基线（600k）。
+# 旧库可能存在 210k 的哈希：verify 读哈希内嵌的迭代数，旧哈希照常验证通过；
+# 登录成功时若 needs_rehash 为真，调用方用本常量重哈希落库，实现透明升级（见 routes/auth.py）。
+PASSWORD_ITERATIONS = 600_000
 
 
 async def hash_password(password: str) -> str:
@@ -16,6 +19,24 @@ async def hash_password(password: str) -> str:
 
 async def verify_password(password: str, password_hash: str) -> bool:
     return await asyncio.to_thread(_verify_password_sync, password, password_hash)
+
+
+def needs_rehash(password_hash: str) -> bool:
+    """哈希是否低于当前工作因子，需要在下次登录成功时用新参数重哈希。
+
+    只认 pbkdf2_sha256 且迭代数 >= 目标为"无需升级"；格式异常/算法不符/迭代数偏低
+    一律判定需要重哈希（保守升级，不会误判把强哈希降级）。
+    """
+    try:
+        algorithm, iterations, _salt, _digest = password_hash.split("$", 3)
+    except ValueError:
+        return True
+    if algorithm != "pbkdf2_sha256":
+        return True
+    try:
+        return int(iterations) < PASSWORD_ITERATIONS
+    except (ValueError, TypeError):
+        return True
 
 
 def issue_session_token() -> str:

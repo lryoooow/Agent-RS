@@ -76,6 +76,7 @@ class IntentSpec:
     wants: str | None  # 目标 capability；None=闲聊/概念/通用任务
     imagery_state: str = "none"  # valid | non_owner | invalid | unreferenced | none
     document_state: str = "none"  # valid | none
+    prior_analysis_state: str = "none"  # has | none —— 本对话此前是否已产出分析结果（report 判定维度）
     allow_tool: bool = True  # 用户是否允许调用工具（否定诱导=False）
     user_denies_id: bool = False  # 用户显式声明未提供影像 ID；优先级高于清单唯一图
     provided_imagery_ref: str | None = None  # 用户 query 里写的残缺/损坏 ID（invalid 态用于多图前缀匹配）
@@ -117,6 +118,12 @@ def derive_label(
         if intent.document_state != "valid" or not document_id:
             return DerivedLabel("none", None, {}, "main")
         return DerivedLabel("call", "parse_document", {"document_id": document_id}, "main")
+    if intent.wants == "generate_report":
+        # 报告通道：不吃 imagery_id/document_id，只看本对话此前是否已产出分析结果。
+        # 有分析史 → call generate_report；无分析史（凭空要报告）→ none（与 planner no_analysis_to_report 同口径）。
+        if intent.prior_analysis_state != "has":
+            return DerivedLabel("none", None, {}, "main")
+        return DerivedLabel("call", "generate_report", {}, "main")
     if intent.wants in _IMAGERY_TOOLS:
         if intent.user_denies_id:
             return DerivedLabel("none", None, {}, "main")

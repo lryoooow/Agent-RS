@@ -3,10 +3,27 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from app.agent.llm_planner import PlannerDecision
 from app.agent.plan_validator import PlanValidator
 from app.agent.routing import ALL_IMAGERY_TOOLS, AgentRoute
 from app.core.settings import get_settings
+
+
+@pytest.fixture(autouse=True)
+def _force_disk_fallback(monkeypatch):
+    """锁死本组用例走"无 DB → 本地 metadata.json 兜底"路径。
+
+    plan_validator 的 owner guard 经 validate_tool_access → user_owns_imagery，后者改为
+    DB 优先 + 磁盘兜底。本组验证的是磁盘 owner 校验（用 tmp metadata.json）；把
+    fetch_optional_pool 打成 async None，确保无论测试机 .env 是否 DATABASE_ENABLED=true
+    都不连真库、稳定走兜底。DB 优先路径由 tests/agent/test_imagery_repo.py（PG 集成）覆盖。
+    """
+    async def _no_pool():
+        return None
+
+    monkeypatch.setattr("app.agent.imagery_access.fetch_optional_pool", _no_pool)
 
 
 def reset_settings() -> None:
@@ -36,7 +53,7 @@ VALID_IMAGERY_ARGS = {
 }
 
 
-def test_validator_accepts_web_search_agent(monkeypatch) -> None:
+async def test_validator_accepts_web_search_agent(monkeypatch) -> None:
     monkeypatch.setenv("TAVILY_API_KEY", "test")
     reset_settings()
     decision = PlannerDecision(
@@ -46,7 +63,7 @@ def test_validator_accepts_web_search_agent(monkeypatch) -> None:
         reason="needs_current_weather",
     )
 
-    plan = PlanValidator().validate(
+    plan = await PlanValidator().validate(
         decision,
         route=AgentRoute(mode="full_pipeline", reason="test", candidate_agents=("web_search",)),
         user_id=get_settings().default_user_id,
@@ -56,8 +73,8 @@ def test_validator_accepts_web_search_agent(monkeypatch) -> None:
     assert plan.agent_call.name == "web_search"
 
 
-def test_validator_rejects_unknown_capability() -> None:
-    plan = PlanValidator().validate(
+async def test_validator_rejects_unknown_capability() -> None:
+    plan = await PlanValidator().validate(
         PlannerDecision(action="call", capability="missing", arguments={}, reason="bad"),
         route=AgentRoute(mode="full_pipeline", reason="test", candidate_agents=("web_search",)),
         user_id=get_settings().default_user_id,
@@ -67,10 +84,10 @@ def test_validator_rejects_unknown_capability() -> None:
     assert plan.validation_error == "unknown_capability"
 
 
-def test_validator_rejects_route_disallowed_capability(monkeypatch) -> None:
+async def test_validator_rejects_route_disallowed_capability(monkeypatch) -> None:
     monkeypatch.setenv("TAVILY_API_KEY", "test")
     reset_settings()
-    plan = PlanValidator().validate(
+    plan = await PlanValidator().validate(
         PlannerDecision(
             action="call",
             capability="web_search",
@@ -85,10 +102,10 @@ def test_validator_rejects_route_disallowed_capability(monkeypatch) -> None:
     assert plan.validation_error == "capability_not_allowed_by_route"
 
 
-def test_validator_rejects_invalid_arguments(monkeypatch) -> None:
+async def test_validator_rejects_invalid_arguments(monkeypatch) -> None:
     monkeypatch.setenv("TAVILY_API_KEY", "test")
     reset_settings()
-    plan = PlanValidator().validate(
+    plan = await PlanValidator().validate(
         PlannerDecision(action="call", capability="web_search", arguments={"query": ""}, reason="bad"),
         route=AgentRoute(mode="full_pipeline", reason="test", candidate_agents=("web_search",)),
         user_id=get_settings().default_user_id,
@@ -98,12 +115,12 @@ def test_validator_rejects_invalid_arguments(monkeypatch) -> None:
     assert "validation errors" in (plan.validation_error or "")
 
 
-def test_validator_rejects_other_user_imagery(monkeypatch, tmp_path: Path) -> None:
+async def test_validator_rejects_other_user_imagery(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("IMAGERY_UPLOAD_DIR", str(tmp_path))
     reset_settings()
     _owned_imagery(tmp_path, "94e758f38ede", "other-user")
 
-    plan = PlanValidator().validate(
+    plan = await PlanValidator().validate(
         PlannerDecision(
             action="call",
             capability="calculate_ndvi",
@@ -118,14 +135,14 @@ def test_validator_rejects_other_user_imagery(monkeypatch, tmp_path: Path) -> No
     assert plan.validation_error == "imagery_not_found_or_forbidden"
 
 
-def test_validator_rejects_other_user_for_every_imagery_tool(monkeypatch, tmp_path: Path) -> None:
+async def test_validator_rejects_other_user_for_every_imagery_tool(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("IMAGERY_UPLOAD_DIR", str(tmp_path))
     reset_settings()
     _owned_imagery(tmp_path, "94e758f38ede", "other-user")
 
     assert set(VALID_IMAGERY_ARGS) == set(ALL_IMAGERY_TOOLS)
     for tool_name in ALL_IMAGERY_TOOLS:
-        plan = PlanValidator().validate(
+        plan = await PlanValidator().validate(
             PlannerDecision(
                 action="call",
                 capability=tool_name,
@@ -140,8 +157,8 @@ def test_validator_rejects_other_user_for_every_imagery_tool(monkeypatch, tmp_pa
         assert plan.validation_error == "imagery_not_found_or_forbidden", tool_name
 
 
-def test_validator_rejects_document_tool_without_owner_identity() -> None:
-    plan = PlanValidator().validate(
+async def test_validator_rejects_document_tool_without_owner_identity() -> None:
+    plan = await PlanValidator().validate(
         PlannerDecision(
             action="call",
             capability="parse_document",
@@ -156,8 +173,8 @@ def test_validator_rejects_document_tool_without_owner_identity() -> None:
     assert plan.validation_error == "owner_required"
 
 
-def test_validator_rejects_unknown_argument_fields() -> None:
-    plan = PlanValidator().validate(
+async def test_validator_rejects_unknown_argument_fields() -> None:
+    plan = await PlanValidator().validate(
         PlannerDecision(
             action="call",
             capability="calculate_ndvi",
@@ -172,13 +189,50 @@ def test_validator_rejects_unknown_argument_fields() -> None:
     assert "Extra inputs are not permitted" in (plan.validation_error or "")
 
 
-def test_validator_accepts_owned_imagery_tool(monkeypatch, tmp_path: Path) -> None:
+async def test_validator_accepts_generate_report_without_imagery_owner_guard() -> None:
+    # 报告工具自成通道：被 route 候选放行，且不被影像/文档归属 guard 拦截
+    # （归属由 build_conversation_report 内的对话校验保证）。无 imagery_id 也应通过。
+    plan = await PlanValidator().validate(
+        PlannerDecision(
+            action="call",
+            capability="generate_report",
+            arguments={"reason": "用户请求生成报告"},
+            reason="generate_report",
+        ),
+        route=AgentRoute(mode="full_pipeline", reason="test", candidate_tools=("generate_report",)),
+        user_id=get_settings().default_user_id,
+    )
+
+    assert plan.action == "call"
+    assert plan.tool_call is not None
+    assert plan.tool_call.name == "generate_report"
+    assert plan.validation_error is None
+
+
+async def test_validator_rejects_generate_report_outside_route() -> None:
+    # 边界：generate_report 不在 route 候选里时仍按 route 白名单拒绝（与其它工具一致）。
+    plan = await PlanValidator().validate(
+        PlannerDecision(
+            action="call",
+            capability="generate_report",
+            arguments={"reason": "x"},
+            reason="generate_report",
+        ),
+        route=AgentRoute(mode="full_pipeline", reason="test", candidate_tools=("calculate_ndvi",)),
+        user_id=get_settings().default_user_id,
+    )
+
+    assert plan.action == "none"
+    assert plan.validation_error == "capability_not_allowed_by_route"
+
+
+async def test_validator_accepts_owned_imagery_tool(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("IMAGERY_UPLOAD_DIR", str(tmp_path))
     reset_settings()
     user_id = get_settings().default_user_id
     _owned_imagery(tmp_path, "94e758f38ede", user_id)
 
-    plan = PlanValidator().validate(
+    plan = await PlanValidator().validate(
         PlannerDecision(
             action="call",
             capability="calculate_ndvi",

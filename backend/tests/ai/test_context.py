@@ -41,7 +41,9 @@ def test_context_assembly_does_not_inject_empty_auxiliary_blocks() -> None:
     assert [item["content"] for item in result.messages] == ["base system rules", "hello"]
 
 
-def test_context_assembly_trims_latest_message_when_total_budget_is_exhausted() -> None:
+def test_context_assembly_preserves_latest_message_when_total_budget_is_exhausted() -> None:
+    # 历史重复点回归：可选块/系统提示吃满总预算时，最近一条用户消息必须保留（保底预算），
+    # 不再被截成 1 字符；可选块（user_extra_instructions）应先于它被丢弃。
     result = assemble_context(
         system_prompt="system rules are intentionally longer than the total budget",
         messages=[
@@ -57,10 +59,28 @@ def test_context_assembly_trims_latest_message_when_total_budget_is_exhausted() 
 
     assert result.messages[0]["role"] == "system"
     assert result.messages[-1]["role"] == "user"
-    assert result.messages[-1]["content"].startswith("l")
-    assert result.messages[-1]["content"] != "latest message must stay"
+    # 最近消息完整保留（其长度 < 保底 MIN_LATEST_USER_TOKENS，故不被截断）。
+    assert result.messages[-1]["content"] == "latest message must stay"
     assert "user_extra_instructions" in result.dropped_blocks
-    assert "recent_dialogue:truncated" in result.dropped_blocks
+
+
+def test_context_assembly_caps_overlong_latest_message_at_reserved_floor() -> None:
+    # 边界：最近消息超长时，至少保留保底预算（不为 1 字符），但不会无限膨胀。
+    long_question = "请详细分析这张遥感影像" * 200  # 远超 MIN_LATEST_USER_TOKENS
+    result = assemble_context(
+        system_prompt="base system rules",
+        messages=[message("user", long_question)],
+        rag_context="检索内容" * 500,
+        max_total_chars=20,
+        max_recent_messages=10,
+        max_recent_chars=100,
+    )
+
+    latest = result.messages[-1]
+    assert latest["role"] == "user"
+    # 非空、保留了问题开头（不是 1 字符），且确实发生了截断。
+    assert len(latest["content"]) > 1
+    assert latest["content"].startswith("请详细分析这张遥感影像")
 
 
 def test_context_assembly_trims_auxiliary_blocks_by_their_own_budget() -> None:

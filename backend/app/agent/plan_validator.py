@@ -28,7 +28,7 @@ class ValidatedPlan:
 
 
 class PlanValidator:
-    def validate(
+    async def validate(
         self,
         decision: PlannerDecision,
         *,
@@ -56,7 +56,7 @@ class PlanValidator:
             return self._invalid("invalid_arguments", decision, detail=str(exc))
         arguments = args_model.model_dump(exclude_none=True)
 
-        guard_error = validate_tool_access(capability.name, arguments, user_id)
+        guard_error = await validate_tool_access(capability.name, arguments, user_id)
         if guard_error:
             return self._invalid(guard_error, decision)
 

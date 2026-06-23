@@ -182,3 +182,16 @@
     line-height: 1.5;
   }
 }
+
+/* MapLibre 比例尺深色主题：默认是浅色描边，叠在卫星暗底图上不清晰。 */
+.maplibregl-ctrl-scale {
+  background: rgba(23, 24, 27, 0.8);
+  border: 1px solid var(--border);
+  border-top: none;
+  color: var(--foreground);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10px;
+  border-radius: 0 0 4px 4px;
+  backdrop-filter: blur(8px);
+  padding: 1px 6px;
+}

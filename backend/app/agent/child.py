@@ -7,7 +7,9 @@ from pydantic import ValidationError
 
 from app.agent.prompting.scenarios import tool_ready_label, tool_request_label, tool_running_label
 from app.agent.tool_guards import validate_tool_access
+from app.agent.tool_jobs import begin_tool_job, finish_tool_job, heartbeat_tool_job
 from app.agent.tool_registry import get_tool
+from app.agent.tools.staging import stage_imagery
 from app.agent.types import AgentEvent, AgentTrace, RuntimeToolCall, ToolRunResult
 
 AgentEventCallback = Callable[[AgentEvent], Awaitable[None]]
@@ -86,7 +88,7 @@ class ToolChildAgent:
                 metadata={"error_code": "invalid_arguments"},
             )
 
-        access_error = validate_tool_access(tool_call.name, args.model_dump(), user_id)
+        access_error = await validate_tool_access(tool_call.name, args.model_dump(), user_id)
         if access_error:
             message = "工具访问被拒绝"
             await self._add_event(
@@ -132,14 +134,35 @@ class ToolChildAgent:
             execution_kind="tool",
             dispatch_kind="tool",
         )
+        job_id: str | None = None
         try:
-            result = await tool.runner(args)
+            # staging：minio 后端下把影像拉到请求级临时目录供 runner/docker 读取（见 tools/staging.py）。
+            # 只对带 imagery_id 的工具 staging；local 后端为 no-op，document/web_search 无 imagery_id 直接执行。
+            imagery_id = str(args.model_dump().get("imagery_id") or "")
+            # durable 工具队列：登记 pending→running 行（best-effort，关闭/无库则 job_id=None 不影响执行）。
+            # 见 app/agent/tool_jobs.py；正常流量仍同步执行，本行只为持久化可观测 + 重启恢复。
+            job_id = await begin_tool_job(
+                tool_name=tool_call.name,
+                arguments=args.model_dump(),
+                imagery_id=imagery_id,
+                user_id=user_id,
+            )
+            # 执行期心跳（#1）：长任务（detect/segment、并发闸排队、minio 大影像 staging）
+            # 全程刷新 heartbeat_at，避免被恢复 worker 误判孤儿而重复执行。job_id=None 时为 no-op。
+            async with heartbeat_tool_job(job_id):
+                if imagery_id:
+                    async with stage_imagery(imagery_id):
+                        result = await tool.runner(args)
+                else:
+                    result = await tool.runner(args)
         except Exception as exc:
             result = ToolRunResult(
                 tool_context="工具执行失败，已跳过该工具结果。",
                 error=str(exc),
                 metadata={"error_code": "tool_runner_exception"},
             )
+        # 写终态（complete/failed）。job_id 为 None 时 noop；best-effort 不抛进主路径。
+        await finish_tool_job(job_id, result)
 
         if result.metadata.get("fallback_used"):
             await self._add_event(

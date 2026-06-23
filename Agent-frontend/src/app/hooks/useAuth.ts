@@ -38,11 +38,11 @@ export function useAuth(endpoint: string) {
     }
   }
 
-  async function signUp(email: string, password: string, name: string) {
+  async function signUp(email: string, password: string, name: string, inviteCode: string) {
     setLoading(true);
     setError("");
     try {
-      setUser(await register(endpoint, email, password, name));
+      setUser(await register(endpoint, email, password, name, inviteCode));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       throw err;

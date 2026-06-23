@@ -1,9 +1,16 @@
 from types import SimpleNamespace
 
+import json
+
 import pytest
 
 from app.agent.config import ResolvedAIConfig
-from app.agent.stream import normalize_stream_chunk, stream_initial_sse_events, stream_sse_events
+from app.agent.stream import (
+    agent_status_event,
+    normalize_stream_chunk,
+    stream_initial_sse_events,
+    stream_sse_events,
+)
 
 
 def make_config() -> ResolvedAIConfig:
@@ -89,9 +96,9 @@ async def test_stream_initial_sse_events_outputs_meta_and_statuses() -> None:
     events = [event async for event in stream_initial_sse_events(make_config())]
 
     assert events[0] == 'event: meta\ndata: {"model": "stream-model", "provider": "openai-compatible"}\n\n'
-    assert events[1] == 'event: analysis_status\ndata: {"status": "analyzing", "label": "正在解析问题…"}\n\n'
-    assert events[2] == 'event: analysis_status\ndata: {"status": "preparing", "label": "正在整理内容…"}\n\n'
-    assert events[3] == 'event: analysis_status\ndata: {"status": "answering", "label": "正在组织回复…"}\n\n'
+    assert events[1] == 'event: analysis_status\ndata: {"status": "analyzing", "label": "正在思考中…"}\n\n'
+    assert events[2] == 'event: analysis_status\ndata: {"status": "preparing", "label": "正在梳理结果…"}\n\n'
+    assert events[3] == 'event: analysis_status\ndata: {"status": "answering", "label": "正在生成回复…"}\n\n'
 
 
 @pytest.mark.asyncio
@@ -202,3 +209,54 @@ async def test_stream_sse_events_converts_error_after_visible_delta_to_done() ->
         'event: done\ndata: {"finish_reason": "error", '
         '"error": {"code": "PROVIDER_ERROR", "message": "AI provider request failed."}}\n\n'
     )
+
+
+# ---------- agent_status_event：label 透传根因防回归 ----------
+
+
+def _agent_status_payload(event: str) -> dict:
+    # event 形如 'event: agent_status\ndata: {...}\n\n'，取出 data 行解析。
+    for line in event.splitlines():
+        if line.startswith("data: "):
+            return json.loads(line[6:])
+    raise AssertionError(f"no data line in event: {event!r}")
+
+
+def test_agent_status_event_uses_explicit_label_over_static_dict() -> None:
+    # 根因：执行阶段具体工具名在 AgentEvent.label 里，必须透传到 SSE，
+    # 不能被 AGENT_STATUS_LABELS 按 status 重新查回宽泛的"正在执行工具"。
+    event = agent_status_event("child_agent_running", label="正在进行地物分类")
+    payload = _agent_status_payload(event)
+    assert payload["status"] == "child_agent_running"
+    assert payload["label"] == "正在进行地物分类"
+    # 关键：绝不能再退回宽泛标签。
+    assert payload["label"] != "正在执行工具"
+
+
+def test_agent_status_event_preserves_metadata_and_elapsed() -> None:
+    # 常规：tool_name 等 metadata 与 elapsed_ms 原样进入 payload，不丢字段。
+    event = agent_status_event(
+        "child_agent_running",
+        label="正在计算 NDVI",
+        tool_name="calculate_ndvi",
+        elapsed_ms=1234,
+    )
+    payload = _agent_status_payload(event)
+    assert payload["tool_name"] == "calculate_ndvi"
+    assert payload["elapsed_ms"] == 1234
+    assert payload["label"] == "正在计算 NDVI"
+
+
+def test_agent_status_event_falls_back_to_static_label_when_absent() -> None:
+    # 边界：不传 label 时，已登记 status 回退到静态字典文案。
+    event = agent_status_event("tool_execution_completed")
+    payload = _agent_status_payload(event)
+    assert payload["label"] == "工具执行完成"
+
+
+def test_agent_status_event_unknown_status_falls_back_to_status_string() -> None:
+    # 边界：未登记 status 且无 label → 回退为 status 本身，不崩、不抛。
+    event = agent_status_event("some_unregistered_stage")
+    payload = _agent_status_payload(event)
+    assert payload["status"] == "some_unregistered_stage"
+    assert payload["label"] == "some_unregistered_stage"

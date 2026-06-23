@@ -19,6 +19,7 @@ from app.agent.request_builder import (
     build_provider_request_context,
 )
 from app.agent.routing import AgentRoute, build_agent_route
+from app.auth import reset_current_conversation_id, set_current_conversation_id
 from app.schemas.chat import ChatRequest, GeospatialResult, ToolResult
 from app.core.settings import get_settings
 
@@ -114,6 +115,35 @@ class AgentRuntime:
         )
 
     async def plan(
+        self,
+        *,
+        client: Any,
+        config: ResolvedAIConfig,
+        request: ChatRequest,
+        initial_context: ProviderRequestContext,
+        user_id: str | None,
+        trace: AgentTrace,
+        on_event: AgentEventCallback | None = None,
+        route: AgentRoute | None = None,
+    ) -> AgentPlanResult:
+        # 把当前对话 ID 绑定到请求级 contextvar，供 generate_report 这类需要回看本对话
+        # 历史结果的工具在执行链内读取（不改 runner 签名）。finally 重置，避免泄漏到后续复用。
+        token = set_current_conversation_id(request.conversation_id)
+        try:
+            return await self._plan_impl(
+                client=client,
+                config=config,
+                request=request,
+                initial_context=initial_context,
+                user_id=user_id,
+                trace=trace,
+                on_event=on_event,
+                route=route,
+            )
+        finally:
+            reset_current_conversation_id(token)
+
+    async def _plan_impl(
         self,
         *,
         client: Any,

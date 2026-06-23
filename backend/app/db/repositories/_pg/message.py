@@ -4,6 +4,7 @@ import json
 import uuid
 from typing import Any
 
+from app.db.repositories.analysis_results import collect_analysis_results
 from app.db.sanitize import parse_jsonb, sanitize_json, sanitize_text
 from app.db.vector import encode_vector
 from app.schemas.chat import ChatMessage
@@ -89,25 +90,79 @@ async def add_embedding_retry(conn, *, message_id: str, error: str) -> None:
     )
 
 
-async def list_recent_messages(conn, *, conversation_id: str, limit: int) -> list[ChatMessage]:
-    rows = await conn.fetch(
-        """
-        SELECT role, content
-        FROM agent_rs.messages
-        WHERE conversation_id = $1::uuid
-          AND status = 'complete'
-          AND role IN ('user', 'assistant', 'system')
-        ORDER BY created_at DESC
-        LIMIT $2
-        """,
-        conversation_id,
-        limit,
-    )
+async def list_recent_messages(
+    conn, *, conversation_id: str, limit: int, user_id: str | None = None
+) -> list[ChatMessage]:
+    # user_id 非空时 JOIN conversations 加归属过滤，结构性防跨用户拉取他人会话历史（H3）。
+    # user_id 为 None 时退回仅按 conversation_id（兼容无状态/无鉴权路径）。
+    if user_id:
+        rows = await conn.fetch(
+            """
+            SELECT m.role, m.content
+            FROM agent_rs.messages m
+            JOIN agent_rs.conversations c ON c.id = m.conversation_id
+            WHERE m.conversation_id = $1::uuid
+              AND c.created_by_user_id = $2::uuid
+              AND m.status = 'complete'
+              AND m.role IN ('user', 'assistant', 'system')
+            ORDER BY m.created_at DESC
+            LIMIT $3
+            """,
+            conversation_id,
+            user_id,
+            limit,
+        )
+    else:
+        rows = await conn.fetch(
+            """
+            SELECT role, content
+            FROM agent_rs.messages
+            WHERE conversation_id = $1::uuid
+              AND status = 'complete'
+              AND role IN ('user', 'assistant', 'system')
+            ORDER BY created_at DESC
+            LIMIT $2
+            """,
+            conversation_id,
+            limit,
+        )
     return [
         ChatMessage(role=row["role"], content=row["content"])
         for row in reversed(rows)
         if row["content"].strip()
     ]
+
+
+async def list_recent_analysis_results(
+    conn, *, conversation_id: str, user_id: str | None, limit: int = 5
+) -> list[dict[str, Any]]:
+    """取本对话最近 N 条助手消息里持久化的结构化分析结果（地物分类/检测/NDVI 等）。
+
+    用于跨轮回注："根据刚才的分类结果生成报告"这类追问轮虽未跑工具，也能看到此前真实结果，
+    根治"同对话否认已执行分析"。带 user_id 时 JOIN conversations 做归属过滤（复刻
+    list_recent_messages 的 H3 隔离）；user_id 为空则拒绝返回（不跨租户泄漏他人结果）。
+    只挑 metadata 里含 geospatial_result / tool_result 的助手消息，按时间正序返回。
+    """
+    if not user_id:
+        return []
+    rows = await conn.fetch(
+        """
+        SELECT m.metadata_json
+        FROM agent_rs.messages m
+        JOIN agent_rs.conversations c ON c.id = m.conversation_id
+        WHERE m.conversation_id = $1::uuid
+          AND c.created_by_user_id = $2::uuid
+          AND m.role = 'assistant'
+          AND m.status = 'complete'
+        ORDER BY m.created_at DESC
+        LIMIT $3
+        """,
+        conversation_id,
+        user_id,
+        # 多取些原始行再在 Python 侧筛"含分析结果"的，避免 JSON 谓词的后端差异。
+        max(limit * 4, 20),
+    )
+    return collect_analysis_results([row["metadata_json"] for row in rows], limit=limit)
 
 
 async def list_conversation_messages(

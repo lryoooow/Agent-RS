@@ -116,3 +116,45 @@ async def delete_session(conn, *, token_hash: str) -> bool:
 async def prune_expired_sessions(conn) -> int:
     result = await conn.execute("DELETE FROM agent_rs.sessions WHERE expires_at <= now()")
     return int(result.rsplit(" ", 1)[-1])
+
+
+async def list_users(conn, *, limit: int = 200) -> list[dict[str, Any]]:
+    """管理界面用户列表，按创建时间倒序。不返回 password_hash（敏感且无展示意义）。"""
+    rows = await conn.fetch(
+        """
+        SELECT id::text, email, name, email_verified, is_active, created_at
+        FROM agent_rs.users
+        ORDER BY created_at DESC
+        LIMIT $1
+        """,
+        limit,
+    )
+    return [dict(row) for row in rows]
+
+
+async def set_user_active(conn, *, user_id: str, is_active: bool) -> bool:
+    """启用/停用用户。停用后 find_user_by_session 因校验 is_active=true 自动拒绝其会话，
+    无需额外删 session 即让其登出。返回是否命中一行。"""
+    result = await conn.execute(
+        """
+        UPDATE agent_rs.users
+        SET is_active = $2, updated_at = now()
+        WHERE id = $1::uuid
+        """,
+        user_id,
+        is_active,
+    )
+    return result.endswith(" 1")
+
+
+async def update_user_password_hash(conn, *, user_id: str, password_hash: str) -> None:
+    """更新密码哈希。登录成功且旧哈希工作因子偏低时，用新参数重哈希落库（透明升级）。"""
+    await conn.execute(
+        """
+        UPDATE agent_rs.users
+        SET password_hash = $2, updated_at = now()
+        WHERE id = $1::uuid
+        """,
+        user_id,
+        password_hash,
+    )

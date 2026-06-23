@@ -8,16 +8,25 @@ import { TopBar } from "./components/TopBar";
 import { TaskBar } from "./components/TaskBar";
 import { ToolsPage } from "./components/ToolsPage";
 import { DataPanel } from "./components/DataPanel";
+import { TaskQueuePanel } from "./components/TaskQueuePanel";
+import { AnalysisReportPanel } from "./components/AnalysisReportPanel";
+import { AuthGate } from "./components/AuthGate";
 import { useSettings } from "./hooks/useSettings";
 import { useChatController } from "./hooks/useChatController";
 import { useImageryUpload } from "./hooks/useImageryUpload";
 import { useAuth } from "./hooks/useAuth";
 import { layersFromTurns } from "./lib/layers";
+import { tasksFromTurns } from "./lib/tasks";
+import { reportsFromTurns } from "./lib/reports";
 import type { GeospatialResult } from "./types";
+import type { Roi } from "./lib/roi";
 
 export default function App() {
   const settings = useSettings();
   const auth = useAuth(settings.endpoint);
+  // 框选的分析聚焦区（ROI）：geo（经纬度 bbox）或 pixel（影像内相对 0..1）。
+  // 由 MapView/ImageViewer 上报，注入下一轮对话作为「解读聚焦提示」（工具仍全图计算）。
+  const [roi, setRoi] = useState<Roi | null>(null);
   const chat = useChatController({
     endpoint: settings.endpoint,
     systemPrompt: settings.systemPrompt,
@@ -25,12 +34,15 @@ export default function App() {
     useRag: settings.useRag,
     model: settings.model,
     providerConfig: settings.providerConfig,
+    roi,
   });
   const imagery = useImageryUpload(settings.endpoint);
 
   const [view, setView] = useState<"welcome" | "chat">("welcome");
   const [toolsOpen, setToolsOpen] = useState(false);
   const [dataOpen, setDataOpen] = useState(false);
+  const [tasksOpen, setTasksOpen] = useState(false);
+  const [reportsOpen, setReportsOpen] = useState(false);
   // 图层显隐/透明度的本地覆盖（按 layer id）；图层本体由真实 geospatialResults 派生。
   const [layerOverrides, setLayerOverrides] = useState<
     Record<string, { visible?: boolean; opacity?: number; removed?: boolean }>
@@ -42,6 +54,12 @@ export default function App() {
     () => layersFromTurns(chat.turns, layerOverrides),
     [chat.turns, layerOverrides],
   );
+  // 任务队列 / 分析报告均为对话 turns 的不同投影：前者来自 agentTrace 执行轨迹，后者来自真实结果。
+  const tasks = useMemo(
+    () => tasksFromTurns(chat.turns, chat.activeStream ? chat.turns[chat.turns.length - 1]?.id : null),
+    [chat.turns, chat.activeStream],
+  );
+  const reports = useMemo(() => reportsFromTurns(chat.turns), [chat.turns]);
   const hasImagery = layers.some((l) => l.kind === "imagery");
 
   const triggerUpload = () => fileRef.current?.click();
@@ -67,12 +85,14 @@ export default function App() {
     // ② useChatController 会把最近 imagery_id 注入后续请求 system message，由 LLM 决定调用何种工具。
     chat.addGeospatialResult(`影像已加载 · ${meta.filename}`, preview);
     setLayerOverrides({});
+    setRoi(null);
   };
 
   // ---- session navigation -------------------------------------------------
   const startSession = (firstText?: string) => {
     chat.resetConversation();
     setLayerOverrides({});
+    setRoi(null);
     setView("chat");
     if (firstText?.trim()) {
       setTimeout(() => chat.sendMessage(firstText), 0);
@@ -81,11 +101,23 @@ export default function App() {
 
   const goBack = () => setView("welcome");
 
-  const openConversation = (id: string, messages: { role: string; content: string }[]) => {
+  const openConversation = (
+    id: string,
+    messages: { role: string; content: string; metadata?: Record<string, unknown> | null }[],
+  ) => {
     chat.loadConversation(id, messages);
     setLayerOverrides({});
+    setRoi(null);
     setDataOpen(false);
     setView("chat");
+  };
+
+  // 删除的恰好是当前激活会话：重置对话状态并清掉派生的图层/ROI（与 startSession 一致），
+  // 防止下条消息仍带已删 id 发出导致后端静默新建空会话、上下文断裂。
+  const handleActiveConversationDeleted = () => {
+    chat.resetConversation();
+    setLayerOverrides({});
+    setRoi(null);
   };
 
   const launchModelPrompt = (prompt: string) => {
@@ -99,19 +131,44 @@ export default function App() {
     }
   };
 
+  // 强制登录门：服务端 auth_required 且当前未认证时，全屏拦截到 AuthGate。
+  // auth.loading 期间不拦截，避免初次 /auth/me 解析前闪现登录页。
+  // serverConfig 尚未拉到时不拦截（保守：拿不到配置不误挡，数据接口仍受后端 401 兜底）。
+  const authRequired = settings.serverConfig?.auth_required ?? false;
+  const inviteRequired = settings.serverConfig?.invite_required ?? true;
+  const authed = auth.user?.authenticated === true;
+  if (authRequired && !authed && !auth.loading) {
+    return <AuthGate auth={auth} inviteRequired={inviteRequired} />;
+  }
+
   return (
     <div className="relative h-screen w-screen overflow-hidden bg-background text-foreground">
-      <MapView layers={layers} />
+      <MapView
+        layers={layers}
+        roi={roi}
+        onSelectRegion={setRoi}
+        onClearRegion={() => setRoi(null)}
+      />
 
       <TopBar settings={settings} auth={auth} />
-      <TaskBar onOpenTools={() => setToolsOpen(true)} onOpenData={() => setDataOpen(true)} />
+      <TaskBar
+        onOpenTools={() => setToolsOpen(true)}
+        onOpenData={() => setDataOpen(true)}
+        onOpenTasks={() => setTasksOpen(true)}
+        onOpenReports={() => setReportsOpen(true)}
+      />
 
       <DataPanel
         open={dataOpen}
         onOpenChange={setDataOpen}
         endpoint={settings.endpoint}
         onOpenConversation={openConversation}
+        activeConversationId={chat.conversationId}
+        onActiveConversationDeleted={handleActiveConversationDeleted}
       />
+
+      <TaskQueuePanel open={tasksOpen} onOpenChange={setTasksOpen} tasks={tasks} />
+      <AnalysisReportPanel open={reportsOpen} onOpenChange={setReportsOpen} entries={reports} />
 
       <input
         ref={fileRef}
@@ -162,6 +219,8 @@ export default function App() {
             onSend={chat.sendMessage}
             onUpload={triggerUpload}
             onBack={goBack}
+            onGenerateReport={chat.generateReport}
+            reportPending={chat.reportPending}
           />
         )}
       </AnimatePresence>

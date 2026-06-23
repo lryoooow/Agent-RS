@@ -97,6 +97,8 @@ async def save_assistant_response(
     content: str,
     usage: dict,
     finish_reason: str | None,
+    geospatial_result: dict | None = None,
+    tool_result: dict | None = None,
 ) -> str | None:
     if not persistence.conversation_id:
         return None
@@ -111,7 +113,11 @@ async def save_assistant_response(
                 role="assistant",
                 content=content,
                 status="complete",
-                metadata={"finish_reason": finish_reason},
+                metadata=_assistant_metadata(
+                    finish_reason=finish_reason,
+                    geospatial_result=geospatial_result,
+                    tool_result=tool_result,
+                ),
                 tokens_in=_optional_int(usage.get("input_tokens")),
                 tokens_out=_optional_int(usage.get("output_tokens")),
             )
@@ -127,6 +133,8 @@ async def save_streamed_assistant(
     *,
     content: str,
     done_payload: dict,
+    geospatial_result: dict | None = None,
+    tool_result: dict | None = None,
 ) -> None:
     if not persistence.assistant_message_id:
         return
@@ -141,7 +149,11 @@ async def save_streamed_assistant(
                 message_id=persistence.assistant_message_id,
                 content=content,
                 status="complete",
-                metadata={"finish_reason": done_payload.get("finish_reason")},
+                metadata=_assistant_metadata(
+                    finish_reason=done_payload.get("finish_reason"),
+                    geospatial_result=geospatial_result,
+                    tool_result=tool_result,
+                ),
                 tokens_in=_optional_int(usage.get("input_tokens")),
                 tokens_out=_optional_int(usage.get("output_tokens")),
             )
@@ -234,6 +246,26 @@ def latest_user_content(request: ChatRequest) -> str:
 
 def _optional_int(value: object) -> int | None:
     return int(value) if value is not None else None
+
+
+def _assistant_metadata(
+    *,
+    finish_reason: str | None,
+    geospatial_result: dict | None,
+    tool_result: dict | None,
+) -> dict:
+    """组装助手消息 metadata：在 finish_reason 之外，把结构化工具结果一并落库。
+
+    地物分类/检测/NDVI 等结果此前只活在临时 SSE 卡片，下一轮无从回看，
+    导致同对话内"否认已执行分析"。这里把它存进 metadata（写入侧 json_patch/`||` 合并），
+    供 list_recent_analysis_results 跨轮回注与报告生成读取。None 值不写键，保持 metadata 精简。
+    """
+    metadata: dict = {"finish_reason": finish_reason}
+    if geospatial_result:
+        metadata["geospatial_result"] = geospatial_result
+    if tool_result:
+        metadata["tool_result"] = tool_result
+    return metadata
 
 
 async def _embed_messages(targets: list[EmbeddingTarget]) -> None:

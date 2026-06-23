@@ -15,7 +15,7 @@ _IMAGERY_TOOLS = set(ALL_IMAGERY_TOOLS)
 _DOCUMENT_TOOLS = set(ALL_DOCUMENT_TOOLS)
 
 
-def validate_tool_access(tool_name: str, arguments: dict[str, Any], user_id: str | None) -> str | None:
+async def validate_tool_access(tool_name: str, arguments: dict[str, Any], user_id: str | None) -> str | None:
     if tool_name in _DOCUMENT_TOOLS:
         if not user_id:
             return "owner_required"
@@ -25,6 +25,6 @@ def validate_tool_access(tool_name: str, arguments: dict[str, Any], user_id: str
     imagery_id = str(arguments.get("imagery_id") or "")
     if not user_id:
         return "owner_required"
-    if not user_owns_imagery(imagery_id, user_id):
+    if not await user_owns_imagery(imagery_id, user_id):
         return "imagery_not_found_or_forbidden"
     return None

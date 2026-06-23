@@ -1,6 +1,6 @@
 import type { Dispatch, SetStateAction } from "react";
 import type { StreamHandlers } from "./sse";
-import { isHiddenAgentStatus } from "./agent-status";
+import { isHiddenAgentStatus, isToolRunningStatus, isToolSettlingStatus } from "./agent-status";
 import { appendToTurn, updateAnalysisStatus, uid, updateTurn } from "./turns";
 import type {
   AgentStatus,
@@ -48,19 +48,38 @@ export function createStreamHandlers(
       if (!status) return;
       const label = typeof data.label === "string" ? data.label : undefined;
       // 规划等内部步骤：记录 agentStatus（气泡层已过滤不显示），但不覆盖顶部进度行，
-      // 否则"正在理解"会被"正在判断是否需要联网/规划能力调用"等噪声闪掉。
+      // 否则"正在思考中"会被"正在判断是否需要联网/规划能力调用"等噪声闪掉。
       if (isHiddenAgentStatus(status)) {
         setTurns((prev) =>
           updateTurn(prev, assistantId, { agentStatus: status, agentLabel: label }),
         );
         return;
       }
+      // 顶部进度行（思考过程）与工具气泡分离：
+      // - agentLabel 始终保留后端精确标签（如"正在进行地物分类"），喂工具气泡。
+      // - analysisLabel 走干净的 4 段进度：执行态显示具体工具名（第 2 段），
+      //   执行后态统一"正在梳理结果"（第 3 段），final_answering→"正在生成回复"。
+      let analysisStatus: AnalysisStatus;
+      let analysisLabel: string | undefined;
+      if (status === "final_answering") {
+        analysisStatus = "answering";
+        analysisLabel = "正在生成回复...";
+      } else if (isToolRunningStatus(status)) {
+        analysisStatus = "preparing";
+        analysisLabel = label; // 具体工具名（第 2 段，动态随任务变化）
+      } else if (isToolSettlingStatus(status)) {
+        analysisStatus = "preparing";
+        analysisLabel = "正在梳理结果...";
+      } else {
+        analysisStatus = "preparing";
+        analysisLabel = label;
+      }
       setTurns((prev) =>
         updateTurn(prev, assistantId, {
           agentStatus: status,
           agentLabel: label,
-          analysisStatus: status === "final_answering" ? "answering" : "preparing",
-          analysisLabel: label,
+          analysisStatus,
+          analysisLabel,
         }),
       );
     },
@@ -156,9 +175,20 @@ function normalizeAgentStatus(value: unknown): AgentStatus | null {
   return null;
 }
 
-function parseGeospatialResult(value: unknown): GeospatialResult | undefined {
+export function parseGeospatialResult(value: unknown): GeospatialResult | undefined {
   if (!value || typeof value !== "object") return undefined;
   const candidate = value as Record<string, unknown>;
+  // 报告结果形态独立（无 result_url/bounds，带 download_url），先于通用校验单独处理。
+  if (candidate.type === "report") {
+    if (typeof candidate.imagery_id !== "string") return undefined;
+    if (typeof candidate.download_url !== "string") return undefined;
+    return {
+      type: "report",
+      imagery_id: candidate.imagery_id,
+      filename: typeof candidate.filename === "string" ? candidate.filename : "report.docx",
+      download_url: candidate.download_url,
+    };
+  }
   if (
     candidate.type !== "preview" &&
     candidate.type !== "ndvi" &&
@@ -246,7 +276,7 @@ function parseGeospatialResult(value: unknown): GeospatialResult | undefined {
   };
 }
 
-function parseToolResult(value: unknown): ToolResult | undefined {
+export function parseToolResult(value: unknown): ToolResult | undefined {
   if (!value || typeof value !== "object") return undefined;
   const candidate = value as Record<string, unknown>;
   if (candidate.type !== "raster_inspect") return undefined;

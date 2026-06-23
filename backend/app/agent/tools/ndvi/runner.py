@@ -32,7 +32,7 @@ async def run_ndvi(args: NDVIArguments) -> ToolRunResult:
         return imagery_not_found_result(args.imagery_id)
     results_dir.mkdir(parents=True, exist_ok=True)
 
-    band_error = validate_band_indices(source_path, {"red": args.red_band, "nir": args.nir_band})
+    band_error = await validate_band_indices(source_path, {"red": args.red_band, "nir": args.nir_band})
     if band_error:
         return invalid_bands_result("NDVI 计算", band_error)
 
@@ -52,10 +52,10 @@ async def run_ndvi(args: NDVIArguments) -> ToolRunResult:
         )
     except (FileNotFoundError, asyncio.TimeoutError, MCPCallError) as exc:
         logger.warning("NDVI failed: %s", exc)
-        return _error_result(f"NDVI 计算失败: {exc}", "mcp_error")
+        return _error_result("NDVI 计算失败，请稍后重试或检查影像与服务状态。", "mcp_error")
     except Exception as exc:
         logger.exception("NDVI unexpected error: %s", exc)
-        return _error_result(f"NDVI 计算失败: {exc}", "unexpected_error")
+        return _error_result("NDVI 计算失败，请稍后重试或检查影像与服务状态。", "unexpected_error")
 
     result_filename = str(stats.get("output_png") or "ndvi_colored.png")
     execution_info = ToolExecutionInfo(mode="docker_mcp", fallback_used=False)

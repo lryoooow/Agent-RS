@@ -87,3 +87,15 @@ export function toolBubbleForTurn(turn: ChatTurn): ToolBubble | null {
 export function isHiddenAgentStatus(status: AgentStatus): boolean {
   return HIDDEN.has(status);
 }
+
+// 顶部进度行（思考过程）的阶段归类：
+// - 执行态（child_agent_running/tool_execution_started）→ 顶行显示具体工具名（第 2 段，动态）。
+// - 执行后态（completed/fallback/context_ready/result_ready）→ 顶行统一"正在梳理结果"（第 3 段），
+//   避免顶行闪过"工具执行完成/结果已整理/图层已生成"等多条噪声。
+export function isToolRunningStatus(status: AgentStatus): boolean {
+  return RUNNING.has(status);
+}
+
+export function isToolSettlingStatus(status: AgentStatus): boolean {
+  return DONE.has(status) && !ERROR.has(status);
+}

@@ -33,7 +33,7 @@ async def run_parse_document(args: ParseDocumentArguments) -> ToolRunResult:
             row = await get_document(conn, document_id=args.document_id, user_id=user_id)
     except Exception as exc:
         logger.exception("Parse document DB read failed: %s", exc)
-        return _error_result(f"文档读取失败: {exc}", "db_error")
+        return _error_result("文档读取失败，请稍后重试或检查数据库状态。", "db_error")
 
     if row is None:
         return _error_result(

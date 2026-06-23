@@ -16,6 +16,9 @@ export type ConversationMessage = {
   role: string;
   content: string;
   status: string;
+  // 后端 messages 接口随消息回传 metadata（含持久化的 geospatial_result/tool_result），
+  // 会话重载时据此重现分析结果卡片，不再只剩纯文字。
+  metadata?: Record<string, unknown> | null;
   created_at: string;
 };
 

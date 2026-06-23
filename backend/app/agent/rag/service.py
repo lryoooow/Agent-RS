@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import time
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
@@ -48,7 +49,8 @@ async def retrieve_rag_context(
     )
     trace["rerank_ms"] = int((time.perf_counter() - started) * 1000)
     if settings.rag_mmr_enabled:
-        chunks = mmr_select(
+        chunks = await asyncio.to_thread(
+            mmr_select,
             candidates=chunks,
             query_embedding=embedding,
             top_n=settings.rerank_top_n or settings.rag_retrieval_limit,

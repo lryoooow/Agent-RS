@@ -155,7 +155,8 @@ async def list_document_chunks(
 ) -> list[dict[str, Any]]:
     rows = await conn.fetch(
         """
-        SELECT id::text, document_id::text, chunk_index, content, token_count, metadata, created_at
+        SELECT c.id::text, c.document_id::text, c.chunk_index, c.content,
+               c.token_count, c.metadata, c.created_at
         FROM public.document_chunks c
         JOIN public.documents d ON d.id = c.document_id
         WHERE c.document_id = $1::uuid AND d.created_by_user_id = $2

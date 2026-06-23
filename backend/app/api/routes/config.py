@@ -23,4 +23,6 @@ async def config() -> ConfigResponse:
             settings.tavily_api_key.strip() and settings.agent_web_search_max_calls > 0
         ),
         web_search_configured=bool(settings.tavily_api_key.strip()),
+        auth_required=settings.auth_required,
+        invite_required=settings.invite_required,
     )

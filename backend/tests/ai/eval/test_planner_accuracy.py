@@ -321,7 +321,7 @@ async def test_argument_subset_mismatch_gets_specific_reason(tmp_path: Path) -> 
     ):
         get_settings.cache_clear()
         get_planner_decision_cache().clear()
-        context = build_recording_context(case, request=_request_for_case(case), config=config)
+        context = await build_recording_context(case, request=_request_for_case(case), config=config)
         write_recording(
             recordings,
             context,
@@ -441,7 +441,7 @@ async def test_historical_replay_allows_old_prompt_hash_but_checks_context(tmp_p
     ):
         get_settings.cache_clear()
         get_planner_decision_cache().clear()
-        context = build_recording_context(case, request=_request_for_case(case), config=config)
+        context = await build_recording_context(case, request=_request_for_case(case), config=config)
         path = write_recording(
             recordings,
             context,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from pathlib import Path
@@ -12,7 +13,11 @@ IMAGERY_ID_PATTERN = re.compile(r"^[a-f0-9]{12}$")
 
 
 def resolve_imagery_paths(imagery_id: str) -> tuple[Path | None, Path, Path]:
-    imagery_dir = imagery_root() / imagery_id
+    # staging 感知：minio 后端下工具调用前已把影像拉到请求级临时目录（见 tools/staging.py），
+    # 此时用临时目录；local 后端 staged 为 None，走原逻辑（imagery_root 子目录），行为零变化。
+    from app.agent.tools.staging import staged_imagery_dir
+
+    imagery_dir = staged_imagery_dir(imagery_id) or (imagery_root() / imagery_id)
     source_path = imagery_dir / "working.tif"
     if not source_path.exists():
         source_path = imagery_dir / "source.tif"
@@ -27,16 +32,21 @@ def invalid_imagery_id_result(tool_name: str) -> ToolRunResult:
     )
 
 
-def validate_band_indices(source_path: Path, bands: dict[str, int]) -> str | None:
-    """Validate 1-based raster band indices against the source image."""
+def _read_band_count(source_path: Path) -> int:
+    """同步读取影像波段数（rasterio.open 阻塞 I/O，供 to_thread 调用）。"""
     import rasterio
 
+    with rasterio.open(source_path) as src:
+        return src.count
+
+
+async def validate_band_indices(source_path: Path, bands: dict[str, int]) -> str | None:
+    """Validate 1-based raster band indices against the source image."""
     below_range = {name: index for name, index in bands.items() if index < 1}
     if below_range:
         return f"波段索引必须从 1 开始，当前 {below_range}"
 
-    with rasterio.open(source_path) as src:
-        band_count = src.count
+    band_count = await asyncio.to_thread(_read_band_count, source_path)
     over_range = {name: index for name, index in bands.items() if index > band_count}
     if over_range:
         return f"影像只有 {band_count} 个波段，无法使用 {over_range}"

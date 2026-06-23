@@ -1,6 +1,7 @@
 ﻿import json
 import asyncio
 import logging
+from contextlib import suppress
 from dataclasses import dataclass
 from typing import Any, AsyncIterator
 
@@ -100,6 +101,8 @@ class AIService:
             content=result.content,
             usage=result.usage.model_dump(exclude_none=True) if result.usage else {},
             finish_reason=result.finish_reason,
+            geospatial_result=geospatial_result,
+            tool_result=tool_result,
         )
         result.assistant_message_id = persistence.assistant_message_id
         schedule_after_response(persistence, assistant_content=result.content)
@@ -210,6 +213,7 @@ class AIService:
                 return
 
             event_queue: asyncio.Queue[AgentEvent] = asyncio.Queue()
+            plan_task: asyncio.Task | None = None
             try:
                 plan_task = asyncio.create_task(
                     runtime.plan_stream(
@@ -232,6 +236,7 @@ class AIService:
                         continue
                     yield agent_status_event(
                         agent_event.stage,
+                        label=agent_event.label,
                         **agent_event.metadata,
                         elapsed_ms=agent_event.elapsed_ms,
                     )
@@ -242,6 +247,14 @@ class AIService:
                 finalized = True
                 yield sse_event("error", {"code": error.code, "message": error.message})
                 return
+            finally:
+                # 客户端中途断连时生成器被 GeneratorExit/CancelledError 中断，
+                # 取消仍在执行的 plan_task，避免孤儿 planner→docker 任务跑到超时（H5）。
+                # 正常完成时 plan_task 已 done，cancel() 是 no-op。
+                if plan_task is not None and not plan_task.done():
+                    plan_task.cancel()
+                    with suppress(asyncio.CancelledError, Exception):
+                        await plan_task
 
             yield analysis_status_event("preparing")
             yield analysis_status_event("answering")
@@ -272,6 +285,8 @@ class AIService:
                     persistence,
                     content=direct_result.content,
                     done_payload=done_payload,
+                    geospatial_result=agent_result.geospatial_result,
+                    tool_result=agent_result.tool_result,
                 )
                 finalized = True
                 schedule_after_response(persistence, assistant_content=direct_result.content)
@@ -322,6 +337,8 @@ class AIService:
                 persistence,
                 content=assistant_content,
                 done_payload=done_payload or {},
+                geospatial_result=agent_result.geospatial_result,
+                tool_result=agent_result.tool_result,
             )
             finalized = True
             schedule_after_response(persistence, assistant_content=assistant_content)

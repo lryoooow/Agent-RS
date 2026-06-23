@@ -24,7 +24,14 @@ ALL_DOCUMENT_TOOLS = (
     "parse_document",
 )
 
-ALL_CANDIDATE_TOOLS = ALL_IMAGERY_TOOLS + ALL_DOCUMENT_TOOLS
+# 报告工具自成一类：不吃 imagery_id/document_id，读本对话已持久化的分析结果出 Word。
+# 单列以便 plan_validator 的 route 白名单放行（candidate_tools 校验），
+# 且不被 tool_guards 的影像/文档归属校验拦截（其归属由 build_conversation_report 内的对话校验保证）。
+ALL_REPORT_TOOLS = (
+    "generate_report",
+)
+
+ALL_CANDIDATE_TOOLS = ALL_IMAGERY_TOOLS + ALL_DOCUMENT_TOOLS + ALL_REPORT_TOOLS
 
 
 @dataclass(frozen=True)

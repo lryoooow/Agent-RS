@@ -32,7 +32,7 @@ async def run_cloud_mask(args: CloudMaskArguments) -> ToolRunResult:
         return imagery_not_found_result(args.imagery_id)
     results_dir.mkdir(parents=True, exist_ok=True)
 
-    band_error = validate_band_indices(
+    band_error = await validate_band_indices(
         source_path,
         {
             "red": args.red_band,
@@ -62,10 +62,10 @@ async def run_cloud_mask(args: CloudMaskArguments) -> ToolRunResult:
         )
     except (FileNotFoundError, asyncio.TimeoutError, MCPCallError) as exc:
         logger.warning("Cloud/shadow mask failed: %s", exc)
-        return _error_result(f"云/阴影掩膜失败: {exc}", "mcp_error")
+        return _error_result("云/阴影掩膜失败，请稍后重试或检查影像与服务状态。", "mcp_error")
     except Exception as exc:
         logger.exception("Cloud/shadow mask unexpected error: %s", exc)
-        return _error_result(f"云/阴影掩膜失败: {exc}", "unexpected_error")
+        return _error_result("云/阴影掩膜失败，请稍后重试或检查影像与服务状态。", "unexpected_error")
 
     result_filename = str(stats.get("output_png") or "cloud_mask_colored.png")
     execution_info = ToolExecutionInfo(mode="docker_mcp", fallback_used=False)
