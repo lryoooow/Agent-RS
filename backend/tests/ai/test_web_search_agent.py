@@ -41,7 +41,11 @@ async def test_web_search_agent_calls_tavily_directly(monkeypatch):
     assert seen_calls[0]["api_key"] == "test-key"
     assert seen_calls[0]["query"] == "latest ai news"
     assert seen_calls[0]["max_results"] == 3
-    assert "Tool policy:" in result.tool_context
+    # M7：搜索子 Agent 人设不再注入最终 LLM 上下文，避免给回答模型套上第二个相互冲突的角色。
+    assert "Tool policy:" not in result.tool_context
+    assert "联网搜索子 Agent" not in result.tool_context
+    # 引用/使用规则仍随搜索结果块下发（来自 formatter，不依赖人设）。
+    assert "[S1]" in result.tool_context
     assert "https://example.test" in result.tool_context
 
 
@@ -149,7 +153,9 @@ async def test_web_search_all_queries_fail_returns_unavailable(monkeypatch):
     result = await run_web_search(args)
 
     assert result.error == "all down"
-    assert "temporarily unavailable" in result.tool_context
+    # M7：兜底文案改为中文，且仍明确不得谎称已完成联网检索。
+    assert "联网搜索暂时不可用" in result.tool_context
+    assert "请勿声称" in result.tool_context
 
 
 @pytest.mark.asyncio

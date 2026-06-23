@@ -43,14 +43,17 @@ def test_web_search_is_not_in_tool_registry() -> None:
 def test_every_registered_tool_is_allowed_by_its_route_channel() -> None:
     """每个注册工具都必须在其对应的路由候选通道里，否则 plan_validator 会把它
     静默降级为 capability_not_allowed_by_route。影像工具走 ALL_IMAGERY_TOOLS（吃 imagery_id），
-    文档工具走 ALL_DOCUMENT_TOOLS（吃 document_id），按 tag 分流校验。
-    新增工具时漏登记 routing 是已知坑，这条双通道回归测试守住它。"""
-    from app.agent.routing import ALL_DOCUMENT_TOOLS, ALL_IMAGERY_TOOLS
+    文档工具走 ALL_DOCUMENT_TOOLS（吃 document_id），报告工具走 ALL_REPORT_TOOLS（读本对话结果），
+    按 tag 分流校验。新增工具时漏登记 routing 是已知坑，这条多通道回归测试守住它。"""
+    from app.agent.routing import ALL_DOCUMENT_TOOLS, ALL_IMAGERY_TOOLS, ALL_REPORT_TOOLS
 
     imagery_channel = set(ALL_IMAGERY_TOOLS)
     document_channel = set(ALL_DOCUMENT_TOOLS)
-    # 两条通道不应有交集，否则分流语义被破坏。
+    report_channel = set(ALL_REPORT_TOOLS)
+    # 三条通道两两不相交，否则分流语义被破坏。
     assert not (imagery_channel & document_channel), "imagery/document 通道存在重叠工具"
+    assert not (imagery_channel & report_channel), "imagery/report 通道存在重叠工具"
+    assert not (document_channel & report_channel), "document/report 通道存在重叠工具"
 
     unrouted: list[str] = []
     for definition in list_tool_definitions(available_only=False):
@@ -58,7 +61,10 @@ def test_every_registered_tool_is_allowed_by_its_route_channel() -> None:
         tool = get_tool(name)
         assert tool is not None
         tags = set(tool.tags)
-        if "document" in tags:
+        if "report" in tags:
+            if name not in report_channel:
+                unrouted.append(f"{name} (report tag, missing from ALL_REPORT_TOOLS)")
+        elif "document" in tags:
             if name not in document_channel:
                 unrouted.append(f"{name} (document tag, missing from ALL_DOCUMENT_TOOLS)")
         else:

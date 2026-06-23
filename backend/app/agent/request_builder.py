@@ -4,6 +4,7 @@ import asyncio
 from dataclasses import dataclass
 
 from app.agent.imagery_access import iter_user_imagery_metadata
+from app.agent.context.analysis_summary import summarize_persisted_analyses
 from app.agent.context.assembler import assemble_context
 from app.agent.context.history import normalize_chat_message_for_provider
 from app.agent.context.summarizer import build_context_summaries
@@ -15,7 +16,7 @@ from app.agent.rag.formatter import format_retrieved_blocks
 from app.agent.rag.service import retrieve_rag_context
 from app.db.pool import fetch_optional_pool
 from app.db.repositories.memory import list_relevant_memories
-from app.db.repositories.message import list_recent_messages
+from app.db.repositories.message import list_recent_analysis_results, list_recent_messages
 from app.db.repositories.vector_search import search_hybrid_rrf
 from app.schemas.chat import ChatRequest
 from app.core.logging import log_event
@@ -58,6 +59,7 @@ async def build_provider_request_context(
     settings = get_settings()
     messages = await _resolve_context_messages(request, user_id=user_id)
     query = latest_user_text(request.messages)
+    prior_analysis_results = await _resolve_prior_analysis_results(request, user_id=user_id)
     if retrieved_context is None:
         if skip_retrieval:
             retrieved_context = RetrievedContext(
@@ -111,11 +113,12 @@ async def build_provider_request_context(
         memory=memory_context or summaries.memory,
         rag_context=rag_context,
         tool_context=tool_context,
-        imagery_inventory=(
-            build_imagery_inventory(user_id)
-            if tool_context
-            else None
-        ),
+        prior_analysis_results=prior_analysis_results,
+        # 影像清单始终注入答复上下文（与 planner 一贯注入保持一致）。
+        # 此前用 `if tool_context` 门控，导致未跑工具的轮次（如"根据刚才结果生成报告"
+        # 这类纯追问）答复模型看不到影像，误判"用户没上传影像"。
+        # build_imagery_inventory 无影像时返回 None，无影像用户零开销。
+        imagery_inventory=await build_imagery_inventory(user_id),
         max_total_chars=settings.context_max_total_chars,
         max_recent_chars=settings.ai_context_max_recent_chars,
         max_recent_messages=settings.context_max_recent_messages,
@@ -124,6 +127,7 @@ async def build_provider_request_context(
         max_memory_chars=settings.ai_context_max_memory_chars,
         max_rag_chars=settings.ai_context_max_rag_chars,
         max_tool_chars=settings.ai_context_max_tool_chars,
+        max_prior_results_chars=settings.ai_context_max_prior_results_chars,
         max_imagery_chars=settings.ai_context_max_imagery_chars,
     )
     return ProviderRequestContext(
@@ -152,10 +156,37 @@ async def _resolve_context_messages(request: ChatRequest, *, user_id: str | None
                 conn,
                 conversation_id=request.conversation_id,
                 limit=settings.context_max_loaded_messages,
+                user_id=user_id,
             )
         return messages or request.messages
     except Exception:
         return request.messages
+
+
+async def _resolve_prior_analysis_results(request: ChatRequest, *, user_id: str | None) -> str | None:
+    """读本对话此前持久化的结构化分析结果，整形成可注入答复上下文的中文摘要。
+
+    跨轮回注的核心：让"根据刚才的分类结果生成报告""那张图分析过吗"这类未跑工具的追问轮，
+    也能看到本对话真实执行过的工具结果，根治"同对话否认已执行分析"。
+    无 conversation_id / 无 user_id / 无存储 / 查询异常 → 返回 None（不注入，不报错）。
+    """
+    settings = get_settings()
+    if not settings.storage_active or not request.conversation_id or not user_id:
+        return None
+    pool = await fetch_optional_pool()
+    if pool is None:
+        return None
+    try:
+        async with pool.acquire() as conn:
+            results = await list_recent_analysis_results(
+                conn,
+                conversation_id=request.conversation_id,
+                user_id=user_id,
+                limit=settings.memory_retrieval_limit,
+            )
+        return summarize_persisted_analyses(results)
+    except Exception:
+        return None
 
 
 async def _resolve_retrieved_context(
@@ -292,10 +323,10 @@ async def build_planning_context(
     return messages
 
 
-def build_imagery_inventory(user_id: str | None) -> str | None:
+async def build_imagery_inventory(user_id: str | None) -> str | None:
     """Build a brief inventory of uploaded imagery for LLM context."""
     items: list[str] = []
-    for imagery_id, meta in iter_user_imagery_metadata(user_id):
+    for imagery_id, meta in await iter_user_imagery_metadata(user_id):
         items.append(
             f"- ID: {imagery_id} | {meta.get('band_count', '?')}波段 "
             f"| {meta.get('width', '?')}x{meta.get('height', '?')}px "

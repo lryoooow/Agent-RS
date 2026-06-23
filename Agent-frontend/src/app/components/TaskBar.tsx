@@ -20,14 +20,20 @@ const ITEMS: TaskItem[] = [
 export function TaskBar({
   onOpenTools,
   onOpenData,
+  onOpenTasks,
+  onOpenReports,
 }: {
   onOpenTools: () => void;
   onOpenData: () => void;
+  onOpenTasks: () => void;
+  onOpenReports: () => void;
 }) {
   const handle = (id: string) => {
     if (id === "tools") onOpenTools();
     else if (id === "data") onOpenData();
-    // 其余入口（工作台/任务队列/分析报告）暂为占位
+    else if (id === "tasks") onOpenTasks();
+    else if (id === "reports") onOpenReports();
+    // 「工作台」为当前主视图，无需额外动作
   };
 
   return (

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -203,7 +204,8 @@ async def upload_document(
     parsed_metadata = _parse_form_metadata(metadata)
     if extension in TEXT_EXTENSIONS:
         try:
-            parse_uploaded_document(
+            await asyncio.to_thread(
+                parse_uploaded_document,
                 filename=filename,
                 content_type=file.content_type,
                 data=data,
@@ -353,7 +355,8 @@ async def search_knowledge_documents(request: DocumentSearchRequest) -> Document
     )
     rerank_ms = int((time.perf_counter() - rerank_started) * 1000)
     selected = (
-        mmr_select(
+        await asyncio.to_thread(
+            mmr_select,
             candidates=ranked,
             query_embedding=embedding,
             top_n=request.limit,
@@ -517,6 +520,25 @@ async def _store_document_content(
     return DocumentCreateResponse(document_id=document_id, chunk_count=len(chunks))
 
 
+def _read_and_parse_document(
+    *,
+    temp_path: Path,
+    filename: str,
+    content_type: str | None,
+    title: str | None,
+    settings,
+):
+    """读取上传临时文件并解析（同步重活，供 to_thread 调用，不阻塞事件循环）。"""
+    data = temp_path.read_bytes()
+    return parse_uploaded_document(
+        filename=filename,
+        content_type=content_type,
+        data=data,
+        title=title,
+        settings=settings,
+    )
+
+
 async def _run_document_ingest_job(
     *,
     job_id: str,
@@ -534,11 +556,11 @@ async def _run_document_ingest_job(
         async with pool.acquire() as conn:
             await update_ingest_job(conn, job_id=job_id, status="parsing", progress=15)
         started = time.perf_counter()
-        data = temp_path.read_bytes()
-        parsed = parse_uploaded_document(
+        parsed = await asyncio.to_thread(
+            _read_and_parse_document,
+            temp_path=temp_path,
             filename=filename,
             content_type=content_type,
-            data=data,
             title=title,
             settings=settings,
         )

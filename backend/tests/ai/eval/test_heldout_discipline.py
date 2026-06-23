@@ -23,6 +23,10 @@ from tests.ai.eval.cases_generator import FEW_SHOT_QUERIES
 from tests.ai.eval.heldout_generator import (
     HELDOUT_DATASET,
     HELDOUT_V1_SEED,
+    HELDOUT_V5_DATASET,
+    HELDOUT_V5_SEED,
+    _V5_REPORT_NEGATIVE,
+    _V5_REPORT_POSITIVE,
     dataset_hash,
     generate_heldout_cases,
     heldout_summary,
@@ -440,3 +444,95 @@ def test_default_dataset_identity_is_pinned() -> None:
     assert HELDOUT_V1_SEED == 20260610
     assert HELDOUT_DATASET == "heldout-v1"
     assert len(cases) == 1000
+
+
+# ---------------------------------------------------------------------------
+# v5：generate_report 报告题（2026-06-18 新增能力）的判定与生成校验。
+
+
+def test_report_label_rule_derived_by_prior_analysis() -> None:
+    """报告题判定纯函数：call/none 只由 prior_analysis_state 决定，不吃 imagery/document id。"""
+
+    # 有分析史 → call generate_report，参数为空（报告通道不带 id）。
+    has = IntentSpec("positive", "pos_generate_report", "generate_report", prior_analysis_state="has")
+    label = derive_label(has, imagery_id=None, document_id=None, inventory=())
+    assert label.expected_action == "call"
+    assert label.expected_capability == "generate_report"
+    assert label.expected_arguments_subset == {}
+
+    # 无分析史 → none（no_analysis_to_report），即便清单里有图也不出报告。
+    none_intent = IntentSpec(
+        "hard_negative", "report_no_analysis", "generate_report",
+        imagery_state="valid", prior_analysis_state="none",
+    )
+    from tests.ai.eval.cases import ImageryFixture, DEFAULT_USER_ID
+
+    label_none = derive_label(
+        none_intent,
+        imagery_id="aabbccddeeff",
+        document_id=None,
+        inventory=(ImageryFixture("aabbccddeeff", owner_user_id=DEFAULT_USER_ID),),
+    )
+    assert label_none.expected_action == "none"
+    assert label_none.expected_capability is None
+
+
+def test_v5_has_report_cases_and_v1_does_not() -> None:
+    """v5 数据集嵌入报告正/反例；v1（报告能力之前）一条都没有。"""
+
+    v5 = generate_heldout_cases(seed=HELDOUT_V5_SEED, dataset=HELDOUT_V5_DATASET)
+    assert len(v5) == 1000
+
+    report_pos = [
+        c for c in v5
+        if c.expected_action == "call" and c.expected_capability == "generate_report"
+    ]
+    report_neg = [c for c in v5 if "report_no_analysis" in c.case_id]
+    assert len(report_pos) == _V5_REPORT_POSITIVE
+    assert len(report_neg) == _V5_REPORT_NEGATIVE
+
+    # 报告正例：带前轮分析 history、query 不写 imagery_id、参数为空。
+    for c in report_pos:
+        assert len(c.history) == 2, f"{c.case_id}: 报告正例应带一轮分析 history"
+        assert c.history[-1]["role"] == "assistant"
+        assert not c.expected_arguments_subset, f"{c.case_id}: 报告 call 不应带 id 参数"
+        for item in c.imagery_inventory:
+            assert item.imagery_id not in c.query, f"{c.case_id}: 报告 query 不应写 imagery_id"
+
+    # 报告反例：无分析 history → none。
+    for c in report_neg:
+        assert c.history == (), f"{c.case_id}: 无分析反例不应带 history"
+        assert c.expected_action == "none"
+        assert c.expected_capability is None
+
+    # v1 数据集没有任何报告题（报告能力是 v4 之后才加的）。
+    v1 = generate_heldout_cases()
+    assert not any(c.expected_capability == "generate_report" for c in v1)
+    assert not any("report_no_analysis" in c.case_id for c in v1)
+
+
+def test_v5_preserves_ratio_and_total() -> None:
+    """v5 嵌入报告题后总数 1000、五层配比骨架不变（报告题就地替换，不撑大题量）。"""
+
+    v5 = generate_heldout_cases(seed=HELDOUT_V5_SEED, dataset=HELDOUT_V5_DATASET)
+    from collections import Counter
+
+    kinds = Counter(c.case_id.split("_")[1] for c in v5)
+    assert dict(kinds) == {"pos": 350, "neg": 300, "bnd": 200, "cmp": 100, "noise": 50}
+
+
+def test_v5_report_queries_globally_unique_and_label_consistent() -> None:
+    """报告题 query 全局唯一，且每条 label 可由 derive_label 重算（防手填漂移）。"""
+
+    v5 = generate_heldout_cases(seed=HELDOUT_V5_SEED, dataset=HELDOUT_V5_DATASET)
+    queries = [c.query for c in v5]
+    assert len(queries) == len(set(queries)), "v5 存在重复 query"
+
+    for c in v5:
+        if c.expected_capability != "generate_report" and "report_no_analysis" not in c.case_id:
+            continue
+        state = "has" if c.history else "none"
+        intent = IntentSpec("positive", "recheck", "generate_report", prior_analysis_state=state)
+        label = derive_label(intent, imagery_id=None, document_id=None, inventory=c.imagery_inventory)
+        assert label.expected_action == c.expected_action, c.case_id
+        assert label.expected_capability == c.expected_capability, c.case_id

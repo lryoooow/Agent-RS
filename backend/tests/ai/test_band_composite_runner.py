@@ -86,7 +86,8 @@ async def test_band_composite_runner_returns_mcp_error_without_fallback(monkeypa
     result = await run_band_composite(BandCompositeArguments(imagery_id=IMAGERY_ID, mode="true_color"))
 
     assert result.error == "mcp_error"
-    assert "container failed" in result.tool_context
+    assert "container failed" not in result.tool_context  # M2 防泄漏
+    assert result.metadata["error_code"] == "mcp_error"
     assert result.metadata["execution_mode"] == "failed"
     get_settings.cache_clear()
 

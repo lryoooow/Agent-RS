@@ -19,6 +19,8 @@ from app.agent.tools.parse_document.runner import run_parse_document
 from app.agent.tools.parse_document.schema import PARSE_DOCUMENT_TOOL, ParseDocumentArguments
 from app.agent.tools.raster_inspect.runner import run_raster_inspect
 from app.agent.tools.raster_inspect.schema import RASTER_INSPECT_TOOL, RasterInspectArguments
+from app.agent.tools.report.runner import run_report
+from app.agent.tools.report.schema import REPORT_TOOL, ReportArguments
 from app.agent.tools.segment.runner import run_segment
 from app.agent.tools.segment.schema import SEGMENT_TOOL, SegmentArguments
 from app.agent.tools.spectral_index.runner import run_spectral_index
@@ -87,6 +89,10 @@ async def _run_parse_document(args: ParseDocumentArguments) -> ToolRunResult:
 
 async def _run_ocr(args: OcrArguments) -> ToolRunResult:
     return await run_ocr(args)
+
+
+async def _run_report(args: ReportArguments) -> ToolRunResult:
+    return await run_report(args)
 
 
 TOOLS: dict[str, RegisteredTool] = {
@@ -168,6 +174,15 @@ TOOLS: dict[str, RegisteredTool] = {
         # 吃 imagery_id，走影像通道（不带 document tag，否则路由分流会判错通道）；
         # 领域归属由 TOOL_DOMAIN 单独映射到 document_agent，与路由 tag 正交。
         tags=("imagery", "ocr", "mcp"),
+    ),
+    "generate_report": RegisteredTool(
+        name="generate_report",
+        definition=REPORT_TOOL,
+        argument_model=ReportArguments,
+        runner=_run_report,
+        # 不吃 imagery_id/document_id，读本对话已持久化的分析结果出 Word；
+        # 自成 report 通道（ALL_REPORT_TOOLS），归属由 build_conversation_report 的对话校验保证。
+        tags=("report",),
     ),
 }
 

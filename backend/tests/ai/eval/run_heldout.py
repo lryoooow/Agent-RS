@@ -35,6 +35,8 @@ from tests.ai.eval.heldout_generator import (
     HELDOUT_V3_SEED,
     HELDOUT_V4_DATASET,
     HELDOUT_V4_SEED,
+    HELDOUT_V5_DATASET,
+    HELDOUT_V5_SEED,
     dataset_hash,
     generate_heldout_cases,
     heldout_summary,
@@ -59,6 +61,7 @@ _VERSIONS = {
     "v2": {"dataset": HELDOUT_V2_DATASET, "seed": HELDOUT_V2_SEED, "dirname": "heldout_v2"},
     "v3": {"dataset": HELDOUT_V3_DATASET, "seed": HELDOUT_V3_SEED, "dirname": "heldout_v3"},
     "v4": {"dataset": HELDOUT_V4_DATASET, "seed": HELDOUT_V4_SEED, "dirname": "heldout_v4"},
+    "v5": {"dataset": HELDOUT_V5_DATASET, "seed": HELDOUT_V5_SEED, "dirname": "heldout_v5"},
 }
 DATASET = HELDOUT_DATASET
 SEED = HELDOUT_V1_SEED
@@ -186,7 +189,7 @@ async def _live(args: argparse.Namespace) -> int:
         ):
             get_settings.cache_clear()
             get_planner_decision_cache().clear()
-            sample_context = build_recording_context(
+            sample_context = await build_recording_context(
                 cases[0], request=_request_for_case(cases[0]), config=config
             )
     prompt_hash = sample_context.prompt_hash
@@ -419,7 +422,7 @@ async def _score(args: argparse.Namespace) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="heldout freeze/live/seal/score（--version v1|v2）")
-    parser.add_argument("--version", choices=("v1", "v2", "v3", "v4"), default="v1",
+    parser.add_argument("--version", choices=("v1", "v2", "v3", "v4", "v5"), default="v1",
                         help="数据集版本：v1=历史证据(默认)，v2=修正口径后全新冻结盲测")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("freeze")

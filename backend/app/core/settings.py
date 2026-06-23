@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     ai_context_max_memory_chars: int = 3000
     ai_context_max_rag_chars: int = 6000
     ai_context_max_tool_chars: int = 6000
+    # 注：与其它 ai_context_max_*_chars 同样语义上是"估算 token 预算"而非字符数
+    # （见 budget.py 模块说明）。本对话已产出分析结果的回注块预算。
+    ai_context_max_prior_results_chars: int = 2000
     ai_context_max_imagery_chars: int = 2000
     ai_prompt_profile: str = "agent_rs_core_v1"
     ai_prompt_enable_dynamic_modules: bool = True
@@ -78,18 +81,21 @@ class Settings(BaseSettings):
     auth_session_days: int = 14
     auth_cookie_secure: bool = False
     auth_cookie_samesite: str = "lax"
-    auth_password_min_length: int = 8
+    auth_password_min_length: int = 10
+    auth_password_max_length: int = 128
+    # 登录失败限流（进程内，单实例 beta 适用；多实例需换 Redis）。见 app/auth/throttle.py。
+    auth_login_max_failures: int = 5
+    auth_login_lockout_seconds: int = 300
+    # 注册门控：True=必须持有效邀请码才能注册（定向内测默认）；False=开放注册（回退用）。
+    invite_required: bool = True
+    # 管理员邮箱（逗号分隔）。邮箱∈此列表即管理员，可签发邀请/管理用户。
+    # 用设置项而非 users 表布尔列：beta 期管理员极少，免一次迁移；改名单即时生效。
+    admin_emails: str = ""
 
     database_enabled: bool = False
     database_url: str = ""
     database_pool_min_size: int = 1
     database_pool_max_size: int = 5
-
-    # 存储后端：留空=自动推断（DATABASE_ENABLED=true 走 postgres，否则 sqlite）；
-    # 也可显式写 sqlite / postgres 强制。sqlite 下登录/记忆/历史/文档知识库
-    # 全部落本地单文件库，clone 即用、零服务器。
-    storage_backend: str = ""
-    sqlite_path: str = "backend/storage/agent_rs.db"
     # RAG 检索引擎：仅预留开关，当前只有 builtin（现有 hybrid+RRF+rerank+MMR）。
     rag_engine: str = "builtin"
 
@@ -141,9 +147,31 @@ class Settings(BaseSettings):
     imagery_working_max_dimension: int = 4096
     imagery_preview_max_dimension: int = 2048
     imagery_compression: str = "deflate"
+    # 影像二进制存储后端：local=本地盘（默认，与迁移前一致）；minio=对象存储（多实例可迁移）。
+    # 逐景灰度由 imagery 表 storage_backend 列承载；此处是新上传的默认落点。
+    storage_backend: str = "local"
+    minio_endpoint: str = "127.0.0.1:9000"
+    minio_access_key: str = ""
+    minio_secret_key: str = ""
+    minio_bucket: str = "agent-rs"
+    minio_secure: bool = False
+    # 同时运行的遥感工具容器上限；超出则排队等待（见 app/mcp/concurrency.py）。
+    # 取保守值覆盖最坏情况：detect/segment 各吃 6g，3 个并发约 18g 峰值。
+    rs_tools_max_concurrent: int = 3
+    # durable 工具任务队列（见 app/agent/tool_jobs.py + 0008_tool_jobs.sql）。
+    # enabled=false 退回纯同步执行、不写 job（与迁移前等价，回退用）。
+    # 正常流量仍在请求内同步执行实时推 SSE；本队列只做持久化记录 + 重启恢复孤儿任务。
+    tool_jobs_enabled: bool = True
+    # worker 轮询间隔（秒）：每隔此久扫一次孤儿 job。
+    tool_jobs_poll_interval_seconds: int = 30
+    # 孤儿判定阈值（秒）：running 状态 heartbeat 超过此值视为被重启打断的孤儿。
+    # 取 max(工具 timeout)×1.5 ≈ 450s 覆盖 segment 的 300s，避免长任务被误判。
+    tool_jobs_stale_after_seconds: int = 450
     rs_tools_docker_timeout_seconds: int = 120
     rs_tools_mcp_image: str = "rs-tools-mcp:0.1.0"
     rs_tools_mcp_use_docker: bool = True
+    # 预留开关，当前未接线：docker 关闭时各工具直接报 mcp_disabled，不做本地降级计算。
+    # 保留此项仅为 .env 兼容；如需本地回退须另行实现并在此处接线。
     rs_tools_mcp_allow_local_fallback: bool = False
     rs_tools_mcp_memory_limit: str = "2g"
     rs_tools_mcp_cpus: float = 2.0
@@ -174,27 +202,28 @@ class Settings(BaseSettings):
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
 
     @property
-    def resolved_storage_backend(self) -> str:
-        """最终生效的存储后端。
+    def admin_email_list(self) -> list[str]:
+        """规范化（去空白、转小写）的管理员邮箱列表，与登录归一化口径一致。"""
+        return [email.strip().lower() for email in self.admin_emails.split(",") if email.strip()]
 
-        显式配置 STORAGE_BACKEND 优先；留空时自动推断：
-        DATABASE_ENABLED=true → postgres（保护维护者既有云库），否则 sqlite（本地零依赖）。
+    def is_admin_email(self, email: str | None) -> bool:
+        return bool(email) and email.strip().lower() in self.admin_email_list
+
+    @property
+    def auth_required(self) -> bool:
+        """是否强制登录：鉴权开启且持久化可用时为真。
+
+        本地 DB 关闭场景（database_enabled=false）仍返回 false，保留零依赖默认用户开发路径。
         """
-        explicit = self.storage_backend.strip().lower()
-        if explicit in ("sqlite", "postgres"):
-            return explicit
-        return "postgres" if self.database_enabled else "sqlite"
+        return self.auth_enabled and self.database_enabled
 
     @property
     def storage_active(self) -> bool:
-        """持久化能力是否可用：postgres 后端需 DATABASE_ENABLED，sqlite 恒可用。
+        """持久化能力是否可用：本项目仅 PostgreSQL，等价于 DATABASE_ENABLED。
 
-        替代散落各处的 `database_enabled` 判断——后者只认 Postgres，
-        会让 SQLite 模式下文档/记忆/RAG/会话等闸口被误关。
+        保留此 property（而非各处直接判 database_enabled），让调用点语义清晰、
+        未来若再加后端时只改这一处。
         """
-        backend = self.resolved_storage_backend
-        if backend == "sqlite":
-            return True
         return self.database_enabled
 
     @property

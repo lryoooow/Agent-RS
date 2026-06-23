@@ -173,6 +173,13 @@ class RasterInspectResult(BaseModel):
     execution: ToolExecutionInfo | None = None
 
 
+class GeospatialReportResult(BaseModel):
+    type: Literal["report"]
+    imagery_id: str
+    filename: str
+    download_url: str
+
+
 GeospatialResult = (
     GeospatialPreviewResult
     | GeospatialNDVIResult
@@ -180,6 +187,7 @@ GeospatialResult = (
     | GeospatialCompositeResult
     | GeospatialDetectionResult
     | GeospatialSegmentationResult
+    | GeospatialReportResult
 )
 ToolResult = RasterInspectResult
 

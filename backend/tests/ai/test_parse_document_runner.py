@@ -84,11 +84,7 @@ async def test_parse_document_runner_invalid_id() -> None:
 
 @pytest.mark.asyncio
 async def test_parse_document_runner_database_disabled(monkeypatch) -> None:
-    # 上一轮 SQLite 本地化遗留的连带修正：新契约下 DATABASE_ENABLED=false 不再等于
-    # "禁用"，而是降级到本地 sqlite（storage_active=True，放行查库）。要真正命中
-    # database_disabled 短路，须显式 postgres 后端 + 关库（与 test_documents.py 的
-    # test_documents_route_reports_database_disabled 同型）。
-    monkeypatch.setenv("STORAGE_BACKEND", "postgres")
+    # 存储未启用（DATABASE_ENABLED=false，storage_active=False）→ 短路返回 database_disabled，不查库。
     monkeypatch.setenv("DATABASE_ENABLED", "false")
     get_settings.cache_clear()
     result = await run_parse_document(ParseDocumentArguments(document_id=VALID_DOC_ID))

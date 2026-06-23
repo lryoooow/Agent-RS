@@ -204,6 +204,19 @@ GOLDEN_CASES: tuple[PlannerEvalCase, ...] = (
         notes="OCR 走影像通道，但领域归 document_agent。",
     ),
     PlannerEvalCase(
+        case_id="tool_generate_report",
+        query="根据刚才的地物分类结果帮我生成一份分析报告，我要放进论文里",
+        expected_action="call",
+        expected_capability="generate_report",
+        imagery_inventory=OWNED_IMAGE,
+        history=(
+            {"role": "user", "content": f"把影像 {PRIMARY_IMAGERY_ID} 做地物分类"},
+            {"role": "assistant", "content": "地物分类完成：背景 91.3%、建筑 3.4%、林地 2.6%、水体 2.6%。"},
+        ),
+        category="tool_positive",
+        notes="本对话已执行分类，用户要求出报告 → generate_report（报告通道，不吃 imagery/document id）。",
+    ),
+    PlannerEvalCase(
         case_id="search_weather",
         query="明天杭州会下中雨吗？",
         expected_action="call",

@@ -1,6 +1,6 @@
 ﻿from datetime import date
 
-from app.agent.context.budget import trim_to_budget
+from app.agent.context.budget import TRUNCATION_MARKER, trim_to_budget
 from app.agent.prompting.loader import render_template
 from app.agent.prompting.selector import DEFAULT_PROMPT_PROFILE, select_prompt_modules
 from app.agent.prompting.types import PromptRenderResult
@@ -53,6 +53,9 @@ def render_prompt_context(
         if not content:
             dropped_blocks.append(f"prompt:{module.name}")
             continue
+        # 系统规则层若被预算从句中截断，显式标记（不静默生效半截规则）。
+        if content.endswith(TRUNCATION_MARKER.strip()) or TRUNCATION_MARKER in content:
+            dropped_blocks.append(f"prompt:{module.name}:truncated")
         rendered.append(content)
         included_blocks.append(f"prompt:{module.name}")
 

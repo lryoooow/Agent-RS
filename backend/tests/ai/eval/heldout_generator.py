@@ -57,6 +57,18 @@ HELDOUT_V3_DATASET = "heldout-v3"
 HELDOUT_V4_SEED = 20260617
 HELDOUT_V4_DATASET = "heldout-v4"
 
+# heldout-v5：2026-06-18 新增 generate_report 报告能力（prompt 加报告 few-shot，prompt_hash 8715fc88）。
+# v4 建于报告能力之前、含 0 条报告题，测不到新能力。v5 全新 seed 在 v4 基础上加报告维度：
+# positive 块嵌入"带分析史→call generate_report"正例，hard_negative 块嵌入"无分析史凭空要报告→none"
+# 反例（no_analysis_to_report）。报告通道不吃 imagery/document id，call/none 由 history 分析信号决定
+# （已实证 planner 判定成立）。改题加能力开新版冻结，遵盲测铁律（sealed run 禁换 prompt 重采）。
+HELDOUT_V5_SEED = 20260618
+HELDOUT_V5_DATASET = "heldout-v5"
+
+# v5 报告题配额：从 positive/hard_negative 各划出固定条数改造为报告题，总数 1000 与配比骨架不变。
+_V5_REPORT_POSITIVE = 18   # positive 块里的报告正例数（带分析史 → call generate_report）
+_V5_REPORT_NEGATIVE = 12   # hard_negative 块里的无分析报告反例数（→ none）
+
 # 配比 35/30/20/10/5。
 _RATIO = {
     "positive": 0.35,
@@ -144,6 +156,7 @@ def _build_case(
     seed: int,
     dataset: str,
     extra_imagery: tuple[str, ...] = (),
+    history: tuple[dict[str, str], ...] = (),
 ) -> PlannerEvalCase:
     inventory = imagery_inventory_for(intent.imagery_state, img)
     # 多图边界：追加诱饵自有图（指代/残缺ID 在多图下的歧义判定，验证修正后 derive_label 口径）。
@@ -164,6 +177,7 @@ def _build_case(
         notes=f"heldout-v1 场景生成；意图 {intent.kind}/{intent.subtype}。",
         imagery_inventory=inventory,
         document_context=document_context,
+        history=history,
         expected_arguments_subset=dict(label.expected_arguments_subset),
         min_query_count=label.min_query_count,
         source="heldout",
@@ -176,7 +190,31 @@ def _build_case(
 
 def _gen_positive(total, rng, pool, uniq, seed, dataset):
     cases = []
+    # v5：从 positive 块前段划出报告正例（带分析 history → call generate_report）。
+    report_quota = _V5_REPORT_POSITIVE if dataset == HELDOUT_V5_DATASET else 0
     for i in range(total):
+        if i < report_quota:
+            # 报告正例：先造"已跑过分析"的影像 + history，再造不含 ID 的报告 query。
+            img = pool.new_imagery_id()
+            history = phrasing.realize_prior_analysis_history(rng, img=img)
+            intent = IntentSpec(
+                "positive", "pos_generate_report", "generate_report",
+                prior_analysis_state="has",
+            )
+            query = uniq.take(lambda: phrasing.realize_report(rng))
+            cases.append(
+                _build_case(
+                    case_id=f"heldout_pos_generate_report_{i:03d}",
+                    query=query,
+                    intent=intent,
+                    img=None,  # 报告通道不吃 imagery_id；影像仅经 history 体现已分析
+                    doc=None,
+                    seed=seed,
+                    dataset=dataset,
+                    history=history,
+                )
+            )
+            continue
         cap = POSITIVE_CAPABILITIES[i % len(POSITIVE_CAPABILITIES)]
         args = _spec_arguments(rng, cap)
         if cap == "web_search":
@@ -208,7 +246,32 @@ def _gen_positive(total, rng, pool, uniq, seed, dataset):
 def _gen_hard_negative(total, rng, pool, uniq, seed, dataset):
     kinds = ("negation", "concept", "missing_id", "non_owner", "general", "contradiction")
     cases = []
+    # v5：从 hard_negative 块前段划出无分析报告反例（无分析 history 凭空要报告 → none）。
+    report_quota = _V5_REPORT_NEGATIVE if dataset == HELDOUT_V5_DATASET else 0
     for i in range(total):
+        if i < report_quota:
+            # 无分析史 + 索要报告 → none（no_analysis_to_report）。半数清单放一张真图加大诱惑，
+            # 但无任何分析 history，报告仍应拒绝（不能凭"有图"就出报告）。
+            with_image = i % 2 == 1
+            img = pool.new_imagery_id() if with_image else None
+            state = "valid" if with_image else "none"
+            intent = IntentSpec(
+                "hard_negative", "report_no_analysis", "generate_report",
+                imagery_state=state, prior_analysis_state="none",
+            )
+            query = uniq.take(lambda: phrasing.realize_report_no_analysis(rng))
+            cases.append(
+                _build_case(
+                    case_id=f"heldout_neg_report_no_analysis_{i:03d}",
+                    query=query,
+                    intent=intent,
+                    img=img,
+                    doc=None,
+                    seed=seed,
+                    dataset=dataset,
+                )
+            )
+            continue
         kind = kinds[i % len(kinds)]
         img = doc = None
         extra: tuple[str, ...] = ()  # 多图诱饵自有图（missing_id 多图边界用）

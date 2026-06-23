@@ -107,6 +107,22 @@ def test_unknown_profile_raises_config_error() -> None:
         render_prompt_context(messages=_msg("你好"), profile="does_not_exist_v9")
 
 
+# ---------- 边界：系统规则层被预算截断时显式标记，不静默生效半截规则（H2） ----------
+
+def test_truncated_rule_layer_is_flagged_not_silent() -> None:
+    # max_core_chars 较小（但大于截断标记本身的开销）→ required 规则层会被从句中截断并加标记。
+    # H2 要求：被截层进入 dropped_blocks 的 ":truncated" 标记，便于观测，不静默生效半截规则。
+    res = render_prompt_context(messages=_msg("你好"), max_core_chars=20)
+    truncated = [b for b in res.dropped_blocks if b.endswith(":truncated")]
+    assert truncated, f"expected a truncated rule layer flag, got {res.dropped_blocks}"
+
+
+def test_no_truncation_flag_when_budget_ample() -> None:
+    # 边界反例：不设预算（默认 None）时不应出现任何 :truncated 噪声标记。
+    res = _render("你好")
+    assert not [b for b in res.dropped_blocks if b.endswith(":truncated")]
+
+
 # ---------- 历史重复点反例 1：内部标识不泄漏 ----------
 
 def test_no_internal_module_marker_leaks() -> None:

@@ -1,0 +1,55 @@
+# 本地基础设施：PostgreSQL（含 pgvector）+ MinIO（对象存储），供后端开发与测试共用。
+# 用法：
+#   docker compose up -d db         # 只起库（默认 STORAGE_BACKEND=local，影像落本地盘）
+#   docker compose up -d db minio   # 起库 + 对象存储（STORAGE_BACKEND=minio 时需要）
+#   docker compose down             # 停服务（保留数据卷）
+#   docker compose down -v          # 停服务并清空数据卷
+#
+# 连接串（已对齐 backend/.env.example 的默认，端口避开本机常装服务）：
+#   PG:    postgresql://agent_rs:agent_rs_local@127.0.0.1:15432/agent_rs
+#   MinIO: endpoint 127.0.0.1:9000，控制台 http://127.0.0.1:9001（agent_rs / agent_rs_local）
+#
+# 注意：MCP 遥感工具镜像（docker/ 下）走 `docker run` 独立启动，与本 compose 互不影响。
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: agent_rs_pg
+    environment:
+      POSTGRES_USER: agent_rs
+      POSTGRES_PASSWORD: agent_rs_local
+      POSTGRES_DB: agent_rs
+    ports:
+      - "15432:5432"
+    volumes:
+      - agent_rs_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agent_rs -d agent_rs"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # 对象存储（影像二进制）。控制台 :9001，S3 API :9000。
+  # 启用：后端 .env 设 STORAGE_BACKEND=minio + MINIO_* 凭据；桶由后端启动时幂等创建。
+  #   docker compose up -d db minio
+  minio:
+    image: minio/minio:latest
+    container_name: agent_rs_minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: agent_rs
+      MINIO_ROOT_PASSWORD: agent_rs_local
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - agent_rs_minio:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  agent_rs_pgdata:
+  agent_rs_minio:

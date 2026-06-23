@@ -121,13 +121,22 @@ export type GeospatialSegmentationResult = GeospatialBaseResult & {
   execution?: ToolExecutionInfo | null;
 };
 
+// 报告结果：不是地图图层，而是一份可下载的 Word 文档（独立形态，无 result_url/bounds）。
+export type GeospatialReportResult = {
+  type: "report";
+  imagery_id: string;
+  filename: string;
+  download_url: string;
+};
+
 export type GeospatialResult =
   | GeospatialPreviewResult
   | GeospatialNdviResult
   | GeospatialSpectralIndexResult
   | GeospatialCompositeResult
   | GeospatialDetectionResult
-  | GeospatialSegmentationResult;
+  | GeospatialSegmentationResult
+  | GeospatialReportResult;
 
 export type RasterBandStats = {
   band: number;
@@ -209,6 +218,10 @@ export type ConfigResponse = {
   allow_user_extra_instructions: boolean;
   web_search_enabled: boolean;
   web_search_configured: boolean;
+  // 强制登录：未登录时前端全屏拦截到 AuthGate。
+  auth_required: boolean;
+  // 注册需邀请码：注册表单显示邀请码输入框。
+  invite_required: boolean;
 };
 
 export type StoredConfig = {

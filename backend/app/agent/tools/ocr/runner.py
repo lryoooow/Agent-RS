@@ -38,7 +38,7 @@ async def run_ocr(args: OcrArguments) -> ToolRunResult:
         if args.grayscale
         else {"red": args.red_band, "green": args.green_band, "blue": args.blue_band}
     )
-    band_error = validate_band_indices(source_path, bands)
+    band_error = await validate_band_indices(source_path, bands)
     if band_error:
         return invalid_bands_result("影像 OCR", band_error)
 
@@ -62,10 +62,10 @@ async def run_ocr(args: OcrArguments) -> ToolRunResult:
         )
     except (FileNotFoundError, asyncio.TimeoutError, MCPCallError) as exc:
         logger.warning("OCR failed: %s", exc)
-        return _error_result(f"影像 OCR 失败: {exc}", "mcp_error")
+        return _error_result("影像 OCR 失败，请稍后重试或检查影像与服务状态。", "mcp_error")
     except Exception as exc:
         logger.exception("OCR unexpected error: %s", exc)
-        return _error_result(f"影像 OCR 失败: {exc}", "unexpected_error")
+        return _error_result("影像 OCR 失败，请稍后重试或检查影像与服务状态。", "unexpected_error")
 
     max_chars = settings.ai_context_max_tool_chars
     full_text = str(stats.get("full_text") or "")

@@ -32,7 +32,7 @@ async def run_band_composite(args: BandCompositeArguments) -> ToolRunResult:
         return imagery_not_found_result(args.imagery_id)
     results_dir.mkdir(parents=True, exist_ok=True)
 
-    band_error = validate_band_indices(
+    band_error = await validate_band_indices(
         source_path,
         required_bands_for_composite(args.mode, args.bands),
     )
@@ -56,10 +56,10 @@ async def run_band_composite(args: BandCompositeArguments) -> ToolRunResult:
         )
     except (FileNotFoundError, asyncio.TimeoutError, MCPCallError) as exc:
         logger.warning("Band composite failed: %s", exc)
-        return _error_result(f"波段组合失败: {exc}", "mcp_error")
+        return _error_result("波段组合失败，请稍后重试或检查影像与服务状态。", "mcp_error")
     except Exception as exc:
         logger.exception("Band composite unexpected error: %s", exc)
-        return _error_result(f"波段组合失败: {exc}", "unexpected_error")
+        return _error_result("波段组合失败，请稍后重试或检查影像与服务状态。", "unexpected_error")
 
     result_filename = str(result.get("output_png") or f"composite_{args.mode}.png")
     bands_used = [int(item) for item in result.get("bands_used", [])]

@@ -178,7 +178,7 @@ async def test_build_provider_messages_loads_more_than_recent_window_for_summary
     async def fake_fetch_optional_pool():
         return FakePool()
 
-    async def fake_list_recent_messages(_conn, *, conversation_id: str, limit: int):
+    async def fake_list_recent_messages(_conn, *, conversation_id: str, limit: int, user_id=None):
         seen["limit"] = limit
         return [
             ChatMessage(role="user", content="早期约定：项目必须使用中文回复"),
@@ -216,19 +216,23 @@ async def test_build_provider_messages_loads_more_than_recent_window_for_summary
 
 
 @pytest.mark.asyncio
-async def test_build_provider_messages_does_not_inject_inventory_for_unrelated_question(
+async def test_build_provider_messages_does_not_inject_inventory_without_imagery(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """边界守门：用户没有任何影像时，答复上下文不出现影像清单块。
+
+    影像清单与 planner 一贯注入对齐（不再按关键词/tool_context 门控），但"始终注入"
+    的前提是用户确实有影像——build_imagery_inventory 无影像返回 None，对应可选块为空、
+    不进上下文。本用例锁死"无影像用户零注入、不凭空冒出空清单"这条边界。
+    """
     monkeypatch.setenv("AI_CONTEXT_MAX_TOTAL_CHARS", "10000")
     get_settings.cache_clear()
+    async def _empty_inventory(_user_id):
+        return []
+
     monkeypatch.setattr(
         "app.agent.request_builder.iter_user_imagery_metadata",
-        lambda _user_id: [
-            (
-                "94e758f38ede",
-                {"band_count": 4, "width": 16, "height": 16, "crs": "EPSG:4326"},
-            )
-        ],
+        _empty_inventory,
     )
 
     result = await build_provider_messages(
@@ -236,7 +240,7 @@ async def test_build_provider_messages_does_not_inject_inventory_for_unrelated_q
         user_id=get_settings().default_user_id,
     )
 
-    assert all("94e758f38ede" not in message["content"] for message in result)
+    assert all("## 已上传影像清单" not in message["content"] for message in result)
 
 
 @pytest.mark.asyncio
@@ -245,14 +249,17 @@ async def test_build_provider_request_context_injects_inventory_with_tool_contex
 ) -> None:
     monkeypatch.setenv("AI_CONTEXT_MAX_TOTAL_CHARS", "10000")
     get_settings.cache_clear()
-    monkeypatch.setattr(
-        "app.agent.request_builder.iter_user_imagery_metadata",
-        lambda _user_id: [
+    async def _one_imagery(_user_id):
+        return [
             (
                 "94e758f38ede",
                 {"band_count": 4, "width": 16, "height": 16, "crs": "EPSG:4326"},
             )
-        ],
+        ]
+
+    monkeypatch.setattr(
+        "app.agent.request_builder.iter_user_imagery_metadata",
+        _one_imagery,
     )
 
     result = await build_provider_request_context(
@@ -263,6 +270,144 @@ async def test_build_provider_request_context_injects_inventory_with_tool_contex
 
     inventory = next(message["content"] for message in result.messages if "94e758f38ede" in message["content"])
     assert "94e758f38ede" in inventory
+
+
+@pytest.mark.asyncio
+async def test_build_provider_request_context_injects_inventory_without_tool_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """历史重复点回归守门：未跑工具的轮次，影像清单仍须进入答复上下文。
+
+    根因 bug：`request_builder` 此前用 `imagery_inventory = ... if tool_context else None`
+    门控，导致没有触发工具的轮次（如"根据刚才的地物分类结果生成报告"这类纯追问、
+    或被用户反驳后的解释轮）答复模型完全看不到影像清单，于是误判"用户没上传影像"，
+    甚至把自己上一轮（planner 阶段无条件注入、答得出影像数）说过的话当成幻觉收回。
+    本用例锁死修复：哪怕 tool_context 为 None（本轮没跑任何工具），只要用户有影像，
+    答复上下文里就必须出现该影像清单——与 planner 一贯注入行为对齐。
+    """
+    monkeypatch.setenv("AI_CONTEXT_MAX_TOTAL_CHARS", "10000")
+    get_settings.cache_clear()
+    async def _one_imagery(_user_id):
+        return [
+            (
+                "94e758f38ede",
+                {"band_count": 4, "width": 16, "height": 16, "crs": "EPSG:4326"},
+            )
+        ]
+
+    monkeypatch.setattr(
+        "app.agent.request_builder.iter_user_imagery_metadata",
+        _one_imagery,
+    )
+
+    # 关键差异：tool_context 缺省（None）——模拟"本轮未跑工具"的追问场景。
+    result = await build_provider_request_context(
+        ChatRequest(messages=[{"role": "user", "content": "根据刚才那张图的结果帮我生成报告"}]),
+        user_id=get_settings().default_user_id,
+    )
+
+    inventory = next(
+        (message["content"] for message in result.messages if "94e758f38ede" in message["content"]),
+        None,
+    )
+    assert inventory is not None, "未跑工具的轮次答复上下文丢失了影像清单（影像否认 bug 回归）"
+    assert "## 已上传影像清单" in inventory
+
+
+@pytest.mark.asyncio
+async def test_prior_analysis_results_reinjected_without_tool_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """历史重复点·核心：未跑工具的追问轮，仍能看到本对话此前真实的分析结果。
+
+    复现实测 bug：上一轮跑了地物分类（背景 91.307% 等），下一轮"根据刚才结果生成报告"
+    没触发任何工具，结果模型否认"尚未执行分类"。根因是工具结果只活在当轮，不跨轮。
+    本用例锁死修复：持久化的分类结果经 list_recent_analysis_results 回注答复上下文，
+    出现"## 本对话已产出的分析结果"块且含真实占比 91.31%——模型不再有理由否认。
+    """
+    class FakeAcquire:
+        async def __aenter__(self):
+            return object()
+
+        async def __aexit__(self, *_):
+            return None
+
+    class FakePool:
+        def acquire(self):
+            return FakeAcquire()
+
+    async def fake_fetch_optional_pool():
+        return FakePool()
+
+    async def fake_list_recent_messages(_conn, *, conversation_id, limit, user_id=None):
+        return [ChatMessage(role="user", content="根据刚才的分类结果帮我生成报告")]
+
+    async def fake_list_recent_analysis_results(_conn, *, conversation_id, user_id, limit):
+        return [
+            {
+                "geospatial_result": {
+                    "type": "segmentation",
+                    "imagery_id": "d722c20e1234",
+                    "classes": [
+                        {"label": "背景", "percentage": 91.307},
+                        {"label": "建筑", "percentage": 3.441},
+                    ],
+                }
+            }
+        ]
+
+    monkeypatch.setenv("DATABASE_ENABLED", "true")
+    monkeypatch.setenv("AI_CONTEXT_MAX_TOTAL_CHARS", "10000")
+    get_settings.cache_clear()
+    monkeypatch.setattr("app.agent.request_builder.fetch_optional_pool", fake_fetch_optional_pool)
+    monkeypatch.setattr("app.agent.request_builder.list_recent_messages", fake_list_recent_messages)
+    monkeypatch.setattr(
+        "app.agent.request_builder.list_recent_analysis_results",
+        fake_list_recent_analysis_results,
+    )
+
+    # 关键：tool_context 缺省（本轮没跑工具），仍应注入历史分析结果块。
+    result = await build_provider_request_context(
+        ChatRequest(
+            conversation_id="00000000-0000-4000-8000-000000000abc",
+            messages=[{"role": "user", "content": "根据刚才的分类结果帮我生成报告"}],
+            use_memory=False,
+            use_rag=False,
+        ),
+        user_id="00000000-0000-4000-8000-000000000001",
+    )
+
+    block = next(
+        (m["content"] for m in result.messages if "## 本对话已产出的分析结果" in m["content"]),
+        None,
+    )
+    assert block is not None, "未跑工具的追问轮丢失了已持久化的分析结果（否认分类 bug 回归）"
+    assert "背景 91.31%" in block
+    assert "不得声称未执行" in block
+
+
+@pytest.mark.asyncio
+async def test_prior_analysis_results_absent_without_conversation_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """边界：无 conversation_id（无状态/新对话）不查也不注入分析结果块，且不触碰 DB。"""
+    async def fail_list_recent_analysis_results(*_, **__):
+        raise AssertionError("无 conversation_id 不应查询历史分析结果")
+
+    monkeypatch.setenv("DATABASE_ENABLED", "true")
+    monkeypatch.setenv("AI_CONTEXT_MAX_TOTAL_CHARS", "10000")
+    get_settings.cache_clear()
+    monkeypatch.setattr(
+        "app.agent.request_builder.list_recent_analysis_results",
+        fail_list_recent_analysis_results,
+    )
+
+    result = await build_provider_request_context(
+        ChatRequest(messages=[{"role": "user", "content": "你好"}]),
+        user_id="00000000-0000-4000-8000-000000000001",
+    )
+
+    assert all("## 本对话已产出的分析结果" not in m["content"] for m in result.messages)
 
 
 @pytest.mark.asyncio
@@ -411,7 +556,7 @@ async def test_conversation_id_governs_whether_db_history_is_pulled(
     async def fake_fetch_optional_pool():
         return FakePool()
 
-    async def fake_list_recent_messages(_conn, *, conversation_id: str, limit: int):
+    async def fake_list_recent_messages(_conn, *, conversation_id: str, limit: int, user_id=None):
         pulled["called"] = True
         return [
             ChatMessage(role="user", content="上一轮：上海今天天气如何"),

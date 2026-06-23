@@ -1,7 +1,5 @@
-"""Facade: dispatches to the active storage backend (_pg or _sqlite)."""
-from app.core.settings import get_settings
+"""Repository facade: re-exports the PostgreSQL implementation。
 
-if get_settings().resolved_storage_backend == "sqlite":
-    from app.db.repositories._sqlite.document_job import *  # noqa: F401,F403
-else:
-    from app.db.repositories._pg.document_job import *  # noqa: F401,F403
+调用方保持 `from app.db.repositories.document_job import ...` 不变；SQLite 后端已退役。
+"""
+from app.db.repositories._pg.document_job import *  # noqa: F401,F403

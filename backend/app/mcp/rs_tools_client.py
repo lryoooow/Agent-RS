@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from app.mcp.client import StdioMCPClient
+from app.mcp.concurrency import tool_semaphore
 
 logger = logging.getLogger(__name__)
 
@@ -75,9 +76,13 @@ class RSToolsMCPClient:
             ]
         )
         logger.info("[RS Tools MCP] launch image=%s tool=%s mount_root=%s", self.image, tool_name, mount_root)
-        return await StdioMCPClient(
-            command=command,
-            timeout_seconds=self.timeout_seconds,
-            client_name=CLIENT_NAME,
-            client_version=CLIENT_VERSION,
-        ).call_tool(tool_name, payload)
+        # 并发总闸：只包住实际 `docker run` 执行，不包前面的路径拼装（不占资源）。
+        # acquire 排在 StdioMCPClient 的 wait_for 计时之前，故排队等待不蚕食工具 timeout。
+        # async with 确保异常路径也释放槽位，杜绝"异常吞槽"导致后续任务永久饿死。
+        async with tool_semaphore():
+            return await StdioMCPClient(
+                command=command,
+                timeout_seconds=self.timeout_seconds,
+                client_name=CLIENT_NAME,
+                client_version=CLIENT_VERSION,
+            ).call_tool(tool_name, payload)

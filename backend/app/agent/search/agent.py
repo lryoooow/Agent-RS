@@ -8,7 +8,6 @@ import httpx
 from app.agent.search.cache import get_result_cache
 from app.agent.search.filter import filter_search_results
 from app.agent.search.formatter import format_search_context
-from app.agent.search.prompt import load_web_search_prompt
 from app.agent.search.schema import WebSearchArguments
 from app.agent.search.tavily_client import TavilySearchError, search_tavily
 from app.agent.types import ToolRunResult
@@ -53,7 +52,7 @@ async def run_web_search(
     errored = [o for o in outcomes if o.error]
     if len(errored) == len(outcomes):
         logger.warning("All web search queries failed: %s", errored[0].error)
-        message = "Web search is temporarily unavailable. Do not claim that live search was completed."
+        message = "联网搜索暂时不可用。请勿声称已完成实时联网检索；可基于已有知识谨慎回答并说明未能联网。"
         return ToolRunResult(tool_context=message, query=args.query, error=errored[0].error)
 
     # 跨检索词轮询交错合并：每个意图的最优结果都排在前面，预算裁剪时不会整段丢掉某个意图。
@@ -68,7 +67,6 @@ async def run_web_search(
         reason=args.reason,
         search_result=search_result,
         max_chars=settings.agent_web_search_result_max_chars,
-        policy=load_web_search_prompt(),
     )
     return ToolRunResult(
         tool_context=tool_context,

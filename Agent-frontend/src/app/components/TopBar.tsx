@@ -17,6 +17,7 @@ import { Textarea } from "./ui/textarea";
 import { Switch } from "./ui/switch";
 import { Logo } from "./Logo";
 import { AuthDialog } from "./AuthDialog";
+import { AdminPanel } from "./AdminPanel";
 import type { useSettings } from "../hooks/useSettings";
 import type { useAuth } from "../hooks/useAuth";
 
@@ -84,7 +85,8 @@ export function TopBar({ settings, auth }: { settings: Settings; auth: Auth }) {
       </div>
 
       <div className="flex items-center gap-2 max-md:ml-auto md:ml-3">
-        <AuthDialog auth={auth} />
+        {auth.user?.is_admin && <AdminPanel endpoint={settings.endpoint} />}
+        <AuthDialog auth={auth} inviteRequired={settings.serverConfig?.invite_required ?? true} />
         <Dialog
           open={open}
           onOpenChange={(o) => {

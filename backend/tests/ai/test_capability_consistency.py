@@ -6,7 +6,12 @@ from pydantic import ValidationError
 from app.agent import tool_guards
 from app.agent.capability_registry import AGENT_CAPABILITIES, get_capability
 from app.agent.domain_agents import DOMAIN_LABELS, TOOL_DOMAIN
-from app.agent.routing import ALL_CANDIDATE_TOOLS, ALL_DOCUMENT_TOOLS, ALL_IMAGERY_TOOLS
+from app.agent.routing import (
+    ALL_CANDIDATE_TOOLS,
+    ALL_DOCUMENT_TOOLS,
+    ALL_IMAGERY_TOOLS,
+    ALL_REPORT_TOOLS,
+)
 from app.agent.tool_registry import TOOLS
 
 
@@ -22,6 +27,7 @@ EXPECTED_TOOLS = {
     "detect_objects",
     "parse_document",
     "ocr_recognize",
+    "generate_report",
 }
 
 EXPECTED_AGENTS = {"web_search"}
@@ -31,6 +37,7 @@ EXPECTED_DOMAINS = {
     "segmentation_agent",
     "detection_agent",
     "document_agent",
+    "report_agent",
 }
 
 VALID_ARGS = {
@@ -45,6 +52,7 @@ VALID_ARGS = {
     "detect_objects": {"imagery_id": "94e758f38ede"},
     "parse_document": {"document_id": "11111111-1111-1111-1111-111111111111"},
     "ocr_recognize": {"imagery_id": "94e758f38ede"},
+    "generate_report": {"reason": "用户请求生成报告"},
     "web_search": {"query": "latest flood mapping dataset", "reason": "needs current sources"},
 }
 
@@ -63,15 +71,22 @@ def test_domains_cover_every_tool_and_no_unknown_tools() -> None:
 def test_route_channels_partition_registered_tools() -> None:
     imagery_tools = set(ALL_IMAGERY_TOOLS)
     document_tools = set(ALL_DOCUMENT_TOOLS)
+    report_tools = set(ALL_REPORT_TOOLS)
 
-    assert imagery_tools | document_tools == set(TOOLS)
+    # 三个通道互不相交，且并集恰好覆盖全部注册工具（新增工具必落入某一通道）。
+    assert imagery_tools | document_tools | report_tools == set(TOOLS)
     assert imagery_tools & document_tools == set()
+    assert imagery_tools & report_tools == set()
+    assert document_tools & report_tools == set()
     assert set(ALL_CANDIDATE_TOOLS) == set(TOOLS)
 
 
 def test_tool_guards_are_derived_from_route_channels() -> None:
+    # 影像/文档工具按各自归属做前置校验；报告工具不在两者内——
+    # 其归属由 build_conversation_report 的对话校验保证，故 guard 不拦截（结构性约定）。
     assert tool_guards._IMAGERY_TOOLS == set(ALL_IMAGERY_TOOLS)
     assert tool_guards._DOCUMENT_TOOLS == set(ALL_DOCUMENT_TOOLS)
+    assert set(ALL_REPORT_TOOLS) & (tool_guards._IMAGERY_TOOLS | tool_guards._DOCUMENT_TOOLS) == set()
 
 
 @pytest.mark.parametrize("capability_name", sorted(EXPECTED_TOOLS | EXPECTED_AGENTS))

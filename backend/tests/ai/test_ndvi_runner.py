@@ -158,7 +158,9 @@ async def test_ndvi_runner_returns_mcp_error_without_local_fallback(monkeypatch,
     result = await run_ndvi(NDVIArguments(imagery_id=imagery_id))
 
     assert result.error == "mcp_error"
-    assert "container failed" in result.tool_context
+    # M2 防泄漏：原始异常详情不得进入面向模型/用户的 tool_context，只暴露稳定文案 + error_code。
+    assert "container failed" not in result.tool_context
+    assert result.metadata["error_code"] == "mcp_error"
     assert result.metadata["execution_mode"] == "failed"
 
 
@@ -179,4 +181,6 @@ async def test_ndvi_runner_returns_unexpected_error(monkeypatch, tmp_path: Path)
     result = await run_ndvi(NDVIArguments(imagery_id=imagery_id))
 
     assert result.error == "unexpected_error"
-    assert "bad" in result.tool_context
+    # M2 防泄漏：异常文本不外泄。
+    assert "bad" not in result.tool_context
+    assert result.metadata["error_code"] == "unexpected_error"

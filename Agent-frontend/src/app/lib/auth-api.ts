@@ -6,6 +6,7 @@ export type AuthUser = {
   email: string;
   name: string;
   authenticated: boolean;
+  is_admin: boolean;
 };
 
 export async function fetchMe(chatEndpoint: string): Promise<AuthUser> {
@@ -38,12 +39,13 @@ export async function register(
   email: string,
   password: string,
   name: string,
+  inviteCode: string,
 ): Promise<AuthUser> {
   const res = await fetch(`${getApiBaseEndpoint(chatEndpoint)}/auth/register`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
-    body: JSON.stringify({ email, password, name }),
+    body: JSON.stringify({ email, password, name, invite_code: inviteCode }),
   });
   if (!res.ok) throw await readApiError(res);
   const payload = (await res.json()) as { user: AuthUser };

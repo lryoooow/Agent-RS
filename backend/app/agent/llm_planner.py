@@ -148,7 +148,7 @@ class LLMCapabilityPlanner:
         messages = [
             {"role": "system", "content": _planner_prompt(capabilities)},
         ]
-        inventory = build_imagery_inventory(user_id)
+        inventory = await build_imagery_inventory(user_id)
         if inventory:
             messages.append(
                 {
@@ -207,6 +207,8 @@ def _planner_prompt(capabilities: list[RegisteredCapability]) -> str:
         '用户: 用真彩色显示影像 94e758f38ede -> {"action":"call","capability":"render_band_composite","arguments":{"imagery_id":"94e758f38ede","mode":"true_color","reason":"用户请求真彩色合成"},"reason":"band_composite"}\n'
         '用户: 检测影像 94e758f38ede 里的飞机和船只 -> {"action":"call","capability":"detect_objects","arguments":{"imagery_id":"94e758f38ede","reason":"用户请求目标检测"},"reason":"object_detection"}\n'
         '用户: 把影像 94e758f38ede 做地物分割 -> {"action":"call","capability":"segment_landcover","arguments":{"imagery_id":"94e758f38ede","reason":"用户请求地物分割"},"reason":"landcover_segmentation"}\n'
+        '用户: (本对话此前已对影像做过地物分类) 根据刚才的分类结果帮我生成一份报告 -> {"action":"call","capability":"generate_report","arguments":{"reason":"用户请求把已有分析结果导出为报告"},"reason":"generate_report"}\n'
+        '用户: (本对话还没做过任何分析) 帮我生成一份分析报告 -> {"action":"none","capability":null,"arguments":{},"reason":"no_analysis_to_report"}\n'
         '用户: 给影像 94e758f38ede 做云掩膜/去云质检 -> {"action":"call","capability":"cloud_shadow_mask","arguments":{"imagery_id":"94e758f38ede","reason":"用户请求云阴影掩膜"},"reason":"cloud_shadow_mask"}\n'
         '用户: 提取影像 94e758f38ede 里的水体/圈出水域范围 -> {"action":"call","capability":"extract_water_mask","arguments":{"imagery_id":"94e758f38ede","reason":"用户请求水体提取"},"reason":"extract_water_mask"}\n'
         '用户: 把影像 94e758f38ede 重投影到 EPSG:4326 / 按范围裁剪 -> {"action":"call","capability":"clip_reproject_raster","arguments":{"imagery_id":"94e758f38ede","dst_crs":"EPSG:4326","reason":"用户请求裁剪/重投影"},"reason":"clip_reproject_raster"}\n'

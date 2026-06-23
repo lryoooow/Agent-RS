@@ -92,24 +92,26 @@ def _fake_success_result(tool_name: str, arguments: dict[str, Any] | None) -> di
     raise AssertionError(f"unexpected tool: {tool_name}")
 
 
-def test_validate_band_indices_accepts_valid_and_boundary(tmp_path: Path) -> None:
+@pytest.mark.asyncio
+async def test_validate_band_indices_accepts_valid_and_boundary(tmp_path: Path) -> None:
     source_path = tmp_path / "source.tif"
     _write_test_tif(source_path, count=4)
 
-    assert validate_band_indices(source_path, {"red": 1, "green": 2, "blue": 3}) is None
-    assert validate_band_indices(source_path, {"nir": 4}) is None
+    assert await validate_band_indices(source_path, {"red": 1, "green": 2, "blue": 3}) is None
+    assert await validate_band_indices(source_path, {"nir": 4}) is None
 
 
-def test_validate_band_indices_rejects_zero_negative_and_overrange(tmp_path: Path) -> None:
+@pytest.mark.asyncio
+async def test_validate_band_indices_rejects_zero_negative_and_overrange(tmp_path: Path) -> None:
     source_path = tmp_path / "source.tif"
     _write_test_tif(source_path, count=4)
 
-    below_range = validate_band_indices(source_path, {"red": 0, "nir": -1})
+    below_range = await validate_band_indices(source_path, {"red": 0, "nir": -1})
     assert below_range is not None
     assert "从 1 开始" in below_range
     assert "red" in below_range and "nir" in below_range
 
-    over_range = validate_band_indices(source_path, {"red": 1, "nir": 99})
+    over_range = await validate_band_indices(source_path, {"red": 1, "nir": 99})
     assert over_range is not None
     assert "只有 4 个波段" in over_range
     assert "nir" in over_range

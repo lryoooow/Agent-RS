@@ -14,9 +14,19 @@ import {
 export function HistoryPanel({
   endpoint,
   onOpen,
+  activeConversationId,
+  onActiveDeleted,
 }: {
   endpoint: string;
-  onOpen: (id: string, messages: { role: string; content: string }[]) => void;
+  onOpen: (
+    id: string,
+    messages: { role: string; content: string; metadata?: Record<string, unknown> | null }[],
+  ) => void;
+  // 当前正在聊的会话 id（来自 useChatController）；用于判断删除的是否为激活会话。
+  activeConversationId?: string | null;
+  // 删除的恰好是激活会话时回调，让上层重置对话状态（清空 conversationId/turns），
+  // 杜绝"删了当前会话却仍带死 id 发消息 → 后端查不到 → 静默新建空会话 → 上下文断裂"。
+  onActiveDeleted?: () => void;
 }) {
   const [items, setItems] = useState<ConversationItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -47,7 +57,9 @@ export function HistoryPanel({
       const messages = await listConversationMessages(endpoint, id);
       onOpen(
         id,
-        messages.map((m) => ({ role: m.role, content: m.content })),
+        // 透传 metadata：loadConversation 据此还原 geospatial_result/tool_result，
+        // 让分析结果卡片（NDVI/检测/分类等）在重开历史会话时重现，而非只剩文字。
+        messages.map((m) => ({ role: m.role, content: m.content, metadata: m.metadata })),
       );
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -74,6 +86,8 @@ export function HistoryPanel({
     try {
       await deleteConversation(endpoint, id);
       setItems((prev) => prev.filter((c) => c.id !== id));
+      // 删的若是当前激活会话，通知上层重置（否则下条消息仍带已删 id 发出 → 上下文断裂）。
+      if (id === activeConversationId) onActiveDeleted?.();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }

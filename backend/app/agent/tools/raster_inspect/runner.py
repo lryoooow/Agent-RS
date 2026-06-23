@@ -34,10 +34,10 @@ async def run_raster_inspect(args: RasterInspectArguments) -> ToolRunResult:
         result = await _client(settings).call_tool("raster_inspect", source_path=source_path)
     except (FileNotFoundError, asyncio.TimeoutError, MCPCallError) as exc:
         logger.warning("Raster inspect failed: %s", exc)
-        return _error_result(f"影像质检失败: {exc}", "mcp_error")
+        return _error_result("影像质检失败，请稍后重试或检查影像与服务状态。", "mcp_error")
     except Exception as exc:
         logger.exception("Raster inspect unexpected error: %s", exc)
-        return _error_result(f"影像质检失败: {exc}", "unexpected_error")
+        return _error_result("影像质检失败，请稍后重试或检查影像与服务状态。", "unexpected_error")
 
     tool_result = _tool_result(args.imagery_id, result)
     return ToolRunResult(

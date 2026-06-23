@@ -11,9 +11,9 @@ REASONING_FIELDS = ("reasoning_content", "reasoning", "thinking", "thought")
 ANALYSIS_STATUS_PAUSE_SECONDS = 0.42
 ANSWER_DELTA_MAX_CHARS = 8
 ANALYSIS_STATUS_LABELS = {
-    "analyzing": "正在解析问题…",
-    "preparing": "正在整理内容…",
-    "answering": "正在组织回复…",
+    "analyzing": "正在思考中…",
+    "preparing": "正在梳理结果…",
+    "answering": "正在生成回复…",
     "complete": "思考完成",
 }
 AGENT_STATUS_LABELS = {
@@ -27,8 +27,6 @@ AGENT_STATUS_LABELS = {
     "planner_no_call": "无需调用能力",
     "plan_validation_failed": "能力规划校验失败",
     "capability_guard_rejected": "能力调用被拒绝",
-    "classifier_skip": "规则判断无需工具",
-    "classifier_force": "规则判断需要工具",
     "cache_hit_skip": "命中无需搜索的缓存",
     "cache_hit_search": "命中需要搜索的缓存",
     "tool_requested": "准备调用工具",
@@ -59,12 +57,16 @@ def analysis_status_event(status: str) -> str:
     )
 
 
-def agent_status_event(status: str, **metadata: Any) -> str:
+def agent_status_event(status: str, *, label: str | None = None, **metadata: Any) -> str:
+    # 根因修复：执行阶段（child_agent_running）的具体工具名在 AgentEvent.label 里
+    # （由 child.py/domain_agents.py 经 tool_running_label 算出），优先透传它；
+    # 仅当事件没带 label 时，才回退到按 status 查静态字典——否则 child_agent_running
+    # 永远被映射回宽泛的"正在执行工具"，具体工具名在到达前端前被丢弃。
     return sse_event(
         "agent_status",
         {
             "status": status,
-            "label": AGENT_STATUS_LABELS.get(status, status),
+            "label": label or AGENT_STATUS_LABELS.get(status, status),
             **metadata,
         },
     )

@@ -141,7 +141,7 @@ async def run_case(
             raise RuntimeError("web_search capability is disabled in planner eval")
 
         request = _request_for_case(case)
-        context = build_recording_context(case, request=request, config=config)
+        context = await build_recording_context(case, request=request, config=config)
         trace = AgentTrace(enabled=True)
         selection = await TaskSelector().select(
             client=client_factory(context),
@@ -201,7 +201,7 @@ async def run_case(
         )
 
 
-def build_recording_context(
+async def build_recording_context(
     case: PlannerEvalCase,
     *,
     request: ChatRequest,
@@ -216,9 +216,13 @@ def build_recording_context(
         user_id=case.user_id,
         request=request,
     )
+    # build_imagery_inventory 改为 async（DB 优先 + 磁盘兜底）。eval 录制固定
+    # DATABASE_ENABLED=false，故走纯磁盘扫描分支，输出与迁移前同步版逐字节一致——
+    # context_hash 不变、历史录制无需重录。本函数随之改 async，各调用点 await。
+    inventory = await build_imagery_inventory(case.user_id)
     context_hash = stable_hash(
         {
-            "imagery_inventory": build_imagery_inventory(case.user_id),
+            "imagery_inventory": inventory,
             "imagery_fixtures": [
                 {
                     "imagery_id": item.imagery_id,

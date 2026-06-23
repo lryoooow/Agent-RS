@@ -16,8 +16,6 @@ AgentStage = Literal[
     "planner_no_call",
     "plan_validation_failed",
     "capability_guard_rejected",
-    "classifier_skip",
-    "classifier_force",
     "cache_hit_skip",
     "cache_hit_search",
     "tool_requested",

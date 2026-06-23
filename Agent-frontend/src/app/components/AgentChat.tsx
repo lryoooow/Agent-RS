@@ -23,9 +23,9 @@ import { GeospatialSummary } from "./GeospatialSummary";
 import { Markdown } from "./Markdown";
 
 const ANALYSIS_FALLBACK: Record<string, string> = {
-  analyzing: "正在解析问题...",
-  preparing: "正在整理内容...",
-  answering: "正在组织回复...",
+  analyzing: "正在思考中...",
+  preparing: "正在梳理结果...",
+  answering: "正在生成回复...",
   complete: "思考完成",
 };
 
@@ -59,7 +59,17 @@ function ToolBubbleCard({ bubble }: { bubble: ToolBubble }) {
   );
 }
 
-function AssistantTurn({ turn, streaming }: { turn: ChatTurn; streaming: boolean }) {
+function AssistantTurn({
+  turn,
+  streaming,
+  onGenerateReport,
+  reportPending,
+}: {
+  turn: ChatTurn;
+  streaming: boolean;
+  onGenerateReport?: (imageryId: string) => void;
+  reportPending?: boolean;
+}) {
   const bubble = toolBubbleForTurn(turn);
   const showAnalysis = turn.analysisStatus != null && !turn.content && turn.analysisStatus !== "complete";
   const analysisText = turn.analysisLabel ?? ANALYSIS_FALLBACK[turn.analysisStatus ?? ""] ?? "";
@@ -98,7 +108,13 @@ function AssistantTurn({ turn, streaming }: { turn: ChatTurn; streaming: boolean
           </div>
         )}
         {bubble && <ToolBubbleCard bubble={bubble} />}
-        {turn.geospatialResult && <GeospatialSummary result={turn.geospatialResult} />}
+        {turn.geospatialResult && (
+          <GeospatialSummary
+            result={turn.geospatialResult}
+            onGenerateReport={onGenerateReport}
+            reportPending={reportPending}
+          />
+        )}
       </div>
     </div>
   );
@@ -113,6 +129,8 @@ export function AgentChat({
   onSend,
   onUpload,
   onBack,
+  onGenerateReport,
+  reportPending,
 }: {
   turns: ChatTurn[];
   loading: boolean;
@@ -122,6 +140,8 @@ export function AgentChat({
   onSend: (text: string) => void;
   onUpload: () => void;
   onBack: () => void;
+  onGenerateReport?: (imageryId: string) => void;
+  reportPending?: boolean;
 }) {
   const [text, setText] = useState("");
   const endRef = useRef<HTMLDivElement>(null);
@@ -203,6 +223,8 @@ export function AgentChat({
                 key={turn.id}
                 turn={turn}
                 streaming={activeStream && turn.id === lastId}
+                onGenerateReport={onGenerateReport}
+                reportPending={reportPending}
               />
             );
           })}

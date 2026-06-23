@@ -389,6 +389,58 @@ def realize_unsupported_multi(rng: Random, *, img: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# 报告层（generate_report）：报告通道不吃 imagery_id/document_id，判定只看本对话
+# 此前是否已产出分析结果。故报告 query 一律不写 ID，call/none 由 history 是否带分析信号决定。
+# REPORT_BANK：用户明确"根据已有结果出报告"——有分析史时 → call generate_report。
+REPORT_BANK = (
+    "根据刚才的分析结果帮我生成一份报告，我要放进论文里",
+    "把前面跑出来的结果整理成一份分析报告给我",
+    "刚才那些分析帮我导出成一份正式报告",
+    "基于已有的分析做个报告，最好能下载的",
+    "把这次的分析结论汇总成报告，我要交作业",
+    "前面的结果出一份完整分析报告吧",
+    "帮我把刚才的分析写成报告文档",
+    "根据已经做好的分析生成报告，谢谢",
+)
+# REPORT_NO_ANALYSIS_BANK：凭空索要报告，本对话还没做过任何分析 → none（no_analysis_to_report）。
+REPORT_NO_ANALYSIS_BANK = (
+    "直接帮我生成一份遥感分析报告",
+    "给我出一份分析报告吧",
+    "我要一份完整的影像分析报告，现在就生成",
+    "帮我写一份遥感报告，内容你看着来",
+    "生成一份分析报告给我下载",
+)
+
+# 前轮分析结果的助手消息骨架（注入 history，作为"已产出分析"的真实上下文信号）。
+# 各对应一种已跑过的分析，含真实风格的数值摘要，与生产 prior_analysis_results 回注同形。
+_PRIOR_ANALYSIS_BANK = (
+    ("把影像 {img} 做地物分类", "地物分类完成：背景 91.3%、建筑 3.4%、林地 2.6%、水体 2.6%。"),
+    ("{img} 跑一下目标检测", "目标检测完成：共检出 37 个目标，其中船 21、车 12、油罐 4（置信度阈值 0.30）。"),
+    ("算下 {img} 的 NDVI", "NDVI 计算完成：min -0.18、max 0.82、mean 0.41、std 0.16。"),
+    ("{img} 提取水体范围", "水体提取完成：水体像元占比 7.9%，主要分布在影像东南角。"),
+)
+
+
+def realize_report(rng: Random) -> str:
+    """有分析史的报告 query（不含 ID）。"""
+    return _wrap(rng.choice(REPORT_BANK), rng)
+
+
+def realize_report_no_analysis(rng: Random) -> str:
+    """无分析史的凭空报告 query（不含 ID）。"""
+    return _wrap(rng.choice(REPORT_NO_ANALYSIS_BANK), rng)
+
+
+def realize_prior_analysis_history(rng: Random, *, img: str) -> tuple[dict[str, str], ...]:
+    """构造一轮"已执行分析"的 user+assistant history，作为 report 判定的上下文信号。"""
+    user_text, assistant_text = rng.choice(_PRIOR_ANALYSIS_BANK)
+    return (
+        {"role": "user", "content": user_text.format(img=img)},
+        {"role": "assistant", "content": assistant_text},
+    )
+
+
+# ---------------------------------------------------------------------------
 # 噪声层。
 def realize_noise(base: str, rng: Random) -> str:
     """脏文本扰动：强制错别字 + 可选啰嗦填充/去标点。不碰 ID（错别字表只含中文词）。"""

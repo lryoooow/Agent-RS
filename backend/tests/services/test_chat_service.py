@@ -6,6 +6,7 @@ from uuid import UUID
 import pytest
 
 from app.agent.persistence import PersistenceContext
+from app.agent.types import AgentEvent
 from app.schemas.chat import ChatRequest, ProviderConfig
 from app.services.chat_service import ChatService
 from app.core.settings import get_settings
@@ -173,7 +174,7 @@ async def test_chat_service_streams_sse_events(monkeypatch: pytest.MonkeyPatch) 
     events = [event async for event in service.stream_chat(request)]
 
     _assert_meta_event(events[0], require_persistence_ids=False)
-    assert events[1] == 'event: analysis_status\ndata: {"status": "analyzing", "label": "正在解析问题…"}\n\n'
+    assert events[1] == 'event: analysis_status\ndata: {"status": "analyzing", "label": "正在思考中…"}\n\n'
     assert events[2].startswith("event: agent_status\n")
     assert '"status": "context_assembled"' in events[2]
     assert events[3].startswith("event: agent_status\n")
@@ -182,8 +183,8 @@ async def test_chat_service_streams_sse_events(monkeypatch: pytest.MonkeyPatch) 
     assert '"status": "planner_completed"' in events[4]
     assert events[5].startswith("event: agent_status\n")
     assert '"status": "planner_no_call"' in events[5]
-    assert events[6] == 'event: analysis_status\ndata: {"status": "preparing", "label": "正在整理内容…"}\n\n'
-    assert events[7] == 'event: analysis_status\ndata: {"status": "answering", "label": "正在组织回复…"}\n\n'
+    assert events[6] == 'event: analysis_status\ndata: {"status": "preparing", "label": "正在梳理结果…"}\n\n'
+    assert events[7] == 'event: analysis_status\ndata: {"status": "answering", "label": "正在生成回复…"}\n\n'
     assert events[8] == 'event: analysis_status\ndata: {"status": "complete", "label": "思考完成"}\n\n'
     assert events[9] == 'event: delta\ndata: {"content": "stream"}\n\n'
     done = json.loads(events[10].split("data: ", 1)[1])
@@ -221,7 +222,7 @@ async def test_chat_service_streams_initial_status_before_provider_error(
     events = [event async for event in service.stream_chat(request)]
 
     _assert_meta_event(events[0], require_persistence_ids=False)
-    assert events[1] == 'event: analysis_status\ndata: {"status": "analyzing", "label": "正在解析问题…"}\n\n'
+    assert events[1] == 'event: analysis_status\ndata: {"status": "analyzing", "label": "正在思考中…"}\n\n'
     assert events[2].startswith("event: agent_status\n")
     assert '"status": "context_assembled"' in events[2]
     assert events[3].startswith("event: agent_status\n")
@@ -230,13 +231,69 @@ async def test_chat_service_streams_initial_status_before_provider_error(
     assert '"status": "planner_completed"' in events[4]
     assert events[5].startswith("event: agent_status\n")
     assert '"status": "planner_no_call"' in events[5]
-    assert events[6] == 'event: analysis_status\ndata: {"status": "preparing", "label": "正在整理内容…"}\n\n'
-    assert events[7] == 'event: analysis_status\ndata: {"status": "answering", "label": "正在组织回复…"}\n\n'
+    assert events[6] == 'event: analysis_status\ndata: {"status": "preparing", "label": "正在梳理结果…"}\n\n'
+    assert events[7] == 'event: analysis_status\ndata: {"status": "answering", "label": "正在生成回复…"}\n\n'
     assert events[8] == (
         'event: error\ndata: {"code": "PROVIDER_ERROR", '
         '"message": "AI provider request failed."}\n\n'
     )
     assert all("event: done" not in event for event in events)
+
+
+@pytest.mark.asyncio
+async def test_stream_cancels_inflight_plan_task_on_client_disconnect(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # H5：客户端中途断连（提前 aclose 生成器）时，仍在执行的 plan_task 必须被取消，
+    # 不留下孤儿 planner→docker 任务跑到超时。
+    monkeypatch.setenv("AI_API_KEY", "")
+    monkeypatch.setenv("ALLOW_CLIENT_PROVIDER_CONFIG", "true")
+    monkeypatch.setenv("TAVILY_API_KEY", "")
+    get_settings.cache_clear()
+    monkeypatch.setattr("app.agent.ai_service.create_chat_client", lambda _: FakeClient())
+
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def hanging_plan_stream(self, *args, on_event=None, **kwargs):
+        # 发一个事件让生成器吐出第一条 agent_status，然后无限挂起，模拟仍在跑的工具调用。
+        if on_event is not None:
+            await on_event(AgentEvent(stage="planner_started", label="规划中"))
+        started.set()
+        try:
+            await asyncio.Event().wait()  # 永不完成
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    monkeypatch.setattr(
+        "app.agent.runtime.AgentRuntime.plan_stream", hanging_plan_stream
+    )
+
+    service = ChatService()
+    request = ChatRequest(
+        messages=[{"role": "user", "content": "hello"}],
+        provider_config=ProviderConfig(
+            base_url="https://client.example/v1",
+            api_key="client-key",
+            model="client-model",
+        ),
+    )
+
+    agen = service.stream_chat(request)
+    # 消费到 plan_stream 真正启动（已发出首个 agent_status 后挂起）。
+    saw_started = False
+    async for _event in agen:
+        if started.is_set():
+            saw_started = True
+            break
+    assert saw_started, "plan_stream 未进入挂起态，测试前提不成立"
+    # 模拟客户端断连：提前关闭生成器 → 触发 finally 取消 plan_task。
+    await asyncio.wait_for(agen.aclose(), timeout=5.0)
+
+    # 给被取消的任务一个调度机会落地 CancelledError。
+    await asyncio.wait_for(cancelled.wait(), timeout=2.0)
+    assert cancelled.is_set()
 
 
 @pytest.mark.asyncio

@@ -18,11 +18,19 @@ export function DataPanel({
   onOpenChange,
   endpoint,
   onOpenConversation,
+  activeConversationId,
+  onActiveConversationDeleted,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   endpoint: string;
-  onOpenConversation: (id: string, messages: { role: string; content: string }[]) => void;
+  onOpenConversation: (
+    id: string,
+    messages: { role: string; content: string; metadata?: Record<string, unknown> | null }[],
+  ) => void;
+  // 透传给 HistoryPanel：当前激活会话 id + 删除激活会话时的重置回调（详见 HistoryPanel 注释）。
+  activeConversationId?: string | null;
+  onActiveConversationDeleted?: () => void;
 }) {
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -50,7 +58,12 @@ export function DataPanel({
             <MemoryPanel endpoint={endpoint} />
           </TabsContent>
           <TabsContent value="history" className="min-h-0 flex-1">
-            <HistoryPanel endpoint={endpoint} onOpen={onOpenConversation} />
+            <HistoryPanel
+              endpoint={endpoint}
+              onOpen={onOpenConversation}
+              activeConversationId={activeConversationId}
+              onActiveDeleted={onActiveConversationDeleted}
+            />
           </TabsContent>
         </Tabs>
       </SheetContent>

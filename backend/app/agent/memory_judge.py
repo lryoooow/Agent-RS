@@ -17,7 +17,17 @@ MEMORY_JUDGE_INPUT_MAX_CHARS = 3000
 MEMORY_JUDGE_PROMPT = """你负责判断对话片段是否值得长期记忆。
 只记录用户稳定偏好、长期事实、项目约束、反复需要遵守的工作方式。
 不要记录一次性问题、普通寒暄、模型内部过程、密钥、隐私敏感信息。
-只返回 JSON：{"remember": true|false, "content": "...", "tags": ["..."]}"""
+只返回 JSON：{"remember": true|false, "content": "...", "tags": ["..."]}
+
+示例（仅供格式与判别参考，不要照搬内容）：
+用户: 以后回复我都用中文，并且固定用 qwen3.7-max 模型。
+-> {"remember": true, "content": "用户偏好：始终用中文回复，固定使用 qwen3.7-max 模型。", "tags": ["语言偏好", "模型偏好"]}
+用户: 帮我算一下 3 乘以 7 等于多少？
+-> {"remember": false, "content": "", "tags": []}
+用户: 你好呀，在吗？
+-> {"remember": false, "content": "", "tags": []}
+用户: 我们项目规定影像分析结论必须标注数据来源和时间。
+-> {"remember": true, "content": "项目约束：影像分析结论必须标注数据来源与时间。", "tags": ["项目约束"]}"""
 
 
 def _parse_memory_payload(raw: str) -> dict:

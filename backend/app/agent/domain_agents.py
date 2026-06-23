@@ -24,6 +24,7 @@ TOOL_DOMAIN: dict[str, str] = {
     "clip_reproject_raster": "preprocess_agent",
     "parse_document": "document_agent",
     "ocr_recognize": "document_agent",
+    "generate_report": "report_agent",
 }
 
 DOMAIN_LABELS: dict[str, str] = {
@@ -32,6 +33,7 @@ DOMAIN_LABELS: dict[str, str] = {
     "detection_agent": "目标检测",
     "preprocess_agent": "预处理",
     "document_agent": "文档解析",
+    "report_agent": "报告生成",
 }
 
 
@@ -69,6 +71,12 @@ DOMAIN_GUIDANCE: dict[str, str] = {
         "无论哪种来源，若源自 PDF/扫描件/影像 OCR，文本都可能含识别误差或版面错乱，"
         "引用关键数字、日期、地名、条款时保持谨慎并提示可能的识别误差；"
         "若全文被截断或未识别到文字，明确如实告知，不要臆测未返回内容。"
+    ),
+    "report_agent": (
+        "[报告生成领域指引] 报告已基于本对话真实分析结果生成为 Word 文档。"
+        "回答时据实告知用户报告已生成、可下载，并提示下载链接；可简要概括报告涵盖的分析项，"
+        "但不要编造报告里没有的数值或结论。若工具返回未生成（如尚无分析结果），"
+        "如实说明原因并建议先执行分析，不要谎称已出报告。"
     ),
 }
 
