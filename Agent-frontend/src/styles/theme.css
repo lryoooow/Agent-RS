@@ -195,3 +195,16 @@
   backdrop-filter: blur(8px);
   padding: 1px 6px;
 }
+
+/* 可访问性：系统开启"减少动态效果"时，全局收敛动画/过渡（含 tw-animate-css 与 Radix 的 CSS 动画，
+   motion 组件另由 useReducedMotion() 降级）。保留极短时长以维持状态切换的可感知，不做完全 0。 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

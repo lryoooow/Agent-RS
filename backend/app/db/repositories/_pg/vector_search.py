@@ -21,7 +21,7 @@ async def search_vector_only(
     if not user_id:
         return []
     sql = """
-        SELECT c.id::text, c.document_id::text, c.content, c.metadata, c.embedding::text AS embedding,
+        SELECT c.id::text, c.document_id::text, c.chunk_index, c.content, c.metadata, c.embedding::text AS embedding,
                1 - (c.embedding <=> $1::vector) AS vector_score
         FROM public.document_chunks c
         JOIN public.documents d ON d.id = c.document_id
@@ -46,12 +46,17 @@ async def search_tsv_only(
     # user_id 缺失时拒绝返回（防跨租户泄漏，M1）。
     if not user_id:
         return []
+    # CJK 全文：用 agent_rs.to_cjk_tsquery（重叠二字组），与 content_tsv 的同款 bigram 写入对称匹配。
+    # 旧 plainto_tsquery('simple') 不切中文，中文查询命中率≈0；见 migration 0010。
+    # 同时 SELECT embedding：让纯 tsv 命中的块也带向量，使下游 MMR 多样性对全文命中生效
+    # （否则 _rrf_fuse 复制不到 embedding，MMR 的 _cosine 退化为 0）。
     sql = """
-        SELECT c.id::text, c.document_id::text, c.content, c.metadata,
-               ts_rank_cd(c.content_tsv, plainto_tsquery('simple', $1)) AS text_score
+        SELECT c.id::text, c.document_id::text, c.chunk_index, c.content, c.metadata,
+               c.embedding::text AS embedding,
+               ts_rank_cd(c.content_tsv, agent_rs.to_cjk_tsquery($1)) AS text_score
         FROM public.document_chunks c
         JOIN public.documents d ON d.id = c.document_id
-        WHERE c.content_tsv @@ plainto_tsquery('simple', $1)
+        WHERE c.content_tsv @@ agent_rs.to_cjk_tsquery($1)
         AND d.created_by_user_id = $2
         ORDER BY text_score DESC
         LIMIT $3

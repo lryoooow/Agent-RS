@@ -1,7 +1,6 @@
 from fastapi import APIRouter, Depends
 
 from app.api.deps import require_authenticated_user
-from app.api.routes.admin import router as admin_router
 from app.api.routes.auth import router as auth_router
 from app.api.routes.chat import router as chat_router
 from app.api.routes.config import router as config_router
@@ -28,6 +27,3 @@ router.include_router(conversations_router, dependencies=_auth_dep)
 router.include_router(memories_router, dependencies=_auth_dep)
 router.include_router(imagery_router, dependencies=_auth_dep)
 router.include_router(report_router, dependencies=_auth_dep)
-
-# 管理路由：自带 require_admin 依赖（见 admin.py），无需在此重复挂。
-router.include_router(admin_router)

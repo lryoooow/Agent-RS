@@ -68,6 +68,7 @@ async def _empty_list_documents(*_, **__):
     return []
 
 
+@pytest.mark.skip(reason="SQLite 后端已于 2026-06-18 退役，统一使用 PostgreSQL")
 def test_documents_enabled_on_sqlite_backend(monkeypatch) -> None:
     # The feature's core promise: with no cloud Postgres, the default sqlite
     # backend keeps the knowledge base usable (no DATABASE_DISABLED).
@@ -281,6 +282,114 @@ def test_split_text_uses_overlap() -> None:
     assert chunks[1] == "a" * 400
     assert chunks[1].startswith(chunks[0][-50:])
     assert chunks[2].startswith(chunks[1][-50:])
+
+
+# ---- 入库语义元信息：每块 section / token_count（新增）----
+
+
+class _FakeEmbeddingService:
+    """桩 embedding 服务：按输入块数返回等量的固定向量，绕过真实 API。"""
+
+    available = True
+
+    async def embed_batch(self, texts):
+        return [[0.0] * 8 for _ in texts]
+
+
+class _CaptureInsertConn:
+    def transaction(self):
+        return FakeTransaction()
+
+
+class FakeTransaction:
+    async def __aenter__(self):
+        return object()
+
+    async def __aexit__(self, *_):
+        return None
+
+
+def _store_capture_env(monkeypatch):
+    """装配同步入库链路的桩：固定 embedding + 捕获 insert_chunks 入参。"""
+    captured: dict = {}
+
+    class CaptureAcquire:
+        async def __aenter__(self):
+            return _CaptureInsertConn()
+
+        async def __aexit__(self, *_):
+            return None
+
+    class CapturePool:
+        def acquire(self):
+            return CaptureAcquire()
+
+    async def fake_pool():
+        return CapturePool()
+
+    async def fake_insert_document(*_, **__):
+        return "00000000-0000-4000-8000-0000000009aa"
+
+    async def fake_insert_chunks(_, *, document_id, chunks):
+        captured["chunks"] = chunks
+
+    monkeypatch.setenv("DATABASE_ENABLED", "true")
+    monkeypatch.setattr("app.api.routes.documents.fetch_optional_pool", fake_pool)
+    monkeypatch.setattr("app.api.routes.documents.insert_document", fake_insert_document)
+    monkeypatch.setattr("app.api.routes.documents.insert_chunks", fake_insert_chunks)
+    monkeypatch.setattr(
+        "app.api.routes.documents.get_embedding_service", lambda: _FakeEmbeddingService()
+    )
+    return captured
+
+
+def test_create_document_persists_section_and_token_count(monkeypatch) -> None:
+    # 锁定上限隔离本地 .env 覆盖（见记忆 settings-default-test）。
+    monkeypatch.setenv("DOCUMENT_MAX_CHUNKS", "240")
+    captured = _store_capture_env(monkeypatch)
+    client = make_client()
+
+    # 内容足够长（远超 chunk_size=800）以保证切成多块，验证"每块都带 section"。
+    content = "# 第3章 数据来源\n\n" + "卫星影像通过开放中心下载并完成预处理。" * 120
+    response = client.post("/api/documents", json={"title": "Doc", "content": content})
+
+    assert response.status_code == 200
+    chunks = captured["chunks"]
+    assert len(chunks) > 1
+    # 元组结构 (index, text, embedding, token_count, metadata)
+    for index, text, _embedding, token_count, metadata in chunks:
+        assert metadata["section"] == "第3章 数据来源"
+        assert metadata["chunk_index"] == index
+        assert token_count is not None and token_count > 0
+        assert text.startswith("第3章 数据来源")
+
+
+def test_create_document_allows_more_than_old_limit(monkeypatch) -> None:
+    # max_chunks 50→240 放宽：旧上限 50 会 413 的规模，现在应正常入库。
+    # 显式锁定上限为 240，隔离本地 .env 的 DOCUMENT_MAX_CHUNKS 覆盖（见记忆 settings-default-test）。
+    # 每段约 600 字符无句末标点：既不被 _pack_atoms 合并、也不被句切，段≈块 → 60 块。
+    monkeypatch.setenv("DOCUMENT_MAX_CHUNKS", "240")
+    _store_capture_env(monkeypatch)
+    client = make_client()
+
+    content = "\n\n".join(f"第{i}段编号标识" + "内容字" * 200 for i in range(60))
+    response = client.post("/api/documents", json={"title": "Many", "content": content})
+
+    assert response.status_code == 200
+    assert response.json()["chunk_count"] > 50
+
+
+def test_create_document_still_rejects_beyond_new_limit(monkeypatch) -> None:
+    # 超过配置上限仍拦截（保护未失效）。上限设 5，20 段 → 20 块 > 5。
+    monkeypatch.setenv("DOCUMENT_MAX_CHUNKS", "5")
+    _store_capture_env(monkeypatch)
+    client = make_client()
+
+    content = "\n\n".join(f"第{i}段编号标识" + "内容字" * 200 for i in range(20))
+    response = client.post("/api/documents", json={"title": "TooMany", "content": content})
+
+    assert response.status_code == 413
+    assert response.json()["detail"]["code"] == "DOCUMENT_TOO_MANY_CHUNKS"
 
 
 class FakeDate:

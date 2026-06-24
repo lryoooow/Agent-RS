@@ -371,3 +371,107 @@ async def test_empty_db_searches_return_empty(pg_conn) -> None:
     assert await vs_repo.search_vector_only(pg_conn, embedding=_vec(1.0, 0.0), limit=5, user_id="u1") == []
     assert await vs_repo.search_tsv_only(pg_conn, query="anything", limit=5, user_id="u1") == []
     assert await mem_repo.list_relevant_memories(pg_conn, user_id="u1", embedding=_vec(1.0, 0.0), limit=5) == []
+
+
+# ============ CJK 全文检索：二元分词（migration 0010）============
+
+
+async def test_cjk_bigram_tokenization(pg_conn) -> None:
+    # 二元分词正确性：连续中文切重叠二字组；中英混排时英文不被破坏。
+    assert (await pg_conn.fetchval("SELECT agent_rs.cjk_bigram('卫星影像')")).split() == [
+        "卫星", "星影", "影像"
+    ]
+    mixed = (await pg_conn.fetchval("SELECT agent_rs.cjk_bigram('使用NDVI分析植被')")).split()
+    assert "NDVI" in mixed and "使用" in mixed and "植被" in mixed
+    # to_cjk_tsvector 产出含各二字组 lexeme
+    tsv = await pg_conn.fetchval("SELECT agent_rs.to_cjk_tsvector('卫星影像')::text")
+    assert "卫星" in tsv and "星影" in tsv and "影像" in tsv
+
+
+async def test_cjk_chinese_fulltext_recall_regression(pg_conn) -> None:
+    # 历史 bug 回归（最关键）：旧 'simple' 分词把整段中文当一个 token，中文子串查询命中率=0。
+    # 新 CJK bigram 下，中文查询必须能命中。
+    did = await doc_repo.insert_document(pg_conn, title="D", content="c", user_id="u1")
+    await doc_repo.insert_chunks(pg_conn, document_id=did, chunks=[
+        (0, "卫星影像通过开放中心下载并完成预处理", _vec(1.0, 0.0, 0.0), None, {}),
+        (1, "无关内容植物生长记录", _vec(0.0, 1.0, 0.0), None, {}),
+    ])
+    # 旧实现：to_tsvector('simple', ...) @@ plainto_tsquery('simple','卫星影像') 为 False
+    old_hit = await pg_conn.fetchval(
+        "SELECT to_tsvector('simple','卫星影像通过开放中心下载') @@ plainto_tsquery('simple','卫星影像')"
+    )
+    assert old_hit is False  # 锁死旧 bug 存在
+    # 新实现：中文查询命中正确的块
+    results = await vs_repo.search_tsv_only(pg_conn, query="卫星影像", limit=5, user_id="u1")
+    assert any("卫星影像" in r["content"] for r in results)
+    assert all("无关内容" not in r["content"] for r in results)
+
+
+async def test_cjk_mixed_and_english_query(pg_conn) -> None:
+    # 中英混排：中文查"植被"命中、英文查"NDVI"命中（英文路径不被 bigram 破坏）。
+    did = await doc_repo.insert_document(pg_conn, title="D", content="c", user_id="u1")
+    await doc_repo.insert_chunks(pg_conn, document_id=did, chunks=[
+        (0, "使用NDVI分析植被覆盖", _vec(1.0, 0.0, 0.0), None, {}),
+    ])
+    zh = await vs_repo.search_tsv_only(pg_conn, query="植被", limit=5, user_id="u1")
+    en = await vs_repo.search_tsv_only(pg_conn, query="NDVI", limit=5, user_id="u1")
+    assert zh and en
+    # 纯英文文档 + 英文查询仍可用（降级路径不报错）
+    did2 = await doc_repo.insert_document(pg_conn, title="E", content="c", user_id="u1")
+    await doc_repo.insert_chunks(pg_conn, document_id=did2, chunks=[
+        (0, "the quick brown fox", _vec(0.0, 1.0, 0.0), None, {}),
+    ])
+    assert await vs_repo.search_tsv_only(pg_conn, query="quick", limit=5, user_id="u1")
+
+
+async def test_tsv_only_hit_carries_embedding(pg_conn) -> None:
+    # 附带 bug 修复：纯 tsv 命中块经 search_tsv_only 也带 embedding（供下游 MMR 多样性）。
+    did = await doc_repo.insert_document(pg_conn, title="D", content="c", user_id="u1")
+    await doc_repo.insert_chunks(pg_conn, document_id=did, chunks=[
+        (0, "植被覆盖分析报告", _vec(1.0, 0.0, 0.0), None, {}),
+    ])
+    results = await vs_repo.search_tsv_only(pg_conn, query="植被", limit=5, user_id="u1")
+    assert results
+    assert "embedding" in results[0] and isinstance(results[0]["embedding"], list)
+
+
+async def test_cjk_migration_is_idempotent(pg_conn) -> None:
+    # 迁移 0010 幂等：content_tsv 生成定义已是 to_cjk_tsvector，重复应用不重建/不报错。
+    gendef = await pg_conn.fetchval(
+        """
+        SELECT pg_get_expr(d.adbin, d.adrelid)
+        FROM pg_attribute a JOIN pg_attrdef d ON d.adrelid=a.attrelid AND d.adnum=a.attnum
+        WHERE a.attrelid='public.document_chunks'::regclass AND a.attname='content_tsv'
+        """
+    )
+    assert "to_cjk_tsvector" in gendef
+
+
+# ============ 上下文链接：fetch_adjacent_chunks（migration 无关，新查询）============
+
+
+async def test_fetch_adjacent_chunks_by_index(pg_conn) -> None:
+    # 按 (document_id, chunk_index ∈ indices) 批量取块，按序升序返回。
+    did = await doc_repo.insert_document(pg_conn, title="D", content="c", user_id="u1")
+    await doc_repo.insert_chunks(pg_conn, document_id=did, chunks=[
+        (0, "块零", _vec(1.0, 0.0, 0.0), None, {}),
+        (1, "块一", _vec(0.0, 1.0, 0.0), None, {}),
+        (2, "块二", _vec(0.0, 0.0, 1.0), None, {}),
+    ])
+    rows = await doc_repo.fetch_adjacent_chunks(pg_conn, document_id=did, indices=[0, 1, 2], user_id="u1")
+    assert [r["chunk_index"] for r in rows] == [0, 1, 2]
+    assert [r["content"] for r in rows] == ["块零", "块一", "块二"]
+    # 越界序号被自然忽略，不报错
+    partial = await doc_repo.fetch_adjacent_chunks(pg_conn, document_id=did, indices=[1, 99], user_id="u1")
+    assert [r["chunk_index"] for r in partial] == [1]
+    # 空 indices → 空
+    assert await doc_repo.fetch_adjacent_chunks(pg_conn, document_id=did, indices=[], user_id="u1") == []
+
+
+async def test_fetch_adjacent_chunks_tenant_isolation(pg_conn) -> None:
+    # 防跨租户：他人 user_id 取不到邻居块。
+    did = await doc_repo.insert_document(pg_conn, title="D", content="c", user_id="u1")
+    await doc_repo.insert_chunks(pg_conn, document_id=did, chunks=[
+        (0, "私有块", _vec(1.0, 0.0, 0.0), None, {}),
+    ])
+    assert await doc_repo.fetch_adjacent_chunks(pg_conn, document_id=did, indices=[0], user_id="u2") == []

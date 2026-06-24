@@ -11,6 +11,7 @@ import { DataPanel } from "./components/DataPanel";
 import { TaskQueuePanel } from "./components/TaskQueuePanel";
 import { AnalysisReportPanel } from "./components/AnalysisReportPanel";
 import { AuthGate } from "./components/AuthGate";
+import { SplashScreen } from "./components/SplashScreen";
 import { useSettings } from "./hooks/useSettings";
 import { useChatController } from "./hooks/useChatController";
 import { useImageryUpload } from "./hooks/useImageryUpload";
@@ -18,6 +19,7 @@ import { useAuth } from "./hooks/useAuth";
 import { layersFromTurns } from "./lib/layers";
 import { tasksFromTurns } from "./lib/tasks";
 import { reportsFromTurns } from "./lib/reports";
+import { resolveAppGate } from "./lib/app-gate";
 import type { GeospatialResult } from "./types";
 import type { Roi } from "./lib/roi";
 
@@ -131,15 +133,15 @@ export default function App() {
     }
   };
 
-  // 强制登录门：服务端 auth_required 且当前未认证时，全屏拦截到 AuthGate。
-  // auth.loading 期间不拦截，避免初次 /auth/me 解析前闪现登录页。
-  // serverConfig 尚未拉到时不拦截（保守：拿不到配置不误挡，数据接口仍受后端 401 兜底）。
-  const authRequired = settings.serverConfig?.auth_required ?? false;
-  const inviteRequired = settings.serverConfig?.invite_required ?? true;
-  const authed = auth.user?.authenticated === true;
-  if (authRequired && !authed && !auth.loading) {
-    return <AuthGate auth={auth} inviteRequired={inviteRequired} />;
-  }
+  // 应用门控（纯函数 resolveAppGate，可单测）：splash / login / app 三态。
+  // splash 收敛"配置或会话尚未就绪"，绝不在未知态下先渲染主应用 —— 根治旧逻辑首屏闪烁。
+  const gate = resolveAppGate({
+    serverConfig: settings.serverConfig,
+    authLoading: auth.loading,
+    authed: auth.user?.authenticated === true,
+  });
+  if (gate === "splash") return <SplashScreen />;
+  if (gate === "login") return <AuthGate auth={auth} />;
 
   return (
     <div className="relative h-screen w-screen overflow-hidden bg-background text-foreground">

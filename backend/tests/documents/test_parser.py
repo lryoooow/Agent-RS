@@ -61,6 +61,112 @@ def test_parse_docx_preserves_paragraph_table_order() -> None:
     assert parsed.content.splitlines() == ["开头段落", "表格左\t表格右", "结尾段落"]
 
 
+# ---- 结构恢复：docx/pptx 标题 → Markdown `#`（供 chunker 识别章节，新增）----
+
+
+def _docx_bytes(paragraphs: list[tuple[str, str | None]]) -> bytes:
+    """构造 docx：paragraphs 为 (文本, 样式名) 列表，样式名 None 表示普通正文段。"""
+    from docx import Document
+
+    document = Document()
+    for text, style in paragraphs:
+        document.add_paragraph(text, style=style) if style else document.add_paragraph(text)
+    buffer = BytesIO()
+    document.save(buffer)
+    return buffer.getvalue()
+
+
+def test_parse_docx_heading_styles_become_markdown_prefixes() -> None:
+    # Heading 1/2 样式段 → `# `/`## `；正文段不加前缀（结构恢复使 chunker 能切章节）。
+    data = _docx_bytes(
+        [
+            ("数据来源", "Heading 1"),
+            ("卫星影像通过开放中心下载。", None),
+            ("卫星影像", "Heading 2"),
+            ("细节内容若干。", None),
+        ]
+    )
+
+    parsed = parse_uploaded_document(
+        filename="headings.docx",
+        content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        data=data,
+        title=None,
+        settings=get_settings(),
+    )
+
+    lines = parsed.content.splitlines()
+    assert "# 数据来源" in lines
+    assert "## 卫星影像" in lines
+    # 正文段绝不被加 `#`
+    assert "卫星影像通过开放中心下载。" in lines
+    assert "细节内容若干。" in lines
+
+
+def test_parse_docx_plain_paragraphs_have_no_prefix() -> None:
+    # 无标题样式的纯正文 docx：行为与历史一致，绝不出现 `#`（兼容回归）。
+    data = _docx_bytes([("第一段。", None), ("第二段。", None)])
+
+    parsed = parse_uploaded_document(
+        filename="plain.docx",
+        content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        data=data,
+        title=None,
+        settings=get_settings(),
+    )
+
+    assert "#" not in parsed.content
+    assert parsed.content.splitlines() == ["第一段。", "第二段。"]
+
+
+def test_parse_pptx_title_placeholder_becomes_heading() -> None:
+    # pptx 标题占位符 → `# ` 一级标题；正文文本框不加前缀。
+    from pptx import Presentation
+
+    presentation = Presentation()
+    slide = presentation.slides.add_slide(presentation.slide_layouts[1])  # 标题+内容版式
+    slide.shapes.title.text = "遥感概述"
+    body = slide.placeholders[1]
+    body.text = "这是正文内容。"
+
+    buffer = BytesIO()
+    presentation.save(buffer)
+
+    parsed = parse_uploaded_document(
+        filename="deck.pptx",
+        content_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        data=buffer.getvalue(),
+        title=None,
+        settings=get_settings(),
+    )
+
+    assert "# 遥感概述" in parsed.content
+    assert "这是正文内容。" in parsed.content
+    # 正文不应被加标题前缀
+    assert "# 这是正文内容。" not in parsed.content
+
+
+def test_docx_heading_level_handles_missing_or_odd_styles() -> None:
+    # 异常兜底：style.name 缺失/非标题样式一律返回 0（当正文），不抛错。
+    from app.documents.parser import _docx_heading_level
+
+    class _FakeStyle:
+        def __init__(self, name):
+            self.name = name
+
+    class _FakePara:
+        def __init__(self, name):
+            self.style = _FakeStyle(name)
+
+    assert _docx_heading_level(_FakePara("Heading 1")) == 1
+    assert _docx_heading_level(_FakePara("Heading 3")) == 3
+    assert _docx_heading_level(_FakePara("标题 2")) == 2
+    assert _docx_heading_level(_FakePara("Title")) == 1
+    assert _docx_heading_level(_FakePara("Normal")) == 0
+    assert _docx_heading_level(_FakePara(None)) == 0
+    assert _docx_heading_level(_FakePara("")) == 0
+
+
 def test_parse_pdf_uses_pypdf_when_text_is_sufficient(monkeypatch: pytest.MonkeyPatch) -> None:
     class FakePage:
         def extract_text(self):

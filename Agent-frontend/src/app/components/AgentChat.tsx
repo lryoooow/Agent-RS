@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { motion } from "motion/react";
+import { motion, useReducedMotion } from "motion/react";
 import {
   Bot,
   User,
@@ -21,6 +21,7 @@ import type { ChatTurn } from "../types";
 import { toolBubbleForTurn, type ToolBubble } from "../lib/agent-status";
 import { GeospatialSummary } from "./GeospatialSummary";
 import { Markdown } from "./Markdown";
+import { fadeInUp } from "../lib/motion";
 
 const ANALYSIS_FALLBACK: Record<string, string> = {
   analyzing: "正在思考中...",
@@ -83,7 +84,7 @@ function AssistantTurn({
       >
         <Bot className="size-4" />
       </div>
-      <div className="max-w-[85%]">
+      <div className="min-w-0 max-w-[85%]">
         {showAnalysis && (
           <div className="rounded-xl border border-border bg-card px-3 py-2 text-[12px] italic text-muted-foreground">
             {analysisText}
@@ -91,7 +92,7 @@ function AssistantTurn({
         )}
         {turn.content && (
           <div
-            className={`rounded-xl px-3 py-2 text-[13px] leading-relaxed break-words ${
+            className={`rounded-xl px-3 py-2 text-[13px] leading-relaxed break-words [overflow-wrap:anywhere] ${
               turn.error
                 ? "border border-destructive/30 bg-destructive/5 text-foreground whitespace-pre-wrap"
                 : "border border-border bg-card text-card-foreground"
@@ -145,6 +146,7 @@ export function AgentChat({
 }) {
   const [text, setText] = useState("");
   const endRef = useRef<HTMLDivElement>(null);
+  const reduce = useReducedMotion();
   const lastId = turns.length > 0 ? turns[turns.length - 1].id : null;
 
   useEffect(() => {
@@ -164,7 +166,7 @@ export function AgentChat({
       animate={{ opacity: 1, x: 0, scale: 1 }}
       exit={{ opacity: 0, x: -28, scale: 0.985 }}
       transition={{ duration: 0.42, ease: [0.22, 1, 0.36, 1] }}
-      className="absolute left-4 top-[108px] bottom-4 z-20 flex w-[360px] flex-col overflow-hidden rounded-2xl border border-border bg-sidebar/85 shadow-2xl shadow-black/40 backdrop-blur-xl"
+      className="absolute left-4 top-[108px] bottom-4 z-20 flex w-[420px] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl border border-border bg-sidebar/85 shadow-2xl shadow-black/40 backdrop-blur-xl"
     >
       {/* header */}
       <div className="flex items-center gap-2.5 border-b border-border px-3 py-2.5">
@@ -193,39 +195,47 @@ export function AgentChat({
 
       {/* messages */}
       <ScrollArea className="min-h-0 flex-1">
-        <div className="flex flex-col gap-4 p-3.5">          {turns.map((turn) => {
+        <div className="flex flex-col gap-4 p-3.5">
+          {turns.map((turn) => {
+            let body: React.ReactNode;
             if (turn.role === "system") {
-              return (
-                <div
-                  key={turn.id}
-                  className="mx-auto rounded-full border border-border bg-card/60 px-3 py-1 text-center font-mono text-[10px] text-muted-foreground"
-                >
+              body = (
+                <div className="mx-auto rounded-full border border-border bg-card/60 px-3 py-1 text-center font-mono text-[10px] text-muted-foreground">
                   {turn.content}
                 </div>
               );
-            }
-            if (turn.role === "user") {
-              return (
-                <div key={turn.id} className="flex flex-row-reverse gap-2.5">
+            } else if (turn.role === "user") {
+              body = (
+                <div className="flex flex-row-reverse gap-2.5">
                   <div className="mt-0.5 grid size-7 shrink-0 place-items-center rounded-lg bg-secondary text-secondary-foreground">
                     <User className="size-4" />
                   </div>
-                  <div className="max-w-[85%]">
-                    <div className="rounded-xl bg-secondary px-3 py-2 text-[13px] leading-relaxed whitespace-pre-wrap break-words text-secondary-foreground">
+                  <div className="min-w-0 max-w-[85%]">
+                    <div className="rounded-xl bg-secondary px-3 py-2 text-[13px] leading-relaxed whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-secondary-foreground">
                       {turn.content}
                     </div>
                   </div>
                 </div>
               );
+            } else {
+              body = (
+                <AssistantTurn
+                  turn={turn}
+                  streaming={activeStream && turn.id === lastId}
+                  onGenerateReport={onGenerateReport}
+                  reportPending={reportPending}
+                />
+              );
             }
             return (
-              <AssistantTurn
+              <motion.div
                 key={turn.id}
-                turn={turn}
-                streaming={activeStream && turn.id === lastId}
-                onGenerateReport={onGenerateReport}
-                reportPending={reportPending}
-              />
+                variants={reduce ? undefined : fadeInUp}
+                initial={reduce ? false : "hidden"}
+                animate="show"
+              >
+                {body}
+              </motion.div>
             );
           })}
           <div ref={endRef} />
@@ -236,15 +246,17 @@ export function AgentChat({
       {hasImagery && (
         <div className="flex flex-wrap gap-1.5 border-t border-border px-3.5 pt-3">
           {SUGGESTIONS.map((s) => (
-            <button
+            <motion.button
               key={s.label}
+              whileHover={reduce ? undefined : { scale: 1.04 }}
+              whileTap={reduce ? undefined : { scale: 0.96 }}
               disabled={loading}
               onClick={() => onSend(s.label)}
               className="flex items-center gap-1 rounded-full border border-border bg-card px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground disabled:opacity-40"
             >
               <Sparkles className="size-3" />
               {s.label}
-            </button>
+            </motion.button>
           ))}
         </div>
       )}

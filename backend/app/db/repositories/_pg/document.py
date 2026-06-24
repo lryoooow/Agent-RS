@@ -171,6 +171,37 @@ async def list_document_chunks(
     return [dict(row) for row in rows]
 
 
+async def fetch_adjacent_chunks(
+    conn,
+    *,
+    document_id: str,
+    indices: list[int],
+    user_id: str,
+) -> list[dict[str, Any]]:
+    """按 (document_id, chunk_index ∈ indices) 批量取块，供检索后的上下文扩展。
+
+    带 user_id 租户约束（JOIN documents 校验归属，与 list_document_chunks 同款鉴权），
+    防跨租户读取邻居块。返回按 chunk_index 升序，便于上层按序拼接。
+    """
+    if not indices:
+        return []
+    rows = await conn.fetch(
+        """
+        SELECT c.id::text, c.document_id::text, c.chunk_index, c.content, c.metadata
+        FROM public.document_chunks c
+        JOIN public.documents d ON d.id = c.document_id
+        WHERE c.document_id = $1::uuid
+          AND d.created_by_user_id = $2
+          AND c.chunk_index = ANY($3::int[])
+        ORDER BY c.chunk_index ASC
+        """,
+        document_id,
+        user_id,
+        indices,
+    )
+    return [dict(row) for row in rows]
+
+
 async def delete_document(conn, *, document_id: str, user_id: str) -> bool:
     await conn.execute(
         """

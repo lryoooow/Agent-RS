@@ -18,8 +18,7 @@ type Auth = ReturnType<typeof useAuth>;
 
 // 账户面板：登录 / 注册 / 登出。复用 useAuth（封装 auth-api 的 me/login/register/logout）。
 // DB 关闭时后端走默认用户，auth.user 仍可能为"未认证"的默认身份——按钮显示「默认用户」。
-// inviteRequired 由 serverConfig 透传，决定注册表单是否显示邀请码输入框。
-export function AuthDialog({ auth, inviteRequired = true }: { auth: Auth; inviteRequired?: boolean }) {
+export function AuthDialog({ auth }: { auth: Auth }) {
   const [open, setOpen] = useState(false);
   const authed = auth.user?.authenticated === true;
   const buttonLabel = authed ? auth.user?.name || auth.user?.email || "账户" : "登录";
@@ -56,7 +55,7 @@ export function AuthDialog({ auth, inviteRequired = true }: { auth: Auth; invite
               <LoginForm auth={auth} onDone={() => setOpen(false)} />
             </TabsContent>
             <TabsContent value="register">
-              <RegisterForm auth={auth} inviteRequired={inviteRequired} onDone={() => setOpen(false)} />
+              <RegisterForm auth={auth} onDone={() => setOpen(false)} />
             </TabsContent>
           </Tabs>
         )}
@@ -121,24 +120,21 @@ function LoginForm({ auth, onDone }: { auth: Auth; onDone: () => void }) {
 
 function RegisterForm({
   auth,
-  inviteRequired,
   onDone,
 }: {
   auth: Auth;
-  inviteRequired: boolean;
   onDone: () => void;
 }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
-  const [inviteCode, setInviteCode] = useState("");
   return (
     <form
       className="flex flex-col gap-3 py-2"
       onSubmit={async (e) => {
         e.preventDefault();
         try {
-          await auth.signUp(email, password, name, inviteCode);
+          await auth.signUp(email, password, name);
           onDone();
         } catch {
           /* error shown via auth.error */
@@ -154,17 +150,6 @@ function RegisterForm({
       <Field label="密码">
         <Input value={password} onChange={(e) => setPassword(e.target.value)} type="password" autoComplete="new-password" className="bg-input-background text-[13px]" />
       </Field>
-      {inviteRequired && (
-        <Field label="邀请码">
-          <Input
-            value={inviteCode}
-            onChange={(e) => setInviteCode(e.target.value)}
-            placeholder="RS-XXXX-XXXX-XXXX"
-            autoComplete="off"
-            className="bg-input-background font-mono text-[13px]"
-          />
-        </Field>
-      )}
       {auth.error && <p className="font-mono text-[11px] text-destructive">{auth.error}</p>}
       <Button type="submit" disabled={auth.loading} className="gap-1.5 bg-primary text-primary-foreground hover:bg-primary/90">
         {auth.loading ? <Loader2 className="size-4 animate-spin" /> : <UserPlus className="size-4" />}
