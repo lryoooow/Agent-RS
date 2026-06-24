@@ -83,14 +83,6 @@ class Settings(BaseSettings):
     auth_cookie_samesite: str = "lax"
     auth_password_min_length: int = 10
     auth_password_max_length: int = 128
-    # 登录失败限流（进程内，单实例 beta 适用；多实例需换 Redis）。见 app/auth/throttle.py。
-    auth_login_max_failures: int = 5
-    auth_login_lockout_seconds: int = 300
-    # 注册门控：True=必须持有效邀请码才能注册（定向内测默认）；False=开放注册（回退用）。
-    invite_required: bool = True
-    # 管理员邮箱（逗号分隔）。邮箱∈此列表即管理员，可签发邀请/管理用户。
-    # 用设置项而非 users 表布尔列：beta 期管理员极少，免一次迁移；改名单即时生效。
-    admin_emails: str = ""
 
     database_enabled: bool = False
     database_url: str = ""
@@ -120,10 +112,15 @@ class Settings(BaseSettings):
     rerank_api_key: str = ""
     rerank_model: str = "gte-rerank-v2"
     rerank_top_n: int = 5
-    rag_candidate_limit: int = 12
+    rag_candidate_limit: int = 20
     rag_rrf_k: int = 60
     rag_mmr_enabled: bool = True
     rag_mmr_lambda: float = 0.7
+    # 上下文链接（Context Expansion）：检索命中的锚点块按 chunk_index 补回相邻块，
+    # 修复"命中孤立块、跨块论述被切断"。radius=1 即各补前后 1 块。仅用于喂 LLM 的
+    # retrieve_rag_context；/documents/search 直接展示命中块、不扩展（保精确粒度）。
+    rag_context_expansion_enabled: bool = True
+    rag_context_expansion_radius: int = 1
 
     memory_judge_enabled: bool = True
     memory_judge_model: str = ""
@@ -133,7 +130,7 @@ class Settings(BaseSettings):
 
     document_max_file_bytes: int = 20 * 1024 * 1024
     document_max_pdf_pages: int = 200
-    document_max_chunks: int = 50
+    document_max_chunks: int = 240
     chunk_size: int = 800
     chunk_overlap: int = 100
     chunk_min_size: int = 200
@@ -200,14 +197,6 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
-
-    @property
-    def admin_email_list(self) -> list[str]:
-        """规范化（去空白、转小写）的管理员邮箱列表，与登录归一化口径一致。"""
-        return [email.strip().lower() for email in self.admin_emails.split(",") if email.strip()]
-
-    def is_admin_email(self, email: str | None) -> bool:
-        return bool(email) and email.strip().lower() in self.admin_email_list
 
     @property
     def auth_required(self) -> bool:

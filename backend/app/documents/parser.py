@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 import hashlib
+import re
 import shutil
 from dataclasses import dataclass
 from io import BytesIO
@@ -221,6 +222,28 @@ def _parse_pdf_with_ocr(data: bytes, settings: Settings, page_count: int) -> str
     return "\n\n".join(text for text in texts if text)
 
 
+def _docx_heading_level(paragraph: Any) -> int:
+    """从 docx 段落样式名解析标题级别（1~6）；非标题/异常返回 0（当正文）。
+
+    兼容英文样式名（Heading 1 / Heading1 / Title）与中文样式名（标题 1）。
+    style 缺失或样式名异常时一律降级为 0，绝不因结构恢复破坏既有纯文本路径。
+    """
+    try:
+        name = (paragraph.style.name or "").strip()
+    except Exception:
+        return 0
+    if not name:
+        return 0
+    lowered = name.lower()
+    # 文档主标题（Title / 标题）作一级。
+    if lowered == "title" or name == "标题":
+        return 1
+    match = re.search(r"(?:heading|标题)\s*([1-6])", lowered if "heading" in lowered else name)
+    if match:
+        return int(match.group(1))
+    return 0
+
+
 def _parse_docx(data: bytes, base_metadata: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     from docx import Document
     from docx.oxml.table import CT_Tbl
@@ -236,9 +259,13 @@ def _parse_docx(data: bytes, base_metadata: dict[str, Any]) -> tuple[str, dict[s
     parts: list[str] = []
     for child in document.element.body.iterchildren():
         if isinstance(child, CT_P):
-            text = Paragraph(child, document).text.strip()
+            paragraph = Paragraph(child, document)
+            text = paragraph.text.strip()
             if text:
-                parts.append(text)
+                # 结构恢复：Word 的 Heading 样式段落 → Markdown `#` 前缀，供下游 chunker
+                # 识别章节并生成面包屑。原先只取 .text、丢弃样式，docx 章节信息全失（覆盖率<10%）。
+                level = _docx_heading_level(paragraph)
+                parts.append(f"{'#' * level} {text}" if level else text)
         elif isinstance(child, CT_Tbl):
             table = Table(child, document)
             rows = [
@@ -250,6 +277,24 @@ def _parse_docx(data: bytes, base_metadata: dict[str, Any]) -> tuple[str, dict[s
                 parts.append(table_text)
 
     return "\n\n".join(parts), {**base_metadata, "parser": "python-docx", "ocr_used": False}
+
+
+def _pptx_shape_is_title(shape: Any) -> bool:
+    """判断 pptx 形状是否为标题占位符（TITLE / CENTER_TITLE）。
+
+    非占位符形状访问 placeholder_format.type 会抛错或返回 None，故 try 兜底为 False，
+    不因结构恢复破坏既有文本路径。
+    """
+    try:
+        if not shape.is_placeholder:
+            return False
+        ph_type = shape.placeholder_format.type
+    except Exception:
+        return False
+    if ph_type is None:
+        return False
+    # PP_PLACEHOLDER.TITLE=13, CENTER_TITLE=0；用名字判断避免依赖枚举导入。
+    return str(ph_type).upper().find("TITLE") != -1
 
 
 def _parse_pptx(data: bytes, base_metadata: dict[str, Any]) -> tuple[str, dict[str, Any]]:
@@ -273,7 +318,8 @@ def _parse_pptx(data: bytes, base_metadata: dict[str, Any]) -> tuple[str, dict[s
                     if para.text.strip()
                 )
                 if text:
-                    parts.append(text)
+                    # 结构恢复：标题占位符 → Markdown 一级标题，供下游 chunker 识别章节。
+                    parts.append(f"# {text}" if _pptx_shape_is_title(shape) else text)
             if shape.has_table:
                 rows = [
                     "\t".join(cell.text.strip() for cell in row.cells if cell.text.strip())

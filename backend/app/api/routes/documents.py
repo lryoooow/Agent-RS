@@ -24,8 +24,9 @@ from app.db.repositories.document import (
     list_documents,
 )
 from app.db.repositories.document_job import create_ingest_job, get_ingest_job, update_ingest_job
+from app.agent.context.budget import estimate_tokens
 from app.documents import DocumentParseError, parse_uploaded_document
-from app.documents.chunker import chunk_text
+from app.documents.chunker import chunk_document, chunk_text
 from app.documents.parser import SUPPORTED_EXTENSIONS, TEXT_EXTENSIONS
 from app.documents.task_registry import schedule_task
 from app.agent.rag.mmr import mmr_select
@@ -404,14 +405,15 @@ async def _store_document_content(
     settings = get_settings()
     stage_timings: dict[str, int] = {}
     started = time.perf_counter()
-    chunks = chunk_text(
+    pieces = chunk_document(
         content,
         chunk_size=settings.chunk_size,
         chunk_overlap=settings.chunk_overlap,
         min_chunk_size=settings.chunk_min_size,
     )
+    chunk_texts = [piece.text for piece in pieces]
     stage_timings["chunking_ms"] = int((time.perf_counter() - started) * 1000)
-    if len(chunks) > settings.document_max_chunks:
+    if len(pieces) > settings.document_max_chunks:
         raise HTTPException(
             status_code=413,
             detail={
@@ -428,8 +430,8 @@ async def _store_document_content(
                 job_id=job_id,
                 status="embedding",
                 progress=55,
-                chunk_count=len(chunks),
-                embedding_batches=(len(chunks) + settings.embedding_batch_size - 1)
+                chunk_count=len(pieces),
+                embedding_batches=(len(pieces) + settings.embedding_batch_size - 1)
                 // settings.embedding_batch_size,
                 stage_timings=stage_timings,
             )
@@ -437,14 +439,14 @@ async def _store_document_content(
         logger,
         "documents.chunk",
         document_id="pending",
-        chunk_count=len(chunks),
+        chunk_count=len(pieces),
         chunk_size=settings.chunk_size,
         overlap=settings.chunk_overlap,
     )
 
     try:
         started = time.perf_counter()
-        embeddings = await get_embedding_service().embed_batch(chunks)
+        embeddings = await get_embedding_service().embed_batch(chunk_texts)
         stage_timings["embedding_ms"] = int((time.perf_counter() - started) * 1000)
     except EmbeddingUnavailableError as exc:
         raise HTTPException(
@@ -487,13 +489,13 @@ async def _store_document_content(
                 document_id=document_id,
                 chunks=[
                     (
-                        index,
-                        content,
+                        piece.index,
+                        piece.text,
                         embedding,
-                        None,
-                        chunk_metadata,
+                        estimate_tokens(piece.text),
+                        {**chunk_metadata, "section": piece.section, "chunk_index": piece.index},
                     )
-                    for index, (content, embedding) in enumerate(zip(chunks, embeddings, strict=True))
+                    for piece, embedding in zip(pieces, embeddings, strict=True)
                 ],
             )
     stage_timings["inserting_ms"] = int((time.perf_counter() - started) * 1000)
@@ -505,8 +507,8 @@ async def _store_document_content(
                 status="complete",
                 progress=100,
                 document_id=document_id,
-                chunk_count=len(chunks),
-                embedding_batches=(len(chunks) + settings.embedding_batch_size - 1)
+                chunk_count=len(pieces),
+                embedding_batches=(len(pieces) + settings.embedding_batch_size - 1)
                 // settings.embedding_batch_size,
                 stage_timings=stage_timings,
             )
@@ -514,10 +516,10 @@ async def _store_document_content(
         logger,
         "documents.insert",
         document_id=document_id,
-        chunks_inserted=len(chunks),
+        chunks_inserted=len(pieces),
     )
 
-    return DocumentCreateResponse(document_id=document_id, chunk_count=len(chunks))
+    return DocumentCreateResponse(document_id=document_id, chunk_count=len(pieces))
 
 
 def _read_and_parse_document(

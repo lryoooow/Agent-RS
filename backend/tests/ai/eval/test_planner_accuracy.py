@@ -62,9 +62,9 @@ def _result(**overrides) -> CaseResult:
 
 def test_eval_cases_are_valid_and_cover_inventory() -> None:
     validate_cases()
-    assert len(GOLDEN_CASES) == 30
+    assert len(GOLDEN_CASES) == 31
     assert len(GENERATED_CASES) == 308
-    assert len(EVAL_CASES) == 338
+    assert len(EVAL_CASES) == 339
 
 
 def test_case_validation_rejects_unknown_capability() -> None:

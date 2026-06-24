@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { motion, useReducedMotion } from "motion/react";
 import { Settings2, Cpu } from "lucide-react";
 import {
   Dialog,
@@ -17,7 +18,7 @@ import { Textarea } from "./ui/textarea";
 import { Switch } from "./ui/switch";
 import { Logo } from "./Logo";
 import { AuthDialog } from "./AuthDialog";
-import { AdminPanel } from "./AdminPanel";
+import { slideDown } from "../lib/motion";
 import type { useSettings } from "../hooks/useSettings";
 import type { useAuth } from "../hooks/useAuth";
 
@@ -25,6 +26,7 @@ type Settings = ReturnType<typeof useSettings>;
 type Auth = ReturnType<typeof useAuth>;
 
 export function TopBar({ settings, auth }: { settings: Settings; auth: Auth }) {
+  const reduce = useReducedMotion();
   const [open, setOpen] = useState(false);
   // 草稿态：仅在保存时写回 settings，取消则丢弃。
   const [model, setModel] = useState(settings.model);
@@ -58,7 +60,12 @@ export function TopBar({ settings, auth }: { settings: Settings; auth: Auth }) {
   };
 
   return (
-    <header className="absolute inset-x-0 top-0 z-40 flex h-14 items-center gap-3 border-b border-border bg-background/70 px-4 backdrop-blur-xl">
+    <motion.header
+      variants={reduce ? undefined : slideDown}
+      initial={reduce ? false : "hidden"}
+      animate="show"
+      className="absolute inset-x-0 top-0 z-40 flex h-14 items-center gap-3 border-b border-border bg-background/70 px-4 backdrop-blur-xl"
+    >
       <div className="flex items-center gap-2.5">
         <Logo size={32} rounded="rounded-lg" />
         <div className="leading-tight">
@@ -85,8 +92,7 @@ export function TopBar({ settings, auth }: { settings: Settings; auth: Auth }) {
       </div>
 
       <div className="flex items-center gap-2 max-md:ml-auto md:ml-3">
-        {auth.user?.is_admin && <AdminPanel endpoint={settings.endpoint} />}
-        <AuthDialog auth={auth} inviteRequired={settings.serverConfig?.invite_required ?? true} />
+        <AuthDialog auth={auth} />
         <Dialog
           open={open}
           onOpenChange={(o) => {
@@ -178,7 +184,7 @@ export function TopBar({ settings, auth }: { settings: Settings; auth: Auth }) {
         </DialogContent>
       </Dialog>
       </div>
-    </header>
+    </motion.header>
   );
 }
 

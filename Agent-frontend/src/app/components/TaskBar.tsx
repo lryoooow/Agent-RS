@@ -1,5 +1,7 @@
 import { LayoutDashboard, Boxes, ListTodo, Database, FileBarChart } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import { motion, useReducedMotion } from "motion/react";
+import { slideDown } from "../lib/motion";
 
 interface TaskItem {
   id: string;
@@ -36,8 +38,15 @@ export function TaskBar({
     // 「工作台」为当前主视图，无需额外动作
   };
 
+  const reduce = useReducedMotion();
+
   return (
-    <nav className="absolute inset-x-0 top-14 z-30 flex h-11 items-center gap-1 border-b border-border bg-background/60 px-3 backdrop-blur-xl">
+    <motion.nav
+      variants={reduce ? undefined : slideDown}
+      initial={reduce ? false : "hidden"}
+      animate="show"
+      className="absolute inset-x-0 top-14 z-30 flex h-11 items-center gap-1 border-b border-border bg-background/60 px-3 backdrop-blur-xl"
+    >
       {ITEMS.map((it) => {
         const Icon = it.icon;
         const active = it.id === "workspace";
@@ -61,6 +70,6 @@ export function TaskBar({
         <span className="size-1.5 rounded-full bg-primary" />
         就绪
       </span>
-    </nav>
+    </motion.nav>
   );
 }
