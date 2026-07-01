@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState } from "react";
 import { AnimatePresence } from "motion/react";
+import type { Map as MapLibreMap } from "maplibre-gl";
 import { MapView } from "./components/MapView";
 import { AgentChat } from "./components/AgentChat";
 import { RightPanel } from "./components/RightPanel";
@@ -20,7 +21,7 @@ import { layersFromTurns } from "./lib/layers";
 import { tasksFromTurns } from "./lib/tasks";
 import { reportsFromTurns } from "./lib/reports";
 import { resolveAppGate } from "./lib/app-gate";
-import type { GeospatialResult } from "./types";
+import type { GeospatialResult, MapAnnotation } from "./types";
 import type { Roi } from "./lib/roi";
 
 export default function App() {
@@ -29,6 +30,11 @@ export default function App() {
   // 框选的分析聚焦区（ROI）：geo（经纬度 bbox）或 pixel（影像内相对 0..1）。
   // 由 MapView/ImageViewer 上报，注入下一轮对话作为「解读聚焦提示」（工具仍全图计算）。
   const [roi, setRoi] = useState<Roi | null>(null);
+  // MapLibre 地图实例 ref，用于提取地图上下文（中心坐标、缩放级别）
+  const mapRef = useRef<MapLibreMap | null>(null);
+  // 地图标注数据（多边形、点、线段）
+  const [annotations, setAnnotations] = useState<MapAnnotation[]>([]);
+
   const chat = useChatController({
     endpoint: settings.endpoint,
     systemPrompt: settings.systemPrompt,
@@ -37,6 +43,17 @@ export default function App() {
     model: settings.model,
     providerConfig: settings.providerConfig,
     roi,
+    getMapContext: () => {
+      const map = mapRef.current;
+      if (!map) return null;
+      const center = map.getCenter();
+      const zoom = map.getZoom();
+      return {
+        center: [center.lng, center.lat],
+        zoom: Math.round(zoom),
+        annotations: annotations.length > 0 ? annotations : undefined,
+      };
+    },
   });
   const imagery = useImageryUpload(settings.endpoint);
 
@@ -146,10 +163,12 @@ export default function App() {
   return (
     <div className="relative h-screen w-screen overflow-hidden bg-background text-foreground">
       <MapView
+        mapRef={mapRef}
         layers={layers}
         roi={roi}
         onSelectRegion={setRoi}
         onClearRegion={() => setRoi(null)}
+        onAnnotationsChange={setAnnotations}
       />
 
       <TopBar settings={settings} auth={auth} />

@@ -1,15 +1,12 @@
-﻿import asyncio
 import json
 from typing import Any, AsyncIterator, Iterator
 
-from app.agent.config import ResolvedAIConfig
 from app.agent.errors import AIError, map_provider_error
 from app.agent.reasoning import ThinkTagParser
 from app.schemas.chat import Usage
 
 REASONING_FIELDS = ("reasoning_content", "reasoning", "thinking", "thought")
-ANALYSIS_STATUS_PAUSE_SECONDS = 0.42
-ANSWER_DELTA_MAX_CHARS = 8
+ANSWER_DELTA_MAX_CHARS = 6  # 仅做轻量切块，不再人为拖慢
 ANALYSIS_STATUS_LABELS = {
     "analyzing": "正在思考中…",
     "preparing": "正在梳理结果…",
@@ -70,21 +67,6 @@ def agent_status_event(status: str, *, label: str | None = None, **metadata: Any
             **metadata,
         },
     )
-
-
-async def stream_initial_sse_events(
-    config: ResolvedAIConfig,
-    metadata: dict[str, Any] | None = None,
-) -> AsyncIterator[str]:
-    payload = {"model": config.model, "provider": config.provider}
-    if metadata:
-        payload.update(metadata)
-    yield sse_event("meta", payload)
-    yield analysis_status_event("analyzing")
-    await asyncio.sleep(ANALYSIS_STATUS_PAUSE_SECONDS)
-    yield analysis_status_event("preparing")
-    await asyncio.sleep(ANALYSIS_STATUS_PAUSE_SECONDS)
-    yield analysis_status_event("answering")
 
 
 def iter_answer_delta_parts(content_parts: list[str]) -> Iterator[str]:

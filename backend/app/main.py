@@ -11,7 +11,7 @@ from app.agent.errors import AIError
 from app.agent.tool_jobs import start_tool_job_worker, stop_tool_job_worker
 from app.auth import reset_current_user_id, set_current_user_id
 from app.auth.session import AuthSessionUnavailable, get_session_user
-from app.db.pool import close_db_pool, init_db_pool
+from app.db.pool import close_db_pool, fetch_optional_pool, init_db_pool
 from app.documents.task_registry import recover_document_jobs, shutdown_tasks
 from app.core.logging import configure_logging
 from app.core.settings import get_settings
@@ -20,6 +20,7 @@ from app.core.settings import get_settings
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     await init_db_pool()
+    await _verify_database_connection()
     await _ensure_object_storage_ready()
     await recover_document_jobs()
     start_tool_job_worker()
@@ -33,6 +34,18 @@ async def lifespan(_: FastAPI):
         await stop_tool_job_worker()
         await shutdown_tasks()
         await close_db_pool()
+
+
+async def _verify_database_connection() -> None:
+    settings = get_settings()
+    if not settings.database_enabled:
+        return
+
+    pool = await fetch_optional_pool()
+    if pool is None:
+        raise RuntimeError("DATABASE_ENABLED=true 但连接池未就绪；后端拒绝启动。")
+    async with pool.acquire() as conn:
+        await conn.execute("SELECT 1")
 
 
 async def _ensure_object_storage_ready() -> None:

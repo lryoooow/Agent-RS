@@ -1,15 +1,28 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
+import type { Map as MapLibreMap } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
-import { Layers, Crosshair, Eye, EyeOff, Plus, Minus, Search, Loader2, SquareDashedMousePointer, X, Grid3x3, Columns2 } from "lucide-react";
+import { Layers, Crosshair, Eye, EyeOff, Plus, Minus, Search, Loader2, SquareDashedMousePointer, Grid3x3, Columns2, Pentagon, MapPin, Ruler, Trash2, ChevronDown } from "lucide-react";
 import type { RSLayer } from "../lib/layers";
+import type { MapAnnotation } from "../types";
 import { ImageViewer } from "./ImageViewer";
 import { geoRoiFromCorners, isDegenerateRoi, type PixelRoi, type Roi } from "../lib/roi";
 import { buildGraticule } from "../lib/graticule";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "./ui/dropdown-menu";
 
 // 默认视图（无影像时的世界中心，随首个带 bounds 的结果 fitBounds 覆盖）。
 const DEFAULT_CENTER: [number, number] = [115.9, 22.9];
 const DEFAULT_ZOOM = 9;
+
+// MapLibre paint 属性必须是字面量颜色，不能解析 CSS 变量（hsl(var(--primary)) 会被校验器拒绝）。
+// 取主题色 --primary(#2bb8c2) 与深色底 #0a0e14 的字面量，供绘图/标注图层使用。
+const PRIMARY_COLOR = "#2bb8c2";
+const DARK_BG = "#0a0e14";
 
 const SAT_STYLE: maplibregl.StyleSpecification = {
   version: 8,
@@ -44,15 +57,19 @@ function absoluteUrl(url: string) {
 }
 
 export function MapView({
+  mapRef: externalMapRef,
   layers,
   roi,
   onSelectRegion,
   onClearRegion,
+  onAnnotationsChange,
 }: {
+  mapRef?: React.MutableRefObject<MapLibreMap | null>;
   layers: RSLayer[];
   roi: Roi | null;
   onSelectRegion: (roi: Roi) => void;
   onClearRegion: () => void;
+  onAnnotationsChange?: (annotations: MapAnnotation[]) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const ref2 = useRef<HTMLDivElement>(null); // 卷帘第二张地图容器
@@ -77,6 +94,52 @@ export function MapView({
   const [swipePct, setSwipePct] = useState(50); // 分隔条位置（容器宽度百分比）
   const swipeDragRef = useRef(false);
   const scaleCtrlRef = useRef<maplibregl.ScaleControl | null>(null);
+  // 原生绘图：当前模式 + 已提交标注 + 进行中要素顶点。
+  const [drawMode, setDrawMode] = useState<"polygon" | "point" | "line_string" | null>(null);
+  const [annotations, setAnnotations] = useState<MapAnnotation[]>([]); // 已完成标注（GeoJSON Feature）
+  const draftRef = useRef<[number, number][]>([]); // 进行中要素的顶点（lng,lat）
+  const annotationsRef = useRef<MapAnnotation[]>([]); // 镜像 annotations 供事件回调读最新值（防 stale-closure）
+  const hasRoi = roi !== null;
+  const hasAnnotations = annotations.length > 0;
+
+  // 从 localStorage 加载标注（挂载时一次）。
+  useEffect(() => {
+    const saved = localStorage.getItem("map_annotations");
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) setAnnotations(parsed as MapAnnotation[]);
+      } catch (e) {
+        console.error("Failed to load annotations:", e);
+      }
+    }
+  }, []);
+
+  // 镜像 annotations 到 ref：事件回调（按 drawMode 重注册）据此读到最新已提交标注，杜绝 stale-closure。
+  useEffect(() => {
+    annotationsRef.current = annotations;
+  }, [annotations]);
+
+  // 保存标注到 localStorage + 通知父组件（透传给智能体上下文）。
+  const saveAnnotations = (newAnnotations: MapAnnotation[]) => {
+    setAnnotations(newAnnotations);
+    localStorage.setItem("map_annotations", JSON.stringify(newAnnotations));
+    if (onAnnotationsChange) {
+      onAnnotationsChange(newAnnotations);
+    }
+  };
+
+  const clearAnnotationsOnly = () => {
+    draftRef.current = [];
+    renderDraft();
+    setDrawMode(null);
+    saveAnnotations([]);
+  };
+
+  const clearAll = () => {
+    clearAnnotationsOnly();
+    onClearRegion();
+  };
 
   // 可见的叠加结果图层（非 imagery），用于判断卷帘是否可用：需要至少 1 个结果图层叠在底图/影像上。
   const overlayCount = layers.filter((l) => l.visible && l.kind !== "imagery").length;
@@ -147,11 +210,18 @@ export function MapView({
       map.resize();
     });
     mapRef.current = map;
+    // 同步到外部 ref（供 App 提取地图上下文）
+    if (externalMapRef) {
+      externalMapRef.current = map;
+    }
     return () => {
       map.remove();
       mapRef.current = null;
+      if (externalMapRef) {
+        externalMapRef.current = null;
+      }
     };
-  }, []);
+  }, [externalMapRef]);
 
   // keep canvas sized to container (fixes blank map on refresh)
   useEffect(() => {
@@ -277,6 +347,174 @@ export function MapView({
       map.addLayer({ id: lineId, type: "line", source: srcId, paint: { "line-color": "#2dd4bf", "line-width": 2 } });
     }
   }, [roi, ready]);
+
+  // D1 已提交标注渲染：单一 FeatureCollection 源 + Polygon(fill+line)/LineString(line)/Point(circle) 三层。
+  // 首次建源建层，之后 setData；并在 load/标注变更时恢复已存标注（取代旧 MapboxDraw 的 draw.set）。
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready) return;
+    const srcId = "rs-anno-src";
+    const data: GeoJSON.FeatureCollection = {
+      type: "FeatureCollection",
+      features: annotations as GeoJSON.Feature[],
+    };
+    const src = map.getSource(srcId) as maplibregl.GeoJSONSource | undefined;
+    if (src) {
+      src.setData(data);
+      return;
+    }
+    map.addSource(srcId, { type: "geojson", data });
+    map.addLayer({
+      id: "rs-anno-fill",
+      type: "fill",
+      source: srcId,
+      filter: ["==", ["geometry-type"], "Polygon"],
+      paint: { "fill-color": PRIMARY_COLOR, "fill-opacity": 0.15 },
+    });
+    map.addLayer({
+      id: "rs-anno-line",
+      type: "line",
+      source: srcId,
+      filter: ["in", ["geometry-type"], ["literal", ["Polygon", "LineString"]]],
+      paint: { "line-color": PRIMARY_COLOR, "line-width": 2 },
+    });
+    map.addLayer({
+      id: "rs-anno-point",
+      type: "circle",
+      source: srcId,
+      filter: ["==", ["geometry-type"], "Point"],
+      paint: {
+        "circle-radius": 6,
+        "circle-color": PRIMARY_COLOR,
+        "circle-stroke-color": DARK_BG,
+        "circle-stroke-width": 1.5,
+      },
+    });
+  }, [annotations, ready]);
+
+  // D2 草稿预览：进行中要素的顶点(circle)+连线(line)。建一次源/层，由 renderDraft 写入。
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready) return;
+    const srcId = "rs-draft-src";
+    if (map.getSource(srcId)) return;
+    map.addSource(srcId, { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+    map.addLayer({
+      id: "rs-draft-line",
+      type: "line",
+      source: srcId,
+      filter: ["==", ["geometry-type"], "LineString"],
+      paint: { "line-color": PRIMARY_COLOR, "line-width": 2, "line-dasharray": [2, 1] },
+    });
+    map.addLayer({
+      id: "rs-draft-point",
+      type: "circle",
+      source: srcId,
+      filter: ["==", ["geometry-type"], "Point"],
+      paint: {
+        "circle-radius": 4,
+        "circle-color": DARK_BG,
+        "circle-stroke-color": PRIMARY_COLOR,
+        "circle-stroke-width": 2,
+      },
+    });
+  }, [ready]);
+
+  // 把 draftRef 顶点写进草稿源：每个顶点一个 Point，≥2 点再加一条连线（polygon 也用折线预览即可）。
+  const renderDraft = useCallback(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const src = map.getSource("rs-draft-src") as maplibregl.GeoJSONSource | undefined;
+    if (!src) return;
+    const pts = draftRef.current;
+    const features: GeoJSON.Feature[] = pts.map((p) => ({
+      type: "Feature",
+      properties: {},
+      geometry: { type: "Point", coordinates: p },
+    }));
+    if (pts.length >= 2) {
+      features.push({
+        type: "Feature",
+        properties: {},
+        geometry: { type: "LineString", coordinates: pts },
+      });
+    }
+    src.setData({ type: "FeatureCollection", features });
+  }, []);
+
+  // 切换绘图模式：再点同一模式→退出；与框选互斥；切换时丢弃未完成草稿。
+  const toggleDrawMode = useCallback(
+    (mode: "polygon" | "point" | "line_string") => {
+      draftRef.current = [];
+      renderDraft();
+      setSelectMode(false);
+      setDrawMode((prev) => (prev === mode ? null : mode));
+    },
+    [renderDraft],
+  );
+
+  // D3 绘图交互：按 drawMode 重注册 click/dblclick → 回调天然读到最新 drawMode，经 ref 读写已提交标注（无 stale-closure）。
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready || !drawMode) return;
+
+    // 绘图时禁用双击缩放，避免双击「结束」误触发地图缩放。
+    map.doubleClickZoom.disable();
+    const canvas = map.getCanvas();
+    const prevCursor = canvas.style.cursor;
+    canvas.style.cursor = "default";
+
+    const commit = (feature: MapAnnotation) => {
+      saveAnnotations([...annotationsRef.current, feature]);
+      draftRef.current = [];
+      renderDraft();
+    };
+
+    const onClick = (e: maplibregl.MapMouseEvent) => {
+      const pt: [number, number] = [e.lngLat.lng, e.lngLat.lat];
+      if (drawMode === "point") {
+        commit({ type: "Feature", properties: {}, geometry: { type: "Point", coordinates: pt } });
+        setDrawMode(null);
+        return;
+      }
+      draftRef.current = [...draftRef.current, pt];
+      renderDraft();
+    };
+
+    const onDblClick = (e: maplibregl.MapMouseEvent) => {
+      // dblclick 前会先触发一次 click（已 append 一个重复点），这里去掉它。
+      const pts = draftRef.current.slice(0, -1);
+      if (drawMode === "line_string") {
+        if (pts.length >= 2) {
+          commit({ type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: pts } });
+        } else {
+          draftRef.current = [];
+          renderDraft();
+        }
+      } else if (drawMode === "polygon") {
+        if (pts.length >= 3) {
+          const ring = [...pts, pts[0]]; // 闭合环
+          commit({ type: "Feature", properties: {}, geometry: { type: "Polygon", coordinates: [ring] } });
+        } else {
+          draftRef.current = [];
+          renderDraft();
+        }
+      }
+      setDrawMode(null);
+    };
+
+    map.on("click", onClick);
+    map.on("dblclick", onDblClick);
+    return () => {
+      map.off("click", onClick);
+      map.off("dblclick", onDblClick);
+      map.doubleClickZoom.enable();
+      canvas.style.cursor = prevCursor;
+      // 退出绘图模式时清掉未完成草稿。
+      draftRef.current = [];
+      renderDraft();
+    };
+  }, [drawMode, ready, renderDraft]);
 
   // sync real raster overlays (image source per geo layer)
   useEffect(() => {
@@ -450,8 +688,9 @@ export function MapView({
         </>
       )}
 
-      {/* geo 框选拖拽覆盖层：仅框选态挂载，捕获鼠标画框；松手 unproject 成经纬度 bbox */}
-      {selectMode && geoLayers.length > 0 && (
+      {/* geo 框选拖拽覆盖层：仅框选态挂载，捕获鼠标画框；松手 unproject 成经纬度 bbox。
+          底图也可框选（unproject 与图层无关），不再要求已加载影像。 */}
+      {selectMode && (
         <div
           className="absolute inset-0 z-[15] cursor-crosshair"
           onPointerDown={(e) => {
@@ -501,8 +740,8 @@ export function MapView({
         </div>
       )}
 
-      {/* 地名搜索框（右上角，避开左侧聊天面板与顶部读数条） */}
-      <div className="absolute right-4 top-[116px] z-10 w-[240px]">
+      {/* 地名搜索框（左上角，避开右侧图层面板） */}
+      <div className="absolute left-4 top-[116px] z-10 w-[240px]">
         <div className="flex items-center gap-1.5 rounded-full border border-border bg-card/80 px-3 py-1.5 backdrop-blur-md focus-within:border-primary/50">
           {searching ? (
             <Loader2 className="size-3.5 shrink-0 animate-spin text-primary" />
@@ -635,29 +874,93 @@ export function MapView({
           复位
         </button>
 
-        {/* geo 框选：选「分析聚焦区」。仅有 geo 图层时可用。 */}
-        {geoLayers.length > 0 && (
-          <button
-            onClick={() => setSelectMode((v) => !v)}
-            className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 font-mono text-[11px] backdrop-blur-md transition-colors ${
-              selectMode
-                ? "border-primary/50 bg-primary/10 text-primary"
-                : "border-border bg-card/80 text-foreground hover:text-primary"
-            }`}
-            title="框选分析聚焦区（仅引导解读聚焦，工具仍按整幅影像计算）"
-          >
-            <SquareDashedMousePointer className="size-3.5" />
-            {selectMode ? "框选中" : "框选"}
-          </button>
+        {/* geo 框选：选「分析聚焦区」。底图与影像均可用（不再门控）。与绘图模式互斥。 */}
+        <button
+          onClick={() => {
+            setSelectMode((v) => !v);
+            setDrawMode(null); // 与绘图互斥
+            draftRef.current = [];
+            renderDraft();
+          }}
+          className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 font-mono text-[11px] backdrop-blur-md transition-colors ${
+            selectMode
+              ? "border-primary/50 bg-primary/10 text-primary"
+              : "border-border bg-card/80 text-foreground hover:text-primary"
+          }`}
+          title="框选分析聚焦区（仅引导解读聚焦，工具仍按整幅影像计算）"
+        >
+          <SquareDashedMousePointer className="size-3.5" />
+          {selectMode ? "框选中" : "框选"}
+        </button>
+        {/* 绘图工具按钮组（原生 MapLibre 事件 + GeoJSON 图层实现） */}
+        {ready && (
+          <>
+            <button
+              onClick={() => toggleDrawMode("polygon")}
+              className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 font-mono text-[11px] backdrop-blur-md transition-colors ${
+                drawMode === "polygon"
+                  ? "border-primary/50 bg-primary/10 text-primary"
+                  : "border-border bg-card/80 text-foreground hover:text-primary"
+              }`}
+              title="绘制多边形标注（连续单击落点，双击闭合）"
+            >
+              <Pentagon className="size-3.5" />
+              {drawMode === "polygon" ? "双击结束" : "多边形"}
+            </button>
+
+            <button
+              onClick={() => toggleDrawMode("point")}
+              className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 font-mono text-[11px] backdrop-blur-md transition-colors ${
+                drawMode === "point"
+                  ? "border-primary/50 bg-primary/10 text-primary"
+                  : "border-border bg-card/80 text-foreground hover:text-primary"
+              }`}
+              title="标记点位（单击落点）"
+            >
+              <MapPin className="size-3.5" />
+              {drawMode === "point" ? "单击落点" : "点标注"}
+            </button>
+
+            <button
+              onClick={() => toggleDrawMode("line_string")}
+              className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 font-mono text-[11px] backdrop-blur-md transition-colors ${
+                drawMode === "line_string"
+                  ? "border-primary/50 bg-primary/10 text-primary"
+                  : "border-border bg-card/80 text-foreground hover:text-primary"
+              }`}
+              title="绘制线段（连续单击落点，双击结束）"
+            >
+              <Ruler className="size-3.5" />
+              {drawMode === "line_string" ? "双击结束" : "线段"}
+            </button>
+
+          </>
         )}
-        {roi && roi.kind === "geo" && (
-          <button
-            onClick={onClearRegion}
-            className="flex items-center gap-1.5 rounded-full border border-border bg-card/80 px-3 py-1.5 font-mono text-[11px] text-foreground backdrop-blur-md transition-colors hover:border-destructive/50 hover:text-destructive"
-          >
-            <X className="size-3.5" />
-            清除选区
-          </button>
+
+        {(hasRoi || hasAnnotations) && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                className="flex items-center gap-1.5 rounded-full border border-border bg-card/80 px-3 py-1.5 font-mono text-[11px] text-foreground backdrop-blur-md transition-colors hover:border-destructive/50 hover:text-destructive"
+                title="清除"
+              >
+                <Trash2 className="size-3.5" />
+                清除
+                <ChevronDown className="size-3" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="center" side="top">
+              <DropdownMenuItem disabled={!hasRoi} onClick={onClearRegion}>
+                清除选区（框选）
+              </DropdownMenuItem>
+              <DropdownMenuItem disabled={!hasAnnotations} onClick={clearAnnotationsOnly}>
+                清除标注（点/线/面）
+              </DropdownMenuItem>
+              <DropdownMenuItem disabled={!hasRoi && !hasAnnotations} onClick={clearAll}>
+                全部清除
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         )}
 
         <div className="hidden items-center gap-2 rounded-full border border-border bg-card/80 px-3 py-1.5 font-mono text-[10px] uppercase tracking-widest text-muted-foreground backdrop-blur-md lg:flex">

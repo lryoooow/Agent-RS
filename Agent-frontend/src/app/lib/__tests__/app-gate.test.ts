@@ -19,7 +19,7 @@ function cfg(overrides: Partial<ConfigResponse> = {}): ConfigResponse {
     web_search_enabled: true,
     web_search_configured: true,
     auth_required: true,
-    invite_required: true,
+    invite_required: false,
     ...overrides,
   };
 }

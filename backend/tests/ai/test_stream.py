@@ -4,25 +4,11 @@ import json
 
 import pytest
 
-from app.agent.config import ResolvedAIConfig
 from app.agent.stream import (
     agent_status_event,
     normalize_stream_chunk,
-    stream_initial_sse_events,
     stream_sse_events,
 )
-
-
-def make_config() -> ResolvedAIConfig:
-    return ResolvedAIConfig(
-        provider="openai-compatible",
-        base_url="https://example.com/v1",
-        api_key="secret",
-        model="stream-model",
-        timeout_seconds=60,
-        max_retries=2,
-        trust_env_proxy=False,
-    )
 
 
 async def fake_stream():
@@ -89,16 +75,6 @@ def test_normalize_stream_chunk_reads_reasoning_content() -> None:
 
     assert result["reasoning"] == "thinking"
     assert result["content"] is None
-
-
-@pytest.mark.asyncio
-async def test_stream_initial_sse_events_outputs_meta_and_statuses() -> None:
-    events = [event async for event in stream_initial_sse_events(make_config())]
-
-    assert events[0] == 'event: meta\ndata: {"model": "stream-model", "provider": "openai-compatible"}\n\n'
-    assert events[1] == 'event: analysis_status\ndata: {"status": "analyzing", "label": "正在思考中…"}\n\n'
-    assert events[2] == 'event: analysis_status\ndata: {"status": "preparing", "label": "正在梳理结果…"}\n\n'
-    assert events[3] == 'event: analysis_status\ndata: {"status": "answering", "label": "正在生成回复…"}\n\n'
 
 
 @pytest.mark.asyncio
@@ -180,8 +156,9 @@ async def test_stream_sse_events_replays_long_answer_as_multiple_deltas_after_co
 
     assert complete_index < first_delta_index
     assert delta_events == [
-        'event: delta\ndata: {"content": "abcdefgh"}\n\n',
-        'event: delta\ndata: {"content": "ijklmnop"}\n\n',
+        'event: delta\ndata: {"content": "abcdef"}\n\n',
+        'event: delta\ndata: {"content": "ghijkl"}\n\n',
+        'event: delta\ndata: {"content": "mnop"}\n\n',
     ]
     assert "".join(event.split('"content": "')[1].split('"')[0] for event in delta_events) == "abcdefghijklmnop"
 
@@ -203,9 +180,10 @@ async def test_stream_sse_events_converts_error_after_visible_delta_to_done() ->
     events = [event async for event in stream_sse_events(stream())]
 
     assert events[0] == 'event: analysis_status\ndata: {"status": "complete", "label": "思考完成"}\n\n'
-    assert events[1] == 'event: delta\ndata: {"content": "partial "}\n\n'
-    assert events[2] == 'event: delta\ndata: {"content": "answer"}\n\n'
-    assert events[3] == (
+    assert events[1] == 'event: delta\ndata: {"content": "partia"}\n\n'
+    assert events[2] == 'event: delta\ndata: {"content": "l answ"}\n\n'
+    assert events[3] == 'event: delta\ndata: {"content": "er"}\n\n'
+    assert events[4] == (
         'event: done\ndata: {"finish_reason": "error", '
         '"error": {"code": "PROVIDER_ERROR", "message": "AI provider request failed."}}\n\n'
     )

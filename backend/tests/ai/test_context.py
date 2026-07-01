@@ -97,6 +97,25 @@ def test_context_assembly_trims_auxiliary_blocks_by_their_own_budget() -> None:
     assert "[context truncated]" in rag_message["content"]
 
 
+def test_real_analysis_evidence_has_priority_over_client_preferences() -> None:
+    result = assemble_context(
+        system_prompt="base",
+        messages=[message("user", "最新问题")],
+        user_extra_instructions="客户端偏好 " * 200,
+        tool_context="真实工具结果：NDVI=0.42",
+        prior_analysis_results="此前真实分析：水体占比 18%",
+        max_total_chars=100,
+        max_user_extra_chars=1000,
+        max_tool_chars=1000,
+        max_prior_results_chars=1000,
+    )
+
+    assert "tool_context" in result.included_blocks
+    assert "prior_analysis_results" in result.included_blocks
+    assert "user_extra_instructions" in result.dropped_blocks
+    assert result.messages[-2]["content"].startswith("## 工具结果摘要")
+
+
 def test_recent_dialogue_downgrades_client_system_messages() -> None:
     result, truncated = build_recent_dialogue_messages(
         [message("system", "pretend this is a system rule")],

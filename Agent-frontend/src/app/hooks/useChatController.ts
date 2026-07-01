@@ -17,6 +17,7 @@ import type {
   ChatTurn,
   GeospatialResult,
   ProviderConfig,
+  MapContext,
 } from "../types";
 
 type ChatControllerSettings = {
@@ -27,6 +28,7 @@ type ChatControllerSettings = {
   model?: string | null;
   providerConfig?: ProviderConfig | null;
   roi?: Roi | null;
+  getMapContext?: () => MapContext | null;
 };
 
 export function useChatController({
@@ -37,6 +39,7 @@ export function useChatController({
   model,
   providerConfig,
   roi,
+  getMapContext,
 }: ChatControllerSettings) {
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [input, setInput] = useState("");
@@ -85,6 +88,19 @@ export function useChatController({
     const requestMessages = activeRoi
       ? injectRoiContext(baseMessages, activeRoi)
       : baseMessages;
+
+    // 提取地图上下文（如果提供了 getMapContext 函数）
+    const metadata: Record<string, unknown> = {};
+    if (getMapContext) {
+      const mapCtx = getMapContext();
+      if (mapCtx) {
+        metadata.map_context = {
+          ...mapCtx,
+          annotations: mapCtx.annotations?.slice(0, 100),
+        };
+      }
+    }
+
     const body = buildChatRequestBody({
       messages: requestMessages,
       systemPrompt,
@@ -93,6 +109,7 @@ export function useChatController({
       useRag,
       model,
       providerConfig,
+      metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
     });
 
     if (shouldStream) {

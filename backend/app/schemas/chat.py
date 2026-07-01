@@ -1,3 +1,4 @@
+import json
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
@@ -30,6 +31,24 @@ class ChatRequest(BaseModel):
     conversation_id: str | None = None
     use_memory: bool = True
     use_rag: bool = False
+    metadata: dict | None = None
+
+    @field_validator("metadata")
+    @classmethod
+    def validate_metadata(cls, value: dict | None) -> dict | None:
+        if value is None:
+            return None
+        value = dict(value)
+        map_context = value.get("map_context")
+        if isinstance(map_context, dict):
+            map_context = dict(map_context)
+            annotations = map_context.get("annotations")
+            if isinstance(annotations, list):
+                map_context["annotations"] = annotations[:100]
+            value["map_context"] = map_context
+        if len(json.dumps(value, ensure_ascii=False, default=str).encode("utf-8")) > 100_000:
+            raise ValueError("Metadata exceeds the 100KB limit.")
+        return value
 
 
 class Usage(BaseModel):

@@ -5,9 +5,21 @@ class OcrArguments(BaseModel):
     model_config = {"extra": "forbid"}
 
     imagery_id: str = Field(pattern=r"^[a-f0-9]{12}$", description="已上传影像的ID")
-    red_band: int = Field(default=1, ge=1, description="红光波段号（RGB 合成用）")
-    green_band: int = Field(default=2, ge=1, description="绿光波段号（RGB 合成用）")
-    blue_band: int = Field(default=3, ge=1, description="蓝光波段号（RGB 合成用）")
+    red_band: int = Field(
+        default=1,
+        ge=1,
+        description="红光波段号（OCR 采用自然 RGB 序，默认 band1=R；GF-2 影像请显式设为 3）",
+    )
+    green_band: int = Field(
+        default=2,
+        ge=1,
+        description="绿光波段号（OCR 采用自然 RGB 序，默认 band2=G；GF-2 影像请显式设为 2）",
+    )
+    blue_band: int = Field(
+        default=3,
+        ge=1,
+        description="蓝光波段号（OCR 采用自然 RGB 序，默认 band3=B；GF-2 影像请显式设为 1）",
+    )
     grayscale: bool = Field(
         default=False, description="是否按单波段灰度识别（扫描件/单波段图建议开启）"
     )
@@ -34,17 +46,30 @@ OCR_TOOL = {
     "function": {
         "name": "ocr_recognize",
         "description": (
-            "对上传的栅格影像做光学字符识别（OCR，RapidOCR/PP-OCRv4，支持中英文）。"
-            "当用户要求识别影像/扫描地图/带注记图件上的文字、提取图面标注、读取图中文本时调用。"
-            "适用于扫描的纸质地图、含文字注记的遥感图件；纯地物影像通常无可识别文字。"
+            "遥感影像 OCR 光学字符识别（RapidOCR / PP-OCRv4 引擎，中英文）。"
+            "识别卫星图、航拍图、扫描地图中的文字内容（地名标注、建筑标签、路牌文字、图面注记等）。"
+            "适用场景：① 扫描的纸质地图 ② 含文字注记的遥感图件 ③ 卫星图上的地名/建筑物名称。"
+            "不适用：纯地物影像（农田/森林/水体）通常无可识别文字，应使用地物分类或目标检测工具。"
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "imagery_id": {"type": "string", "description": "已上传影像的ID"},
-                "red_band": {"type": "integer", "default": 1, "description": "红光波段号"},
-                "green_band": {"type": "integer", "default": 2, "description": "绿光波段号"},
-                "blue_band": {"type": "integer", "default": 3, "description": "蓝光波段号"},
+                "red_band": {
+                    "type": "integer",
+                    "default": 1,
+                    "description": "红光波段号（OCR 采用自然 RGB 序，默认 band1=R；GF-2 影像请显式设为 3）",
+                },
+                "green_band": {
+                    "type": "integer",
+                    "default": 2,
+                    "description": "绿光波段号（OCR 采用自然 RGB 序，默认 band2=G；GF-2 影像请显式设为 2）",
+                },
+                "blue_band": {
+                    "type": "integer",
+                    "default": 3,
+                    "description": "蓝光波段号（OCR 采用自然 RGB 序，默认 band3=B；GF-2 影像请显式设为 1）",
+                },
                 "grayscale": {
                     "type": "boolean",
                     "default": False,

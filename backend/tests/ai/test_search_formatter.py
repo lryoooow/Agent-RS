@@ -52,6 +52,9 @@ def test_search_context_carries_citation_rules() -> None:
     )
 
     assert "[S1] [S2]" in context
+    assert "若最终回答为自然语言" in context
+    assert "仅输出 JSON" in context
+    assert "不要插入来源标记" in context
     assert "以搜索结果为准" in context
     assert "整合提炼" in context
 

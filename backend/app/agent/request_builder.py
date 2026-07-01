@@ -1,6 +1,7 @@
 ﻿import logging
 import time
 import asyncio
+import math
 from dataclasses import dataclass
 
 from app.agent.imagery_access import iter_user_imagery_metadata
@@ -10,11 +11,13 @@ from app.agent.context.history import normalize_chat_message_for_provider
 from app.agent.context.summarizer import build_context_summaries
 from app.agent.context.types import ContextAssembly
 from app.agent.embedding.service import get_embedding_service
+from app.agent.geocode import cached_location, format_location_context, prefetch_location
 from app.agent.prompting.renderer import render_prompt_context
 from app.agent.prompting.scenarios import latest_user_text
 from app.agent.rag.formatter import format_retrieved_blocks
 from app.agent.rag.service import retrieve_rag_context
 from app.db.pool import fetch_optional_pool
+from app.db.repositories.document import list_documents
 from app.db.repositories.memory import list_relevant_memories
 from app.db.repositories.message import list_recent_analysis_results, list_recent_messages
 from app.db.repositories.vector_search import search_hybrid_rrf
@@ -57,9 +60,9 @@ async def build_provider_request_context(
     skip_retrieval: bool = False,
 ) -> ProviderRequestContext:
     settings = get_settings()
-    messages = await _resolve_context_messages(request, user_id=user_id)
     query = latest_user_text(request.messages)
-    prior_analysis_results = await _resolve_prior_analysis_results(request, user_id=user_id)
+
+    # 并行执行所有独立的异步操作，减少总延迟
     if retrieved_context is None:
         if skip_retrieval:
             retrieved_context = RetrievedContext(
@@ -70,12 +73,33 @@ async def build_provider_request_context(
                     "reason": "direct_chat_route",
                 }
             )
-        else:
-            retrieved_context = await _resolve_retrieved_context(
-                request,
-                query=query,
-                user_id=user_id,
+            # skip_retrieval 时仍需并行查询其他上下文
+            messages, prior_analysis_results, geo_context, imagery_inventory, document_inventory = await asyncio.gather(
+                _resolve_context_messages(request, user_id=user_id),
+                _resolve_prior_analysis_results(request, user_id=user_id),
+                _resolve_geo_context(request),
+                build_imagery_inventory(user_id),
+                build_document_inventory(user_id),
             )
+        else:
+            # 并行执行：历史消息、先验结果、地理上下文、RAG/记忆检索、影像清单
+            messages, prior_analysis_results, geo_context, retrieved_context, imagery_inventory, document_inventory = await asyncio.gather(
+                _resolve_context_messages(request, user_id=user_id),
+                _resolve_prior_analysis_results(request, user_id=user_id),
+                _resolve_geo_context(request),
+                _resolve_retrieved_context(request, query=query, user_id=user_id),
+                build_imagery_inventory(user_id),
+                build_document_inventory(user_id),
+            )
+    else:
+        # retrieved_context 已提供，只并行其他操作
+        messages, prior_analysis_results, geo_context, imagery_inventory, document_inventory = await asyncio.gather(
+            _resolve_context_messages(request, user_id=user_id),
+            _resolve_prior_analysis_results(request, user_id=user_id),
+            _resolve_geo_context(request),
+            build_imagery_inventory(user_id),
+            build_document_inventory(user_id),
+        )
     memory_context = retrieved_context.memory_context
     rag_context = retrieved_context.rag_context
     retrieved_chunks = retrieved_context.retrieved_chunks
@@ -118,7 +142,9 @@ async def build_provider_request_context(
         # 此前用 `if tool_context` 门控，导致未跑工具的轮次（如"根据刚才结果生成报告"
         # 这类纯追问）答复模型看不到影像，误判"用户没上传影像"。
         # build_imagery_inventory 无影像时返回 None，无影像用户零开销。
-        imagery_inventory=await build_imagery_inventory(user_id),
+        imagery_inventory=imagery_inventory,
+        document_inventory=document_inventory,
+        geo_context=geo_context,
         max_total_chars=settings.context_max_total_chars,
         max_recent_chars=settings.ai_context_max_recent_chars,
         max_recent_messages=settings.context_max_recent_messages,
@@ -129,6 +155,8 @@ async def build_provider_request_context(
         max_tool_chars=settings.ai_context_max_tool_chars,
         max_prior_results_chars=settings.ai_context_max_prior_results_chars,
         max_imagery_chars=settings.ai_context_max_imagery_chars,
+        max_document_chars=settings.ai_context_max_document_chars,
+        max_geo_chars=settings.ai_context_max_geo_chars,
     )
     return ProviderRequestContext(
         context=context,
@@ -158,9 +186,37 @@ async def _resolve_context_messages(request: ChatRequest, *, user_id: str | None
                 limit=settings.context_max_loaded_messages,
                 user_id=user_id,
             )
-        return messages or request.messages
+        if not messages:
+            return request.messages
+        return _merge_ephemeral_system_hints(messages, request.messages)
     except Exception:
         return request.messages
+
+
+def _merge_ephemeral_system_hints(persisted_messages: list, request_messages: list) -> list:
+    """Insert current-request system hints before the latest persisted user message."""
+    existing_contents = {
+        message.content
+        for message in persisted_messages
+        if getattr(message, "role", None) == "system"
+    }
+    hints = [
+        message
+        for message in request_messages
+        if message.role == "system" and message.content not in existing_contents
+    ]
+    if not hints:
+        return persisted_messages
+
+    insert_at = next(
+        (
+            index
+            for index in range(len(persisted_messages) - 1, -1, -1)
+            if persisted_messages[index].role == "user"
+        ),
+        len(persisted_messages),
+    )
+    return [*persisted_messages[:insert_at], *hints, *persisted_messages[insert_at:]]
 
 
 async def _resolve_prior_analysis_results(request: ChatRequest, *, user_id: str | None) -> str | None:
@@ -336,3 +392,165 @@ async def build_imagery_inventory(user_id: str | None) -> str | None:
     if not items:
         return None
     return "可用影像:\n" + "\n".join(items)
+
+
+async def build_document_inventory(user_id: str | None) -> str | None:
+    """Build an owner-filtered document inventory for planner and answer context."""
+    if not user_id or not get_settings().storage_active:
+        return None
+    pool = await fetch_optional_pool()
+    if pool is None:
+        return None
+    try:
+        async with pool.acquire() as conn:
+            documents = await list_documents(
+                conn,
+                user_id=user_id,
+                limit=get_settings().agent_document_inventory_limit,
+            )
+    except Exception:
+        logger.debug("Document inventory lookup failed.", exc_info=True)
+        return None
+    if not documents:
+        return None
+    return "用户已上传需要解析的文档:\n" + "\n".join(
+        f"- ID: {document['id']} | 标题: {document.get('title') or '未命名'} "
+        f"| 类型: {document.get('doc_type') or '未知'} | 分块: {document.get('chunk_count', 0)}"
+        for document in documents
+    )
+
+
+async def _resolve_geo_context(request: ChatRequest) -> str | None:
+    """
+    从请求 metadata 提取地图上下文，调用逆地理编码服务，返回位置描述文本。
+
+    前端需传递 metadata.map_context: { center: [lon, lat], zoom: number, annotations?: [...] }
+    """
+    if not request.metadata:
+        return None
+
+    map_ctx = request.metadata.get("map_context")
+    if not map_ctx or not isinstance(map_ctx, dict):
+        return None
+
+    center = map_ctx.get("center")
+    zoom = map_ctx.get("zoom")
+    annotations = map_ctx.get("annotations")
+
+    if not center or not isinstance(center, (list, tuple)) or len(center) < 2:
+        return None
+
+    try:
+        lon, lat = float(center[0]), float(center[1])
+        zoom_int = int(zoom) if zoom is not None else None
+    except (ValueError, TypeError):
+        logger.warning(f"Invalid map_context coordinates: {center}")
+        return None
+    if (
+        not math.isfinite(lon)
+        or not math.isfinite(lat)
+        or not (-180 <= lon <= 180)
+        or not (-90 <= lat <= 90)
+    ):
+        logger.warning("Out-of-range map_context coordinates: %s", center)
+        return None
+
+    # 地名仅从缓存读取；未命中时后台预取，当前请求立即使用坐标兜底。
+    location = cached_location(lat, lon, zoom=zoom_int)
+    if location is None:
+        prefetch_location(lat, lon)
+
+    # 格式化为上下文文本
+    context_parts = [format_location_context(location, fallback_coords=(lat, lon))]
+
+    # 添加标注信息
+    if annotations and isinstance(annotations, list) and len(annotations) > 0:
+        annotation_summary = _format_annotations(annotations[:100])
+        if annotation_summary:
+            context_parts.append(annotation_summary)
+
+    return "\n\n".join(filter(None, context_parts))
+
+
+def _format_annotations(annotations: list) -> str | None:
+    """
+    格式化用户在地图上绘制的标注为可读文本。
+
+    标注格式为 GeoJSON Feature：
+    - Polygon: 多边形区域
+    - Point: 点标记
+    - LineString: 线段（可用于测距）
+    """
+    if not annotations:
+        return None
+
+    summary_parts = ["**用户在地图上标注的区域/位置：**\n"]
+
+    for i, feature in enumerate(annotations, 1):
+        if not isinstance(feature, dict):
+            continue
+
+        geometry = feature.get("geometry", {})
+        geo_type = geometry.get("type")
+        coordinates = geometry.get("coordinates")
+
+        if not geo_type or not coordinates:
+            continue
+
+        try:
+            if geo_type == "Polygon":
+                # 多边形：显示顶点数和大致范围
+                if coordinates and len(coordinates) > 0:
+                    points = coordinates[0]
+                    lons = [p[0] for p in points if len(p) >= 2]
+                    lats = [p[1] for p in points if len(p) >= 2]
+                    if lons and lats:
+                        bbox = [min(lons), min(lats), max(lons), max(lats)]
+                        summary_parts.append(
+                            f"{i}. 多边形区域：{len(points)}个顶点，范围 [{bbox[0]:.4f}, {bbox[1]:.4f}] 至 [{bbox[2]:.4f}, {bbox[3]:.4f}]"
+                        )
+
+            elif geo_type == "Point":
+                # 点标记：显示坐标
+                if len(coordinates) >= 2:
+                    lon, lat = coordinates[0], coordinates[1]
+                    summary_parts.append(f"{i}. 点标记：经度 {lon:.4f}, 纬度 {lat:.4f}")
+
+            elif geo_type == "LineString":
+                valid_points = [
+                    (float(point[0]), float(point[1]))
+                    for point in coordinates
+                    if isinstance(point, (list, tuple))
+                    and len(point) >= 2
+                    and math.isfinite(float(point[0]))
+                    and math.isfinite(float(point[1]))
+                ]
+                if len(valid_points) >= 2:
+                    start = valid_points[0]
+                    end = valid_points[-1]
+                    distance = sum(
+                        _haversine_km(first, second)
+                        for first, second in zip(valid_points, valid_points[1:])
+                    )
+                    summary_parts.append(
+                        f"{i}. 线段：起点 [{start[0]:.4f}, {start[1]:.4f}] → 终点 [{end[0]:.4f}, {end[1]:.4f}]，约 {distance:.2f} km"
+                    )
+        except (IndexError, TypeError, ValueError):
+            continue
+
+    if len(summary_parts) == 1:
+        return None
+
+    return "\n".join(summary_parts)
+
+
+def _haversine_km(first: tuple[float, float], second: tuple[float, float]) -> float:
+    lon1, lat1 = map(math.radians, first)
+    lon2, lat2 = map(math.radians, second)
+    delta_lon = lon2 - lon1
+    delta_lat = lat2 - lat1
+    value = (
+        math.sin(delta_lat / 2) ** 2
+        + math.cos(lat1) * math.cos(lat2) * math.sin(delta_lon / 2) ** 2
+    )
+    return 6371.0088 * 2 * math.asin(min(1.0, math.sqrt(value)))

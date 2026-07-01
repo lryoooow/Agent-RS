@@ -4,6 +4,8 @@ from typing import Any
 
 from app.agent.imagery_access import user_owns_imagery
 from app.agent.routing import ALL_DOCUMENT_TOOLS, ALL_IMAGERY_TOOLS
+from app.db.pool import fetch_optional_pool
+from app.db.repositories.document import get_document
 
 _IMAGERY_TOOLS = set(ALL_IMAGERY_TOOLS)
 
@@ -19,7 +21,20 @@ async def validate_tool_access(tool_name: str, arguments: dict[str, Any], user_i
     if tool_name in _DOCUMENT_TOOLS:
         if not user_id:
             return "owner_required"
-        return None
+        document_id = str(arguments.get("document_id") or "")
+        pool = await fetch_optional_pool()
+        if pool is None:
+            return "document_not_found_or_forbidden"
+        try:
+            async with pool.acquire() as conn:
+                document = await get_document(
+                    conn,
+                    document_id=document_id,
+                    user_id=user_id,
+                )
+        except Exception:
+            return "document_not_found_or_forbidden"
+        return None if document is not None else "document_not_found_or_forbidden"
     if tool_name not in _IMAGERY_TOOLS:
         return None
     imagery_id = str(arguments.get("imagery_id") or "")

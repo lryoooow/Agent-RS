@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 import rasterio
 
+from app.agent.tools.raster_inspect.formatter import format_raster_inspect_context
 from app.agent.tools.raster_inspect.runner import run_raster_inspect
 from app.agent.tools.raster_inspect.schema import RasterInspectArguments
 from app.core.settings import get_settings
@@ -109,3 +110,26 @@ async def test_raster_inspect_runner_invalid_imagery_id() -> None:
     result = await run_raster_inspect(RasterInspectArguments.model_construct(imagery_id="../bad"))
 
     assert result.error == "invalid_imagery_id"
+
+
+def test_raster_inspect_formatter_declares_interpretation_boundary() -> None:
+    context = format_raster_inspect_context(
+        IMAGERY_ID,
+        {
+            "width": 2,
+            "height": 2,
+            "band_count": 1,
+            "crs": "EPSG:4326",
+            "pixel_size": [0.5, 0.5],
+            "dtype": "uint16",
+            "nodata": None,
+            "capabilities": {},
+            "per_band_stats": [
+                {"band": 1, "min": 1, "max": 2, "mean": 1.5, "std": 0.5}
+            ],
+        },
+    )
+
+    assert "解读边界" in context
+    assert "波段角色" in context
+    assert "结合传感器确认" in context

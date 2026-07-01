@@ -54,6 +54,10 @@ describe("roiContextLine", () => {
     const line = roiContextLine(roi);
     expect(line).toContain("经度");
     expect(line).toContain("纬度");
+    expect(line).toContain("左上[110.5, 30.5]");
+    expect(line).toContain("右上[120.75, 30.5]");
+    expect(line).toContain("左下[110.5, 20.25]");
+    expect(line).toContain("右下[120.75, 20.25]");
     // 关键：必须声明工具仍按整幅影像计算，防止模型谎称只算了选区
     expect(line).toContain("整幅影像");
   });

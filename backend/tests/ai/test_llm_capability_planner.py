@@ -8,6 +8,8 @@ import pytest
 
 from app.agent.config import ResolvedAIConfig
 from app.agent.llm_planner import LLMCapabilityPlanner, capability_snapshot
+from app.agent.tools.ocr.formatter import format_ocr_context
+from app.agent.tools.ocr.schema import OCR_TOOL, OcrArguments
 from app.agent.types import AgentTrace
 from app.core.settings import get_settings
 from app.schemas.chat import ChatRequest
@@ -278,6 +280,39 @@ async def test_llm_planner_injects_current_user_imagery_inventory(monkeypatch, t
 
 
 @pytest.mark.asyncio
+async def test_llm_planner_injects_owner_filtered_document_inventory(monkeypatch) -> None:
+    reset_settings()
+    completions = FakeCompletions()
+
+    async def no_imagery(_user_id):
+        return None
+
+    async def document_inventory(_user_id):
+        return "用户已上传需要解析的文档:\n- ID: 11111111-1111-1111-1111-111111111111 | 标题: 报告"
+
+    monkeypatch.setattr("app.agent.llm_planner.build_imagery_inventory", no_imagery)
+    monkeypatch.setattr("app.agent.llm_planner.build_document_inventory", document_inventory)
+
+    await LLMCapabilityPlanner().plan(
+        client=FakeClient(completions),
+        config=_config(),
+        request=ChatRequest(messages=[{"role": "user", "content": "总结文档"}]),
+        query="总结文档",
+        user_id="user-a",
+        capabilities=capability_snapshot(),
+        trace=AgentTrace(enabled=True),
+        on_event=None,
+        add_event=_add_event,
+    )
+
+    all_content = "\n".join(
+        message["content"] for message in completions.calls[0]["messages"]
+    )
+    assert "当前用户文档清单" in all_content
+    assert "11111111-1111-1111-1111-111111111111" in all_content
+
+
+@pytest.mark.asyncio
 async def test_llm_planner_keeps_recent_context_without_removed_search_prompt(monkeypatch) -> None:
     reset_settings()
     completions = FakeCompletions()
@@ -315,7 +350,27 @@ def test_planner_prompt_contains_restraint_and_new_tool_examples() -> None:
     assert "segment_landcover" in prompt
     assert "index_type\":\"nbr" in prompt
     assert "red=3, green=2, blue=1" in prompt
+    assert "ocr_recognize 默认按自然 RGB 波序 red=1, green=2, blue=3" in prompt
+    assert "GF-2 等卫星影像做 OCR 时应显式设 red_band=3" in prompt
     # 文档通道防线（红队 hallucinated_document_id 穿透的根因修复）必须留在 prompt：
     # 禁令 + "无文档证据→none" 反例。谁删谁红，防复发。
     assert "不要凭空编造 document_id" in prompt
     assert "no_document_evidence" in prompt
+
+
+def test_ocr_schema_declares_engine_and_band_order() -> None:
+    description = OCR_TOOL["function"]["description"]
+    properties = OcrArguments.model_json_schema()["properties"]
+    formatted = format_ocr_context(
+        "94e758f38ede",
+        {"full_text": "", "block_count": 0},
+        max_chars=1000,
+    )
+
+    assert "RapidOCR / PP-OCRv4" in description
+    assert "PaddleOCR" not in description
+    assert "RapidOCR / PP-OCRv4" in formatted
+    assert "RapidOCR/PP-OCRv4" not in formatted
+    assert "自然 RGB 序" in properties["red_band"]["description"]
+    assert "GF-2 影像请显式设为 3" in properties["red_band"]["description"]
+    assert "GF-2 影像请显式设为 1" in properties["blue_band"]["description"]
