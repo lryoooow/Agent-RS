@@ -20,10 +20,10 @@ async def init_db_pool() -> None:
         _pool_initialized = True
         return
     if not settings.database_url:
-        logger.warning("DATABASE_ENABLED=true but DATABASE_URL is empty; database disabled.")
-        _pool = None
-        _pool_initialized = True
-        return
+        raise RuntimeError(
+            "DATABASE_ENABLED=true 但 DATABASE_URL 为空；"
+            "请配置数据库连接串或显式设 DATABASE_ENABLED=false。"
+        )
     if _pool is not None:
         return
     if _pool_initialized:
@@ -31,11 +31,10 @@ async def init_db_pool() -> None:
 
     try:
         import asyncpg
-    except ImportError:
-        logger.warning("asyncpg is not installed; database disabled.")
-        _pool = None
-        _pool_initialized = True
-        return
+    except ImportError as exc:
+        raise RuntimeError(
+            "DATABASE_ENABLED=true 但未安装 asyncpg；请安装依赖或关闭数据库。"
+        ) from exc
 
     try:
         _pool = await asyncpg.create_pool(
@@ -44,11 +43,15 @@ async def init_db_pool() -> None:
             max_size=settings.database_pool_max_size,
         )
         _pool_initialized = True
-    except Exception:
-        logger.exception("Failed to initialize database pool; database disabled until restart.")
+    except Exception as exc:
         _pool = None
-        _pool_initialized = True
-        return
+        _pool_initialized = False
+        database_target = settings.database_url.rsplit("@", 1)[-1]
+        raise RuntimeError(
+            f"无法连接数据库（{database_target}）。"
+            "请先启动数据库：`docker compose up -d db`，"
+            f"或设 DATABASE_ENABLED=false。原始错误：{exc}"
+        ) from exc
 
     # 启动时幂等建/补 schema：docker compose up + 启动后端即自带最新表结构，免手动 sql.apply。
     # 已按 schema_migrations 记录跳过已应用版本，重复启动零副作用；失败只告警，不阻断启动

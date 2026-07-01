@@ -8,6 +8,7 @@ export function buildChatRequestBody({
   useRag,
   model,
   providerConfig,
+  metadata,
 }: {
   messages: ChatRequestBody["messages"];
   systemPrompt: string;
@@ -16,6 +17,7 @@ export function buildChatRequestBody({
   useRag: boolean;
   model?: string | null;
   providerConfig?: ProviderConfig | null;
+  metadata?: Record<string, unknown>;
 }): ChatRequestBody {
   const body: ChatRequestBody = { messages, stream, use_memory: true, use_rag: useRag };
   if (systemPrompt.trim()) body.system_prompt = systemPrompt.trim();
@@ -27,6 +29,9 @@ export function buildChatRequestBody({
     if (providerConfig.api_key?.trim()) trimmed.api_key = providerConfig.api_key.trim();
     if (providerConfig.model?.trim()) trimmed.model = providerConfig.model.trim();
     if (Object.keys(trimmed).length > 0) body.provider_config = trimmed;
+  }
+  if (metadata && Object.keys(metadata).length > 0) {
+    body.metadata = metadata;
   }
   return body;
 }

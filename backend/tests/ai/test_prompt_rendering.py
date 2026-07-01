@@ -9,6 +9,7 @@ from __future__ import annotations
 import pytest
 
 from app.agent.errors import ConfigError
+from app.agent.prompting.loader import render_template
 from app.agent.prompting.renderer import render_prompt_context
 from app.schemas.chat import ChatMessage
 
@@ -58,6 +59,8 @@ def test_context_priority_forbids_replaying_history() -> None:
     assert "只回答当前最新用户消息" in content
     assert "复述" in content
     assert "[S1][S2]" in content  # 明确点名禁止粘贴历史引用标记
+    assert "可正常引用" in content
+    assert "不受此限" in content
 
 
 def test_tool_policy_no_longer_carries_search_citation_rules() -> None:
@@ -185,3 +188,33 @@ def test_output_format_encourages_structure_and_examples() -> None:
     assert "重点先行" in content
     # 旧的"主动要 markdown"表述不回归
     assert "总结使用 Markdown" not in content
+
+
+def test_configuration_disclosure_policy_lives_in_security_boundary() -> None:
+    variables = {
+        "template_version": "",
+        "prompt_profile": "default_v1",
+        "language": "zh-CN",
+        "current_date": "2026-06-25",
+        "assistant_name": "Agent-RS Assistant",
+    }
+    output_format = render_template("output_format_v1", variables)
+    security_boundary = render_template("security_boundary_v1", variables)
+
+    assert "AI_BASE_URL" not in output_format
+    assert "配置字段" in security_boundary
+    assert "占位" in security_boundary
+    assert "[REDACTED]" in security_boundary
+
+
+def test_tool_policy_uses_placeholders_instead_of_fake_statistics() -> None:
+    res = _render("提取农田", has_tool_context=True)
+    content = res.content
+
+    assert "91.31%" not in content
+    assert "14,495,928" not in content
+    assert "<像素数>" in content
+    assert "<占比>" in content
+    assert "禁止照抄" in content
+    assert "核心结论" in content
+    assert "专业建议" in content

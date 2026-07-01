@@ -40,6 +40,8 @@ class Settings(BaseSettings):
     # （见 budget.py 模块说明）。本对话已产出分析结果的回注块预算。
     ai_context_max_prior_results_chars: int = 2000
     ai_context_max_imagery_chars: int = 2000
+    ai_context_max_document_chars: int = 3000
+    ai_context_max_geo_chars: int = 2000
     ai_prompt_profile: str = "agent_rs_core_v1"
     ai_prompt_enable_dynamic_modules: bool = True
     ai_prompt_include_reasoning_boundary: bool = True
@@ -61,6 +63,7 @@ class Settings(BaseSettings):
     tavily_search_depth: str = "basic"
     agent_planning_model: str = ""
     agent_planner_max_tokens: int = 256
+    agent_document_inventory_limit: int = 100
     agent_web_search_max_calls: int = 1
     agent_web_search_max_results: int = 5
     agent_web_search_country: str = "china"

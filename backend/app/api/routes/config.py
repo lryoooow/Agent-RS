@@ -24,5 +24,5 @@ async def config() -> ConfigResponse:
         ),
         web_search_configured=bool(settings.tavily_api_key.strip()),
         auth_required=settings.auth_required,
-        invite_required=settings.invite_required,
+        invite_required=False,  # 邀请码准入已于 2026-06-24 移除
     )

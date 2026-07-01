@@ -86,6 +86,10 @@ export function roiContextLine(roi: Roi): string {
     return (
       `用户在地图上框选了分析聚焦区：经度 ${fmtCoord(west)}°–${fmtCoord(east)}°、` +
       `纬度 ${fmtCoord(south)}°–${fmtCoord(north)}°（EPSG:4326）。` +
+      `四角坐标（经度, 纬度）：左上[${fmtCoord(west)}, ${fmtCoord(north)}]、` +
+      `右上[${fmtCoord(east)}, ${fmtCoord(north)}]、` +
+      `左下[${fmtCoord(west)}, ${fmtCoord(south)}]、` +
+      `右下[${fmtCoord(east)}, ${fmtCoord(south)}]。` +
       `请在解读结果时重点关注该区域，并明确说明：当前遥感工具仍基于整幅影像计算，该范围仅用于聚焦解读。`
     );
   }

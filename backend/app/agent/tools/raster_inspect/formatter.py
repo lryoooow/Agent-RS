@@ -26,4 +26,8 @@ def format_raster_inspect_context(imagery_id: str, result: dict[str, Any]) -> st
         lines.append(
             "- Band {band}: min={min}, max={max}, mean={mean}, std={std}".format(**item)
         )
+    lines.append(
+        "解读边界: 以上为影像元数据与逐波段统计的客观读数；波段角色（红/近红外等）"
+        "需结合传感器确认，跨影像对比注意量纲与坐标系一致。"
+    )
     return "\n".join(lines)

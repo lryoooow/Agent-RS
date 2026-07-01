@@ -36,12 +36,16 @@ def settings(**overrides):
 def isolate_pool(monkeypatch):
     reset_pool_state()
     monkeypatch.setattr(pool_module, "get_settings", lambda: settings())
+    async def skip_schema():
+        return None
+
+    monkeypatch.setattr(pool_module, "_ensure_schema", skip_schema)
     yield
     reset_pool_state()
 
 
 @pytest.mark.asyncio
-async def test_get_db_pool_does_not_retry_after_failed_initialization(monkeypatch) -> None:
+async def test_get_db_pool_raises_when_database_connection_fails(monkeypatch) -> None:
     calls = 0
 
     async def create_pool(**_):
@@ -51,10 +55,14 @@ async def test_get_db_pool_does_not_retry_after_failed_initialization(monkeypatc
 
     monkeypatch.setitem(sys.modules, "asyncpg", SimpleNamespace(create_pool=create_pool))
 
-    assert await pool_module.get_db_pool() is None
-    assert await pool_module.get_db_pool() is None
+    with pytest.raises(RuntimeError, match="无法连接数据库") as exc_info:
+        await pool_module.get_db_pool()
 
     assert calls == 1
+    assert pool_module._pool is None
+    assert pool_module._pool_initialized is False
+    assert "user:pass" not in str(exc_info.value)
+    assert "docker compose up -d db" in str(exc_info.value)
 
 
 @pytest.mark.asyncio
@@ -106,12 +114,38 @@ async def test_database_disabled_marks_pool_initialized_without_importing_asyncp
 
 
 @pytest.mark.asyncio
-async def test_empty_database_url_marks_pool_initialized_without_importing_asyncpg(monkeypatch) -> None:
+async def test_empty_database_url_rejects_startup(monkeypatch) -> None:
     monkeypatch.setattr(
         pool_module,
         "get_settings",
         lambda: settings(database_url=""),
     )
 
-    assert await pool_module.get_db_pool() is None
-    assert pool_module._pool_initialized is True
+    with pytest.raises(RuntimeError, match="DATABASE_URL 为空"):
+        await pool_module.get_db_pool()
+
+    assert pool_module._pool is None
+    assert pool_module._pool_initialized is False
+
+
+@pytest.mark.asyncio
+async def test_missing_asyncpg_rejects_startup(monkeypatch) -> None:
+    monkeypatch.setitem(sys.modules, "asyncpg", None)
+
+    with pytest.raises(RuntimeError, match="未安装 asyncpg"):
+        await pool_module.get_db_pool()
+
+    assert pool_module._pool is None
+    assert pool_module._pool_initialized is False
+
+
+@pytest.mark.asyncio
+async def test_fetch_optional_pool_keeps_request_level_fallback(monkeypatch) -> None:
+    async def create_pool(**_):
+        raise ConnectionRefusedError("database is offline")
+
+    monkeypatch.setitem(sys.modules, "asyncpg", SimpleNamespace(create_pool=create_pool))
+
+    assert await pool_module.fetch_optional_pool() is None
+    assert pool_module._pool is None
+    assert pool_module._pool_initialized is False

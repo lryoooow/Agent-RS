@@ -209,7 +209,7 @@ async def build_recording_context(
 ) -> RecordingContext:
     capabilities = capability_snapshot()
     capability_names = sorted(capability.name for capability in capabilities)
-    scope = _planner_cache_scope(
+    scope = await _planner_cache_scope(
         config=config,
         route=case.route,
         capabilities=capabilities,

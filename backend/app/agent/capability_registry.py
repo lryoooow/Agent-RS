@@ -40,6 +40,8 @@ def _web_search_enabled() -> bool:
 
 def _tool_capability(tool: RegisteredTool) -> RegisteredCapability:
     definition = tool.definition.get("function", {})
+    # 当前规划器只读取 description 和 argument_model 的 Pydantic schema；
+    # tool.definition["function"]["parameters"] 保留给未来的 function-calling 接口，不参与当前规划。
     return RegisteredCapability(
         name=tool.name,
         kind="tool",

@@ -79,10 +79,57 @@ async def test_ocr_recognize_uses_imagery_owner_guard(monkeypatch, tmp_path: Pat
 
 
 @pytest.mark.asyncio
-async def test_document_tools_require_owner_identity() -> None:
+async def test_document_tools_validate_document_ownership(monkeypatch) -> None:
+    class FakeAcquire:
+        async def __aenter__(self):
+            return object()
+
+        async def __aexit__(self, *_):
+            return None
+
+    class FakePool:
+        def acquire(self):
+            return FakeAcquire()
+
+    async def fake_pool():
+        return FakePool()
+
+    async def fake_get_document(_conn, *, document_id, user_id):
+        if document_id == "11111111-1111-1111-1111-111111111111" and user_id == "user-a":
+            return {"id": document_id}
+        return None
+
+    monkeypatch.setattr("app.agent.tool_guards.fetch_optional_pool", fake_pool)
+    monkeypatch.setattr("app.agent.tool_guards.get_document", fake_get_document)
+
     for tool_name in ALL_DOCUMENT_TOOLS:
         assert await validate_tool_access(tool_name, {"document_id": "11111111-1111-1111-1111-111111111111"}, None) == "owner_required"
         assert await validate_tool_access(tool_name, {"document_id": "11111111-1111-1111-1111-111111111111"}, "user-a") is None
+        assert (
+            await validate_tool_access(
+                tool_name,
+                {"document_id": "11111111-1111-1111-1111-111111111111"},
+                "user-b",
+            )
+            == "document_not_found_or_forbidden"
+        )
+
+
+@pytest.mark.asyncio
+async def test_document_tools_reject_when_database_is_unavailable(monkeypatch) -> None:
+    async def no_pool():
+        return None
+
+    monkeypatch.setattr("app.agent.tool_guards.fetch_optional_pool", no_pool)
+
+    assert (
+        await validate_tool_access(
+            "parse_document",
+            {"document_id": "11111111-1111-1111-1111-111111111111"},
+            "user-a",
+        )
+        == "document_not_found_or_forbidden"
+    )
 
 
 @pytest.mark.asyncio

@@ -5,6 +5,22 @@ export type ChatMessage = {
   content: string;
 };
 
+export type MapAnnotation = {
+  type: "Feature";
+  id?: string;
+  geometry: {
+    type: "Polygon" | "Point" | "LineString";
+    coordinates: number[] | number[][] | number[][][];
+  };
+  properties?: Record<string, unknown>;
+};
+
+export type MapContext = {
+  center: [number, number];
+  zoom: number;
+  annotations?: MapAnnotation[];
+};
+
 export type Usage = {
   input_tokens?: number;
   output_tokens?: number;
@@ -220,7 +236,7 @@ export type ConfigResponse = {
   web_search_configured: boolean;
   // 强制登录：未登录时前端全屏拦截到 AuthGate。
   auth_required: boolean;
-  // 注册需邀请码：注册表单显示邀请码输入框。
+  // 注册需邀请码：前端预留字段，当前后端已移除邀请码逻辑，恒为 false。
   invite_required: boolean;
 };
 
@@ -251,6 +267,7 @@ export type ChatRequestBody = {
   use_memory?: boolean;
   use_rag?: boolean;
   provider_config?: ProviderConfig;
+  metadata?: Record<string, unknown>;
 };
 
 export type KnowledgeDocument = {

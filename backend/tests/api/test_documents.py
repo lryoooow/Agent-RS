@@ -1,5 +1,6 @@
 from io import BytesIO
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.api.routes.documents import split_text

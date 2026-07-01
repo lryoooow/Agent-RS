@@ -1,6 +1,9 @@
 import pytest
 
 from app.agent.request_builder import (
+    _resolve_geo_context,
+    _resolve_context_messages,
+    build_document_inventory,
     build_planning_context,
     build_provider_context,
     build_provider_messages,
@@ -8,6 +11,230 @@ from app.agent.request_builder import (
 )
 from app.schemas.chat import ChatMessage, ChatRequest
 from app.core.settings import get_settings
+
+
+@pytest.mark.asyncio
+async def test_resolve_context_messages_keeps_current_system_hint_with_db_history(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeAcquire:
+        async def __aenter__(self):
+            return object()
+
+        async def __aexit__(self, *_):
+            return None
+
+    class FakePool:
+        def acquire(self):
+            return FakeAcquire()
+
+    async def fake_pool():
+        return FakePool()
+
+    async def fake_messages(*_args, **_kwargs):
+        return [
+            ChatMessage(role="user", content="历史问题"),
+            ChatMessage(role="assistant", content="历史回答"),
+            ChatMessage(role="user", content="分析当前选区"),
+        ]
+
+    monkeypatch.setenv("DATABASE_ENABLED", "true")
+    get_settings.cache_clear()
+    monkeypatch.setattr("app.agent.request_builder.fetch_optional_pool", fake_pool)
+    monkeypatch.setattr("app.agent.request_builder.list_recent_messages", fake_messages)
+
+    result = await _resolve_context_messages(
+        ChatRequest(
+            conversation_id="00000000-0000-4000-8000-000000000123",
+            messages=[
+                {"role": "system", "content": "ROI 四角坐标：左上、右上、左下、右下"},
+                {"role": "user", "content": "分析当前选区"},
+            ],
+        ),
+        user_id="user-a",
+    )
+
+    assert [message.role for message in result[-2:]] == ["system", "user"]
+    assert "ROI 四角坐标" in result[-2].content
+    assert result[-1].content == "分析当前选区"
+
+
+@pytest.mark.asyncio
+async def test_build_document_inventory_is_owner_filtered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeAcquire:
+        async def __aenter__(self):
+            return object()
+
+        async def __aexit__(self, *_):
+            return None
+
+    class FakePool:
+        def acquire(self):
+            return FakeAcquire()
+
+    async def fake_pool():
+        return FakePool()
+
+    async def fake_documents(_conn, *, user_id, limit):
+        assert user_id == "user-a"
+        assert limit == get_settings().agent_document_inventory_limit
+        return [{"id": "doc-owned", "title": "报告", "doc_type": "pdf", "chunk_count": 8}]
+
+    monkeypatch.setenv("DATABASE_ENABLED", "true")
+    get_settings.cache_clear()
+    monkeypatch.setattr("app.agent.request_builder.fetch_optional_pool", fake_pool)
+    monkeypatch.setattr("app.agent.request_builder.list_documents", fake_documents)
+
+    inventory = await build_document_inventory("user-a")
+
+    assert inventory is not None
+    assert "用户已上传需要解析的文档" in inventory
+    assert "doc-owned" in inventory
+
+
+@pytest.mark.asyncio
+async def test_provider_context_fetches_imagery_inventory_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+
+    async def inventory(_user_id):
+        nonlocal calls
+        calls += 1
+        return "可用影像:\n- ID: once"
+
+    async def no_documents(_user_id):
+        return None
+
+    monkeypatch.setattr("app.agent.request_builder.build_imagery_inventory", inventory)
+    monkeypatch.setattr("app.agent.request_builder.build_document_inventory", no_documents)
+
+    result = await build_provider_request_context(
+        ChatRequest(
+            messages=[{"role": "user", "content": "查看影像"}],
+            use_memory=False,
+            use_rag=False,
+        ),
+        user_id="user-a",
+        skip_retrieval=True,
+    )
+
+    assert calls == 1
+    assert any("ID: once" in message["content"] for message in result.messages)
+
+
+def test_format_annotations_sums_multisegment_haversine_distance() -> None:
+    from app.agent.request_builder import _format_annotations
+
+    result = _format_annotations(
+        [
+            {
+                "geometry": {
+                    "type": "LineString",
+                    "coordinates": [[0, 0], [0, 1], [1, 1]],
+                }
+            }
+        ]
+    )
+
+    assert result is not None
+    assert "约 222.37 km" in result
+
+
+@pytest.mark.asyncio
+async def test_resolve_geo_context_returns_fallback_without_waiting_for_prefetch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prefetched: list[tuple[float, float]] = []
+    monkeypatch.setattr("app.agent.request_builder.cached_location", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        "app.agent.request_builder.prefetch_location",
+        lambda lat, lon: prefetched.append((lat, lon)),
+    )
+
+    result = await _resolve_geo_context(
+        ChatRequest(
+            messages=[{"role": "user", "content": "这里是什么地方"}],
+            metadata={"map_context": {"center": [114.0579, 22.5431], "zoom": 12}},
+        )
+    )
+
+    assert result == "用户当前查看的地图中心坐标：[114.0579, 22.5431]。"
+    assert prefetched == [(22.5431, 114.0579)]
+
+
+@pytest.mark.asyncio
+async def test_resolve_geo_context_uses_cached_name_and_keeps_annotations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.agent.geocode import LocationInfo
+
+    monkeypatch.setattr(
+        "app.agent.request_builder.cached_location",
+        lambda lat, lon, zoom=None: LocationInfo("深圳市南山区", lat, lon, zoom),
+    )
+
+    def fail_prefetch(*_args, **_kwargs):
+        raise AssertionError("缓存命中时不应预取")
+
+    monkeypatch.setattr("app.agent.request_builder.prefetch_location", fail_prefetch)
+
+    result = await _resolve_geo_context(
+        ChatRequest(
+            messages=[{"role": "user", "content": "分析标注"}],
+            metadata={
+                "map_context": {
+                    "center": [114.0579, 22.5431],
+                    "zoom": 12,
+                    "annotations": [
+                        {
+                            "geometry": {
+                                "type": "Point",
+                                "coordinates": [114.06, 22.54],
+                            }
+                        }
+                    ],
+                }
+            },
+        )
+    )
+
+    assert result is not None
+    assert "深圳市南山区" in result
+    assert "缩放级别 12" in result
+    assert "点标记：经度 114.0600, 纬度 22.5400" in result
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "center",
+    [
+        [float("nan"), 22.5],
+        [114.0, float("inf")],
+        [181, 22.5],
+        [114.0, -91],
+        ["not-a-number", 22.5],
+    ],
+)
+async def test_resolve_geo_context_rejects_invalid_coordinates(
+    center,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_prefetch(*_args, **_kwargs):
+        raise AssertionError("非法坐标不应触发预取")
+
+    monkeypatch.setattr("app.agent.request_builder.prefetch_location", fail_prefetch)
+
+    result = await _resolve_geo_context(
+        ChatRequest(
+            messages=[{"role": "user", "content": "这里是什么地方"}],
+            metadata={"map_context": {"center": center, "zoom": 12}},
+        )
+    )
+
+    assert result is None
 
 
 @pytest.mark.asyncio
@@ -32,12 +259,16 @@ async def test_build_provider_messages_uses_settings_boundaries(monkeypatch: pyt
     assert "遥感影像分析智能体" in result[0]["content"]
     assert "模块版本" not in result[0]["content"]
     assert "默认使用中文回复" in result[0]["content"]
+
+    # 2026-06-24 上下文顺序修复：可选块按优先级升序排列（低→高），
+    # 让高优先级块更靠近用户提问（利用 LLM 近因偏好）。
+    # 新顺序：system_prompt → 历史对话压缩(70) → 会话额外要求(90) → recent_dialogue
     assert result[1]["role"] == "system"
-    assert "## 会话额外要求" in result[1]["content"]
-    assert "system rules" in result[1]["content"]
+    assert "## 历史对话压缩摘要" in result[1]["content"]
+    assert "old" in result[1]["content"]
     assert result[2]["role"] == "system"
-    assert "## 历史对话压缩摘要" in result[2]["content"]
-    assert "old" in result[2]["content"]
+    assert "## 会话额外要求" in result[2]["content"]
+    assert "system rules" in result[2]["content"]
     assert result[3:] == [
         {"role": "assistant", "content": "middle"},
         {"role": "user", "content": "latest"},
@@ -148,13 +379,16 @@ async def test_build_provider_messages_injects_summary_and_memory_policy(
     result = await build_provider_messages(request)
 
     assert "记忆使用规则" in result[0]["content"]
+
+    # 2026-06-24 上下文顺序修复：可选块按优先级升序排列（低→高）。
+    # 新顺序：system_prompt → 长期记忆(60) → 历史对话压缩(70) → recent_dialogue
     assert result[1]["role"] == "system"
-    assert "## 历史对话压缩摘要" in result[1]["content"]
-    assert "fixed" not in result[1]["content"].lower()
-    assert "stable-analysis-status-pulse-v1" in result[1]["content"]
+    assert "## 长期记忆摘要" in result[1]["content"]
+    assert "必须使用中文回复" in result[1]["content"]
     assert result[2]["role"] == "system"
-    assert "## 长期记忆摘要" in result[2]["content"]
-    assert "必须使用中文回复" in result[2]["content"]
+    assert "## 历史对话压缩摘要" in result[2]["content"]
+    assert "fixed" not in result[2]["content"].lower()
+    assert "stable-analysis-status-pulse-v1" in result[2]["content"]
     assert result[-1] == {"role": "user", "content": "继续审查上下文"}
 
 

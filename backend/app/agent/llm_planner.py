@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from dataclasses import dataclass
@@ -7,7 +8,11 @@ from typing import Any
 
 from app.agent.capability_registry import RegisteredCapability, list_capabilities
 from app.agent.config import ResolvedAIConfig
-from app.agent.request_builder import build_imagery_inventory, build_planning_context
+from app.agent.request_builder import (
+    build_document_inventory,
+    build_imagery_inventory,
+    build_planning_context,
+)
 from app.agent.types import AgentTrace
 from app.core.settings import get_settings
 from app.schemas.chat import ChatRequest
@@ -148,12 +153,25 @@ class LLMCapabilityPlanner:
         messages = [
             {"role": "system", "content": _planner_prompt(capabilities)},
         ]
-        inventory = await build_imagery_inventory(user_id)
-        if inventory:
+        imagery_inventory, document_inventory = await asyncio.gather(
+            build_imagery_inventory(user_id),
+            build_document_inventory(user_id),
+        )
+        if imagery_inventory:
             messages.append(
                 {
                     "role": "system",
-                    "content": "当前用户影像清单。只能使用这里列出的 imagery_id:\n" + inventory,
+                    "content": "当前用户影像清单。只能使用这里列出的 imagery_id:\n" + imagery_inventory,
+                }
+            )
+        if document_inventory:
+            messages.append(
+                {
+                    "role": "system",
+                    "content": (
+                        "当前用户文档清单。只有这里列出的 document_id 才是已验证归属的文档:\n"
+                        + document_inventory
+                    ),
                 }
             )
         messages.extend(recent)
@@ -186,7 +204,7 @@ def _planner_prompt(capabilities: list[RegisteredCapability]) -> str:
         "如果当前影像清单恰好只有一张自有影像，用户用“这张图”“刚才那张图”“上面那景”等指代词，或给出可唯一匹配的残缺/写错 imagery_id，可以使用清单里的完整 imagery_id。\n"
         "如果影像清单有多张图：当用户给出的残缺/写错 imagery_id 能在清单里唯一匹配到一张完整 ID（前缀一致或仅个别字符出入且只匹配一张），用那张的完整 ID 调用；若只用指代词没给 ID 片段、或残缺 ID 能匹配到多张、或匹配不到任何一张，则选择 none 并请用户指明影像，不要在多个候选里随意猜一张。\n"
         "如果用户显式说没有提供影像 ID、没有可用影像 ID、没有提供文档 ID，选择 none；显式否定优先于系统清单。\n"
-        "不要凭空编造 document_id。判别只看一条：系统是否在上下文中注入了文档信息（如“用户已上传需要解析的文档”）或此前轮次已出现该文档。只要有这类文档证据，用户给出 document_id 要求解析/总结文档，就调用 parse_document；只有在完全没有任何文档证据时，用户口头报出的 document_id 才一律选择 none 并请用户先上传或指明文档。\n"
+        "不要凭空编造 document_id；只能使用当前用户文档清单中列出的完整 document_id。用户要求解析/总结清单内文档时调用 parse_document；清单为空或 ID 不在清单时选择 none 并请用户先上传或指明有效文档。\n"
         "普通解释、代码、翻译、数学、写作任务选择 none。\n"
         "如果用户明确说不要调用工具、不要计算、先别处理、只解释概念或只讲原理，选择 none。\n"
         "如果用户把工具或算法用于明显不匹配的任务，选择 none，不要硬凑最接近的工具。例如：用 NDVI 检测船只、用重投影识别车辆、用 OCR 判断植被覆盖率。\n"
@@ -220,7 +238,8 @@ def _planner_prompt(capabilities: list[RegisteredCapability]) -> str:
         '用户: (清单有 47ab9c20f1e3、8d3f00aa1122 两张) 给 47ab9c 这张做水体掩膜（ID没记全）-> {"action":"call","capability":"extract_water_mask","arguments":{"imagery_id":"47ab9c20f1e3","reason":"残缺ID唯一匹配清单中一张"},"reason":"unique_prefix_match"}\n'
         '用户: (清单有 47ab9c20f1e3、47ab9c885566 两张) 给 47ab9c 这张做水体掩膜（ID没记全）-> {"action":"none","capability":null,"arguments":{},"reason":"ambiguous_imagery_multiple_candidates"}\n'
         "可用能力:\n"
-        "detect_objects 和 segment_landcover 默认按 GF-2 波序 red=3, green=2, blue=1；非 GF-2 或用户明确说明 RGB 波序时，应显式设置 red_band/green_band/blue_band。\n"
+        "detect_objects 和 segment_landcover 默认按 GF-2 波序 red=3, green=2, blue=1；非 GF-2 或用户明确说明 RGB 波序时，应显式设置 red_band/green_band/blue_band。"
+        "ocr_recognize 默认按自然 RGB 波序 red=1, green=2, blue=3（多用于扫描图/自然 RGB 图）；对 GF-2 等卫星影像做 OCR 时应显式设 red_band=3, green_band=2, blue_band=1。\n"
         + "\n".join(capability_lines)
     )
 
