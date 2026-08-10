@@ -369,6 +369,9 @@ class AIService:
 
         产出与 legacy 分支同构（同样的 ChatResponse 字段、同样的持久化调用），
         所以下游完全不感知走的是哪条链路。
+
+        异常不在此捕获：由外层 chat() 的 except 统一处理 mark_assistant_failed
+        和 map_provider_error，避免双重调用。
         """
         from app.agent.engine.service import complete_turn
 
@@ -376,17 +379,13 @@ class AIService:
         request = setup.context_request
         query = latest_user_text(request.messages)
 
-        try:
-            turn = await complete_turn(
-                query=query,
-                user_id=persistence.user_id,
-                use_rag=request.use_rag,
-                use_memory=request.use_memory,
-                config=setup.config,
-            )
-        except Exception as exc:
-            await mark_assistant_failed(persistence, exc)
-            raise map_provider_error(exc) from exc
+        turn = await complete_turn(
+            query=query,
+            user_id=persistence.user_id,
+            use_rag=request.use_rag,
+            use_memory=request.use_memory,
+            config=setup.config,
+        )
 
         result = ChatResponse(
             content=turn.content,
