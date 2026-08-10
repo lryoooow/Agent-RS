@@ -1,0 +1,14 @@
+{
+  "case_id": "tool_generate_report",
+  "context_hash": "18c26ef1472e25fc0289b105c6bfd1b5b3e8e2ec562aa24588a91964536e697b",
+  "key": "2fdbb823a9ee9105ce65f1c9e8d3d629c5ed457f4e1ba3037473dc963fb034f8",
+  "model": "deepseek-v4-pro",
+  "prompt_hash": "9d258024b1f132780d408d3fa462d879c7556173c6f58aa4ec63ac9b09b62c8f",
+  "query_hash": "25b651ef75caead1320fa4b46a92a862a2204425e5d61d53657e3e2332d07ed9",
+  "raw_texts": [
+    "{\"action\":\"call\",\"capability\":\"generate_report\",\"arguments\":{\"imagery_id\":\"94e758f38ede\",\"reason\":\"用户请求根据刚才的地物分类结果生成论文用的报告\"},\"reason\":\"generating_report_for_previous_segmentation\"}"
+  ],
+  "recorded_at": "2026-08-07T13:24:26.160088+00:00",
+  "scope": "00000000-0000-4000-8000-000000000001|planner-eval-tool_generate_report|deepseek-v4-pro|mode:llm|full_pipeline|calculate_ndvi,calculate_spectral_index,clip_reproject_raster,cloud_shadow_mask,detect_objects,extract_water_mask,generate_report,ocr_recognize,parse_document,raster_inspect,render_band_composite,segment_landcover,web_search|rag:0|memory:0|img:b7e896ebcfa4|doc:none|ana:0",
+  "source": "live"
+}
