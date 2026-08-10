@@ -1,0 +1,83 @@
+{
+  "purpose": "AutoGen 迁移前的基线存档。每个迁移阶段完成后与本文件对比，不得回退。",
+  "recorded_at": "2026-08-07",
+  "git_ref": "main + 迁移阶段 0 改动（依赖、AGENT_ENGINE 开关、engine 适配层、评测修复）",
+  "python": "3.11.15（新建 .venv，系统 python3 为 3.9.6 不满足 requires-python>=3.11）",
+
+  "model": {
+    "provider": "openai-compatible",
+    "base_url": "https://api.deepseek.com",
+    "name": "deepseek-v4-pro",
+    "note": "历史录制用的是 qwen3.7-max（阿里云百炼）。本次已整体切到 DeepSeek，所以下面的数字是 DeepSeek 的新基线，不能与 reports/heldout_v*_score_*.json 里的百炼历史数字横向比较。AutoGen 迁移前后对比时两边必须用同一模型。",
+    "planner_max_tokens": 1024,
+    "planner_max_tokens_reason": "deepseek-v4-pro 是推理模型，reasoning token 与正文共用 max_tokens。代码默认 256 是按非推理模型调的，实测会间歇性截断/返回空，导致规划全部误判成 none。"
+  },
+
+  "test_suite": {
+    "command": "python -m pytest backend/tests -q",
+    "passed": 737,
+    "failed": 0,
+    "skipped": 58,
+    "note": "迁移前原始为 729 passed / 2 failed。新增 8 条：2 条 engine 架构边界 + 4 条决策管线一致性（含确定性归属 guard）+ 原 2 条失败转绿。"
+  },
+
+  "planner_accuracy_baseline": {
+    "status": "OK",
+    "case_set": "ci_subset (CI_REPLAY_CASES)",
+    "samples": 31,
+    "valid": 31,
+    "correct": 30,
+    "accuracy": 0.968,
+    "false_positive": 0,
+    "false_negative": 1,
+    "threshold_in_test": 0.85,
+    "recorded_with": "python -m tests.ai.eval.report_planner_metrics --live --case-set ci --run-tag deepseek_v4pro_20260807",
+    "mismatches": [
+      {
+        "case_id": "tool_parse_document",
+        "expected": "parse_document",
+        "actual": "none",
+        "attribution": "planner_mismatch",
+        "verdict": "用例在本框架内无法成立，非模型缺陷。harness 强制 DATABASE_ENABLED=false（harness.py:132），文档清单为空；planner prompt 明写「清单为空时选择 none」，所以模型选 none 是对的。即使它选了 parse_document，tool_guards 在无连接池时也会返回 document_not_found_or_forbidden。两重结构性障碍。彻底修复需要给 harness 接带文档 fixture 的库，属独立工作。"
+      }
+    ]
+  },
+
+  "eval_architecture_change": {
+    "reason": "原 replay 评测把「模型判断力」与「管线一致性」耦合在一起：录制存的是模型吐的原始 JSON 文本，加一个能力就改 planner prompt、prompt_hash 一变全部作废；且迁到 AutoGen 后走 function calling，没有 JSON 文本可回放，这套录制注定失效。",
+    "new_layer": "tests/ai/eval/test_decision_pipeline.py —— 用确定性规范输出驱动管线（JSON 解析 → PlanValidator → tool_guards → 决策映射）。不需要 API key、毫秒级、加能力改 prompt 都不会过期。迁到 AutoGen 后同一批期望可原样跑在新管线上，作为跨引擎对比标尺。",
+    "moved_assertion": {
+      "from": "test_planner_accuracy.py::test_historical_replay_accuracy... 中的 assert non_owner.validation_error == 'imagery_not_found_or_forbidden'",
+      "to": "test_decision_pipeline.py::test_ownership_guard_blocks_other_users_imagery",
+      "why": "原断言要求模型先尝试越权、再被 guard 拦下，于是模型越谨慎越测不到兜底。qwen3.7-max 会去调他人影像（guard 触发），deepseek-v4-pro 在 planner 阶段就拒绝（guard 不触发，validation_error 为 None），但 guard 本身完全正常。已实测确认：把 tool_guards 的归属校验改成永远放行，改后的 replay 测试照常通过，新的确定性测试立刻失败——证明覆盖确实转移成功，且原断言在 DeepSeek 录制下已是死覆盖。"
+    }
+  },
+
+  "heldout_baseline": {
+    "status": "DEFERRED",
+    "scale": "heldout_v1..v5 每个 1000 用例，共 5000 次 live 调用",
+    "findings": [
+      "仓库里没有 heldout live 评分的 CLI runner，prepare_live_run 只在 test_heldout_discipline.py 里被引用",
+      "heldout_v*/live_run/ 被 gitignore，仓库内只有 dataset_manifest.json，历史逐条录制从未入库",
+      "heldout 纪律：同 (dataset_hash, prompt_hash, model) 只允许一个 live run，sealed 后再 live 抛 SealedRunError；本次 prompt 与 model 都变了，属新 run，机制上允许"
+    ],
+    "decision": "推迟到阶段 5（编排层）之前。那时 legacy 与 autogen 两个引擎并存，同一批 1000 题各跑一次做真正的跨引擎泛化对比，避免现在先烧 5000 次、迁移后再烧一次。"
+  },
+
+  "frontend_baseline": {
+    "status": "NOT_RUN",
+    "reason": "Node 依赖尚未安装；阶段 6 事件桥之前跑即可，届时用于守住 SSE 契约。",
+    "commands": [
+      "npm --prefix Agent-frontend install",
+      "npm --prefix Agent-frontend run type-check",
+      "npm --prefix Agent-frontend test",
+      "npm --prefix Agent-frontend run build"
+    ]
+  },
+
+  "environment_findings": [
+    "autogen-ext 0.7.5 只声明 mcp>=1.11.0 无上界，装到 mcp 2.0.0 会 ImportError（mcp.shared.context.RequestContext 已移除）。已在 pyproject 钉 mcp>=1.11.0,<2。AutoGen 处于 maintenance mode，不会有上游修复。",
+    "app/ 下若干文件带 UTF-8 BOM（如 agent/types.py、agent/tools/ndvi/runner.py），用普通 utf-8 读会导致 ast.parse SyntaxError；解析源码的工具需用 utf-8-sig。",
+    "backend/.env 不支持行内注释：pydantic-settings 会把 `KEY=value  # 注释` 里的注释一起读进值。"
+  ]
+}
