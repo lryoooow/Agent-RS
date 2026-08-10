@@ -65,6 +65,7 @@ from app.agent.engine.memory import PgVectorMemory, RagMemory
 from app.agent.engine.model_client import build_model_client
 from app.agent.engine.search import build_search_agent, search_agent_available
 from app.agent.engine.turn_context import TurnToolState, turn_scope
+from app.agent.config import ResolvedAIConfig
 from app.agent.reasoning import ReasoningPart, ThinkTagParser, split_think_blocks
 from app.auth import user_scope
 from app.core.settings import get_settings
@@ -336,13 +337,18 @@ def build_orchestration(
     user_id: str | None,
     use_rag: bool = True,
     use_memory: bool = True,
+    config: ResolvedAIConfig | None = None,
 ) -> Orchestration:
     """组装一次会话用的编排团队。
 
     每次请求新建而不是全局单例：memory 绑定了 user_id，团队状态也按会话隔离。
     构造开销很小（不发网络请求），换来的是彻底避免跨用户串数据。
+
+    config 透传给 build_model_client：不传时用服务端 env 默认值；
+    传了客户端的 provider_config 解析结果时，编排链路（selector + 领域 Agent）
+    全部使用该配置，与 legacy 路径行为一致。
     """
-    model_client = build_model_client()
+    model_client = build_model_client(config)
 
     memory: list[Memory] = []
     if use_rag:
@@ -395,6 +401,10 @@ def build_team(
     """只要团队本身（配置导出、测试等只关心结构的场景）。
 
     要跑回合请用 `build_orchestration`——它还给出断连喊停开关和必须关闭的模型客户端。
+
+    注意：这里构造的 model_client 不会被关闭（调用方拿不到它）。
+    仅用于只读结构检查的场景；跑回合一律走 build_orchestration / run_turn / stream_turn，
+    那些路径的 finally 会关闭 model_client。
     """
     return build_orchestration(
         user_id=user_id, use_rag=use_rag, use_memory=use_memory
@@ -408,11 +418,12 @@ async def run_turn(
     use_rag: bool = True,
     use_memory: bool = True,
     cancellation_token: CancellationToken | None = None,
+    config: ResolvedAIConfig | None = None,
 ) -> OrchestrationResult:
     """跑完一个回合，返回最终答复与本回合产物。"""
     with user_scope(user_id):
         orchestration = build_orchestration(
-            user_id=user_id, use_rag=use_rag, use_memory=use_memory
+            user_id=user_id, use_rag=use_rag, use_memory=use_memory, config=config
         )
         try:
             with turn_scope() as state:
@@ -431,6 +442,7 @@ async def stream_turn(
     use_rag: bool = True,
     use_memory: bool = True,
     cancellation_token: CancellationToken | None = None,
+    config: ResolvedAIConfig | None = None,
 ) -> AsyncGenerator[Any, None]:
     """流式版本：逐条 yield AutoGen 消息，最后 yield 一个 OrchestrationResult。
 
@@ -440,7 +452,7 @@ async def stream_turn(
     """
     with user_scope(user_id):
         orchestration = build_orchestration(
-            user_id=user_id, use_rag=use_rag, use_memory=use_memory
+            user_id=user_id, use_rag=use_rag, use_memory=use_memory, config=config
         )
         stream = orchestration.team.run_stream(
             task=task, cancellation_token=cancellation_token

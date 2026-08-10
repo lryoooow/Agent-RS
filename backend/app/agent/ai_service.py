@@ -58,6 +58,8 @@ class AIService:
         client = setup.client
 
         try:
+            if get_settings().agent_engine == "autogen":
+                return await self._chat_via_autogen(setup)
             if route.mode == "direct_chat":
                 response = await client.chat.completions.create(
                     model=config.model,
@@ -133,6 +135,11 @@ class AIService:
         except Exception as exc:
             error = exc if isinstance(exc, AIError) else map_provider_error(exc)
             yield sse_event("error", {"code": error.code, "message": error.message})
+            return
+
+        if get_settings().agent_engine == "autogen":
+            async for event in self._stream_via_autogen(setup):
+                yield event
             return
 
         finalized = False
@@ -351,6 +358,172 @@ class AIService:
                 finish_reason=(done_payload or {}).get("finish_reason"),
                 stream=True,
             )
+        finally:
+            if not finalized:
+                await asyncio.shield(
+                    mark_assistant_failed(persistence, RuntimeError("Stream interrupted"))
+                )
+
+    async def _chat_via_autogen(self, setup: ChatExecutionSetup) -> ChatResponse:
+        """AGENT_ENGINE=autogen 的非流式分支。
+
+        产出与 legacy 分支同构（同样的 ChatResponse 字段、同样的持久化调用），
+        所以下游完全不感知走的是哪条链路。
+        """
+        from app.agent.engine.service import complete_turn
+
+        persistence = setup.persistence
+        request = setup.context_request
+        query = latest_user_text(request.messages)
+
+        try:
+            turn = await complete_turn(
+                query=query,
+                user_id=persistence.user_id,
+                use_rag=request.use_rag,
+                use_memory=request.use_memory,
+                config=setup.config,
+            )
+        except Exception as exc:
+            await mark_assistant_failed(persistence, exc)
+            raise map_provider_error(exc) from exc
+
+        result = ChatResponse(
+            content=turn.content,
+            model=setup.config.model,
+            provider=setup.config.provider,
+            finish_reason="stop",
+        )
+        result.conversation_id = persistence.conversation_id
+        result.user_message_id = persistence.user_message_id
+        result.retrieved_chunks = turn.retrieved_chunks
+        result.rag_trace = turn.rag_trace
+        result.agent_trace = self._agent_trace_payload(turn.trace)
+        result.geospatial_result = turn.geospatial_result
+        result.tool_result = turn.tool_result
+
+        persistence.assistant_message_id = await save_assistant_response(
+            persistence,
+            content=result.content,
+            usage={},
+            finish_reason=result.finish_reason,
+            geospatial_result=turn.geospatial_result,
+            tool_result=turn.tool_result,
+        )
+        result.assistant_message_id = persistence.assistant_message_id
+        schedule_after_response(persistence, assistant_content=result.content)
+        log_event(
+            logger,
+            "chat.response",
+            model=setup.config.model,
+            route="autogen",
+            retrieved_chunks=turn.retrieved_chunks,
+            finish_reason=result.finish_reason,
+            stream=False,
+        )
+        return result
+
+    async def _stream_via_autogen(self, setup: ChatExecutionSetup) -> AsyncIterator[str]:
+        """AGENT_ENGINE=autogen 的流式分支。
+
+        事件顺序与 legacy 一致：meta → analysis_status → agent_status* → delta* → done，
+        前端零改动。
+        """
+        from app.agent.engine.service import stream_turn_events
+
+        persistence = setup.persistence
+        request = setup.context_request
+        query = latest_user_text(request.messages)
+
+        finalized = False
+        parts: list[str] = []
+        try:
+            yield sse_event(
+                "meta",
+                {
+                    "model": setup.config.model,
+                    "provider": setup.config.provider,
+                    **persistence_meta(persistence),
+                },
+            )
+            yield analysis_status_event("analyzing")
+
+            turn = None
+            answering_announced = False
+            async for kind, payload in stream_turn_events(
+                query=query,
+                user_id=persistence.user_id,
+                use_rag=request.use_rag,
+                use_memory=request.use_memory,
+                config=setup.config,
+            ):
+                if kind == "status":
+                    yield agent_status_event(
+                        payload.stage,
+                        label=payload.label,
+                        **payload.metadata,
+                        elapsed_ms=payload.elapsed_ms,
+                    )
+                elif kind == "delta":
+                    if not answering_announced:
+                        # 第一个正文分片到达时才宣布"开始作答"，与 legacy 的时序一致
+                        yield analysis_status_event("preparing")
+                        yield analysis_status_event("answering")
+                        answering_announced = True
+                    parts.append(payload)
+                    yield sse_event("delta", {"content": payload})
+                else:
+                    turn = payload
+
+            if turn is None:
+                raise RuntimeError("AutoGen 编排没有产出最终结果")
+
+            # 流式分片拼出来的正文里可能残留终止标记，以编排层剥离后的正文为准。
+            content = turn.content or "".join(parts)
+            if not answering_announced:
+                # 极少数情况下模型没走流式分片（如整段来自工具摘要），补发正文
+                yield analysis_status_event("preparing")
+                yield analysis_status_event("answering")
+                for part in iter_answer_delta_parts([content]):
+                    yield sse_event("delta", {"content": part})
+
+            done_payload: dict = {
+                "finish_reason": "stop",
+                "retrieved_chunks": turn.retrieved_chunks,
+                "rag_trace": turn.rag_trace,
+            }
+            agent_trace = self._agent_trace_payload(turn.trace)
+            if agent_trace:
+                done_payload["agent_trace"] = agent_trace
+            if turn.geospatial_result:
+                done_payload["geospatial_result"] = turn.geospatial_result
+            if turn.tool_result:
+                done_payload["tool_result"] = turn.tool_result
+            yield sse_event("done", done_payload)
+
+            await save_streamed_assistant(
+                persistence,
+                content=content,
+                done_payload={"finish_reason": "stop"},
+                geospatial_result=turn.geospatial_result,
+                tool_result=turn.tool_result,
+            )
+            finalized = True
+            schedule_after_response(persistence, assistant_content=content)
+            log_event(
+                logger,
+                "chat.response",
+                model=setup.config.model,
+                route="autogen",
+                retrieved_chunks=turn.retrieved_chunks,
+                finish_reason="stop",
+                stream=True,
+            )
+        except Exception as exc:
+            error = exc if isinstance(exc, AIError) else map_provider_error(exc)
+            await mark_assistant_failed(persistence, exc)
+            finalized = True
+            yield sse_event("error", {"code": error.code, "message": error.message})
         finally:
             if not finalized:
                 await asyncio.shield(

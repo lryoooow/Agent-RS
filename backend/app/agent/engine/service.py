@@ -33,6 +33,7 @@ from app.agent.engine.orchestrator import (
     run_turn,
     stream_turn,
 )
+from app.agent.config import ResolvedAIConfig
 from app.agent.types import AgentEvent, AgentTrace
 
 logger = logging.getLogger(__name__)
@@ -59,6 +60,7 @@ async def complete_turn(
     use_rag: bool,
     use_memory: bool,
     cancellation_token: CancellationToken | None = None,
+    config: ResolvedAIConfig | None = None,
 ) -> AutogenTurnOutput:
     """非流式：跑完一个回合。"""
     trace = AgentTrace(enabled=True)
@@ -71,6 +73,7 @@ async def complete_turn(
         use_rag=use_rag,
         use_memory=use_memory,
         cancellation_token=cancellation_token,
+        config=config,
     )
     _replay_messages_into_trace(result, trace=trace, state=state)
     return _to_output(result, trace=trace, state=state)
@@ -83,6 +86,7 @@ async def stream_turn_events(
     use_rag: bool,
     use_memory: bool,
     cancellation_token: CancellationToken | None = None,
+    config: ResolvedAIConfig | None = None,
 ) -> AsyncIterator[tuple[str, Any]]:
     """流式：逐个 yield `(kind, payload)`。
 
@@ -140,6 +144,7 @@ async def stream_turn_events(
         use_rag=use_rag,
         use_memory=use_memory,
         cancellation_token=cancellation_token,
+        config=config,
     )
     try:
         async for item in turns:
