@@ -252,3 +252,52 @@ async def test_expert_with_only_scaffolding_leaves_no_blank_tail(monkeypatch) ->
 
     assert streamed == final.content
     assert streamed == "已完成 NDVI 计算，均值 0.42。"
+
+
+# ================================================================ 非流式路径（GAP-5）
+
+
+@pytest.mark.asyncio
+async def test_complete_turn_returns_correct_output_shape(monkeypatch) -> None:
+    """非流式 complete_turn 产出的 AutogenTurnOutput 字段形状正确。
+
+    此前只有流式路径通过 stream_turn_events 间接被测，
+    非流式路径（run_turn → team.run）完全裸奔。
+    """
+    from app.agent.engine.service import complete_turn
+
+    client = _ScriptedClient(
+        ["spectral_agent"],
+        ["NDVI 是归一化植被指数，范围 -1 到 1。\n[DONE]"],
+    )
+    monkeypatch.setattr(orchestrator, "build_model_client", lambda *a, **k: client)
+
+    output = await complete_turn(
+        query="什么是 NDVI？", user_id=None, use_rag=False, use_memory=False
+    )
+
+    assert "NDVI 是归一化植被指数" in output.content
+    assert "[DONE]" not in output.content  # 脚手架必须被剥掉
+    assert output.stop_reason is not None
+    assert output.trace is not None
+
+
+@pytest.mark.asyncio
+async def test_model_client_is_closed_after_non_streaming_turn(monkeypatch) -> None:
+    """非流式路径也必须关闭 model_client（与流式路径对称）。"""
+    from app.agent.engine.service import complete_turn
+
+    client = _ScriptedClient(["spectral_agent"], ["答复。\n[DONE]"])
+    closed: list[bool] = []
+
+    async def _close():
+        closed.append(True)
+
+    client.close = _close  # type: ignore[method-assign]
+    monkeypatch.setattr(orchestrator, "build_model_client", lambda *a, **k: client)
+
+    await complete_turn(
+        query="什么是 NDVI？", user_id=None, use_rag=False, use_memory=False
+    )
+
+    assert closed, "非流式回合结束也必须关闭模型客户端"
