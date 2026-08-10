@@ -121,6 +121,8 @@ def _assert_rag_trace_baseline(done_payload: dict) -> None:
 @pytest.fixture(autouse=True)
 def deterministic_chat_service_environment(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("DATABASE_ENABLED", "false")
+    # 这些测试是 legacy 链路的边界测试，使用 legacy 模式运行
+    monkeypatch.setenv("AGENT_ENGINE", "legacy")
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()
@@ -128,7 +130,6 @@ def deterministic_chat_service_environment(monkeypatch: pytest.MonkeyPatch):
 
 @pytest.mark.asyncio
 async def test_chat_service_uses_ai_service_boundary(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("AI_API_KEY", "")
     monkeypatch.setenv("ALLOW_CLIENT_PROVIDER_CONFIG", "true")
     monkeypatch.setenv("TAVILY_API_KEY", "")
     get_settings.cache_clear()
@@ -155,7 +156,6 @@ async def test_chat_service_uses_ai_service_boundary(monkeypatch: pytest.MonkeyP
 
 @pytest.mark.asyncio
 async def test_chat_service_streams_sse_events(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("AI_API_KEY", "")
     monkeypatch.setenv("ALLOW_CLIENT_PROVIDER_CONFIG", "true")
     monkeypatch.setenv("TAVILY_API_KEY", "")
     get_settings.cache_clear()
@@ -203,7 +203,6 @@ async def test_chat_service_streams_sse_events(monkeypatch: pytest.MonkeyPatch) 
 async def test_chat_service_streams_initial_status_before_provider_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("AI_API_KEY", "")
     monkeypatch.setenv("ALLOW_CLIENT_PROVIDER_CONFIG", "true")
     monkeypatch.setenv("TAVILY_API_KEY", "")
     get_settings.cache_clear()
@@ -246,7 +245,6 @@ async def test_stream_cancels_inflight_plan_task_on_client_disconnect(
 ) -> None:
     # H5：客户端中途断连（提前 aclose 生成器）时，仍在执行的 plan_task 必须被取消，
     # 不留下孤儿 planner→docker 任务跑到超时。
-    monkeypatch.setenv("AI_API_KEY", "")
     monkeypatch.setenv("ALLOW_CLIENT_PROVIDER_CONFIG", "true")
     monkeypatch.setenv("TAVILY_API_KEY", "")
     get_settings.cache_clear()
@@ -316,7 +314,6 @@ async def test_chat_service_stream_meta_includes_persistence_ids(
     async def fake_save_streamed_assistant(*_, **__) -> None:
         return None
 
-    monkeypatch.setenv("AI_API_KEY", "")
     monkeypatch.setenv("ALLOW_CLIENT_PROVIDER_CONFIG", "true")
     monkeypatch.setenv("TAVILY_API_KEY", "")
     get_settings.cache_clear()
@@ -362,7 +359,6 @@ async def test_chat_service_marks_streaming_message_failed_on_client_abort(
     async def fake_mark_assistant_failed(persistence: PersistenceContext, exc: Exception) -> None:
         marked_failed.append((persistence.assistant_message_id, str(exc)))
 
-    monkeypatch.setenv("AI_API_KEY", "")
     monkeypatch.setenv("ALLOW_CLIENT_PROVIDER_CONFIG", "true")
     monkeypatch.setenv("TAVILY_API_KEY", "")
     get_settings.cache_clear()
