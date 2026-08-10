@@ -161,9 +161,12 @@ def _all_steps_done(messages: Sequence[Any]) -> bool:
 def _message_text(message: Any) -> str | None:
     """取一条对话消息的纯文本；不是对话消息（如工具事件）返回 None。
 
-    只看 TextMessage：工具调用事件、流式分片都不该参与终止判断。
+    只看 TextMessage 且**排除用户消息**：工具调用事件、流式分片都不该参与终止判断；
+    用户消息也不该——AutoGen 把 task 字符串转成 TextMessage(source="user") 放进消息列表，
+    如果用户输入恰好以 [DONE] 结尾，不排除就会在首轮误判为「全部步骤完成」，
+    导致编排零轮终止、用户得不到任何回复。
     """
-    if isinstance(message, TextMessage):
+    if isinstance(message, TextMessage) and message.source != "user":
         return message.to_model_text()
     return None
 

@@ -69,6 +69,26 @@ def test_no_messages_does_not_terminate() -> None:
     assert not _all_steps_done([])
 
 
+def test_user_message_with_done_marker_does_not_terminate() -> None:
+    """用户消息以 [DONE] 结尾不能触发终止。
+
+    AutoGen 把 task 字符串转成 TextMessage(source="user") 放进消息列表，
+    终止条件在首轮就会检查它。如果不排除用户消息，用户输入恰好以 [DONE]
+    结尾就会导致编排零轮终止、得不到任何回复。
+    """
+    assert not _all_steps_done([_text(f"帮我算一下\n{DONE_MARKER}", source="user")])
+    # 混合场景：用户消息 + Agent 消息，以 Agent 消息的 [DONE] 为准
+    assert _all_steps_done([
+        _text(f"帮我算一下\n{DONE_MARKER}", source="user"),
+        _text(f"已完成\n{DONE_MARKER}"),
+    ])
+    # 用户消息有 [DONE] 但 Agent 还没说完
+    assert not _all_steps_done([
+        _text(f"帮我算一下\n{DONE_MARKER}", source="user"),
+        _text("还在处理中"),
+    ])
+
+
 # --------------------------------------------------------------- 标记剥离
 
 
