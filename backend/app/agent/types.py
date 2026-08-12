@@ -7,28 +7,16 @@ from app.schemas.chat import GeospatialResult, ToolResult
 
 AgentStage = Literal[
     "context_assembled",
-    "planning",
-    "planning_fallback",
-    "planner_started",
-    "planner_completed",
-    "planner_invalid",
-    "planner_selected",
-    "planner_no_call",
-    "plan_validation_failed",
-    "capability_guard_rejected",
-    "cache_hit_skip",
-    "cache_hit_search",
+    "routing_selected",
+    "agent_selected",
     "tool_requested",
     "child_agent_running",
     "tool_execution_started",
     "tool_execution_completed",
     "tool_execution_failed",
-    "tool_fallback_used",
     "tool_context_ready",
     "geospatial_result_ready",
     "final_answering",
-    "direct_answer",
-    "tool_unavailable",
 ]
 
 
@@ -69,20 +57,6 @@ class AgentTrace:
                 for event in self.events
             ],
         }
-
-
-@dataclass(frozen=True)
-class RuntimeToolCall:
-    name: str
-    arguments: dict[str, Any]
-    call_id: str | None = None
-
-
-@dataclass(frozen=True)
-class RuntimeAgentCall:
-    name: str
-    arguments: dict[str, Any]
-    call_id: str | None = None
 
 
 @dataclass(frozen=True)

@@ -11,7 +11,7 @@
   要么把变化烤进 imagery_state（损坏 ID→invalid→none，指代→unreferenced→none），由 derive_label 重算。
 - 历史干扰只放**不同 ID/话题**的旧轮次，当前 query 自包含——绝不制造跨轮指代依赖
   （那是 prompt 本身的灰区，断言任一答案都是错标）。
-- 本模块禁止 import app.agent.llm_planner（不反向贴 prompt）。
+- 本模块禁止导入 AutoGen 运行时 prompt（不反向贴 prompt）。
 - 整句零重复（拒绝采样），防"题量虚胖"。
 """
 
@@ -21,7 +21,7 @@ import json
 from hashlib import sha256
 from random import Random
 
-from tests.ai.eval.cases import DEFAULT_USER_ID, ImageryFixture, PlannerEvalCase
+from tests.ai.eval.cases import DEFAULT_USER_ID, ImageryFixture, AutogenEvalCase
 from tests.ai.eval.cases_generator import is_prompt_near
 from tests.ai.eval.heldout_intents import (
     COMPOSITE_MODES,
@@ -143,9 +143,9 @@ def _build_case(
     document_context: str,
     history: tuple[dict[str, str], ...],
     seed: int,
-) -> PlannerEvalCase:
+) -> AutogenEvalCase:
     label = derive_label(intent, imagery_id=img, document_id=doc, inventory=inventory)
-    return PlannerEvalCase(
+    return AutogenEvalCase(
         case_id=case_id,
         query=query,
         expected_action=label.expected_action,  # type: ignore[arg-type]
@@ -185,14 +185,14 @@ def _counts(total: int) -> dict[str, int]:
     return counts
 
 
-def generate_stress_cases(*, seed: int, target: int = STRESS_TARGET) -> tuple[PlannerEvalCase, ...]:
+def generate_stress_cases(*, seed: int, target: int = STRESS_TARGET) -> tuple[AutogenEvalCase, ...]:
     """单 seed 现采压力集。不同 seed → 不同题面与扰动组合（看分布用）。"""
 
     rng = Random(seed)
     pool = HeldoutIdPool(rng)
     uniq = _UniqueQueries()
     counts = _counts(target)
-    cases: list[PlannerEvalCase] = []
+    cases: list[AutogenEvalCase] = []
     cases += _gen_positive(counts["positive"], rng, pool, uniq, seed)
     cases += _gen_hard_negative(counts["hard_negative"], rng, pool, uniq, seed)
     cases += _gen_boundary(counts["boundary"], rng, pool, uniq, seed)

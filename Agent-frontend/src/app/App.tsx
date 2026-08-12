@@ -28,7 +28,7 @@ export default function App() {
   const settings = useSettings();
   const auth = useAuth(settings.endpoint);
   // 框选的分析聚焦区（ROI）：geo（经纬度 bbox）或 pixel（影像内相对 0..1）。
-  // 由 MapView/ImageViewer 上报，注入下一轮对话作为「解读聚焦提示」（工具仍全图计算）。
+  // 由 MapView/ImageViewer 上报；地物分类会把它作为可信工具参数执行真正的 ROI 裁切。
   const [roi, setRoi] = useState<Roi | null>(null);
   // MapLibre 地图实例 ref，用于提取地图上下文（中心坐标、缩放级别）
   const mapRef = useRef<MapLibreMap | null>(null);
@@ -42,6 +42,20 @@ export default function App() {
     useRag: settings.useRag,
     model: settings.model,
     providerConfig: settings.providerConfig,
+    thinkingStrength: settings.thinkingStrength,
+    tavilyApiKey: settings.tavilyApiKey,
+    onMapControl: (target) => {
+      // 对话控图：agent 调 look_at_location 后，命令式应用到地图（复用 MapView 既有 flyTo/fitBounds）。
+      const map = mapRef.current;
+      if (!map) return;
+      const bbox = target.bbox as [[number, number], [number, number]] | undefined;
+      const center = target.center as [number, number] | undefined;
+      if (bbox) {
+        map.fitBounds(bbox, { padding: 48, duration: 900 });
+      } else if (center) {
+        map.flyTo({ center, zoom: (target.zoom as number) ?? 11, duration: 900 });
+      }
+    },
     roi,
     getMapContext: () => {
       const map = mapRef.current;
@@ -168,6 +182,7 @@ export default function App() {
         roi={roi}
         onSelectRegion={setRoi}
         onClearRegion={() => setRoi(null)}
+        onClassifyRegion={() => launchModelPrompt("请对当前上传影像的框选区域进行地物分类。")}
         onAnnotationsChange={setAnnotations}
       />
 
@@ -242,6 +257,8 @@ export default function App() {
             onBack={goBack}
             onGenerateReport={chat.generateReport}
             reportPending={chat.reportPending}
+            thinkingStrength={settings.thinkingStrength}
+            onThinkingChange={settings.setThinkingStrength}
           />
         )}
       </AnimatePresence>

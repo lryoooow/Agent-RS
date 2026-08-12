@@ -1,4 +1,4 @@
-import type { ChatRequestBody, ConfigResponse } from "../types";
+import type { ChatRequestBody, ConfigResponse, ModelListResponse, ProviderConfig } from "../types";
 import { readErrorMessage } from "./errors";
 
 export async function postChat(endpoint: string, body: ChatRequestBody, signal: AbortSignal) {
@@ -23,4 +23,25 @@ export async function fetchConfig(configEndpoint: string) {
   const res = await fetch(configEndpoint, { credentials: "include" });
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
   return (await res.json()) as ConfigResponse;
+}
+
+export async function fetchModels(
+  endpoint: string,
+  providerConfig?: ProviderConfig | null,
+  model?: string,
+) {
+  const res = await fetch(endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({
+      provider_config: providerConfig ?? undefined,
+      model: model?.trim() || undefined,
+    }),
+  });
+  if (!res.ok) {
+    const payload = await res.json().catch(() => null);
+    throw new Error(readErrorMessage(payload) ?? `${res.status} ${res.statusText}`);
+  }
+  return (await res.json()) as ModelListResponse;
 }

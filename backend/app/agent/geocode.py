@@ -18,6 +18,8 @@ USER_AGENT = "Agent-RS/1.0 (Remote Sensing AI Agent)"
 NOMINATIM_BASE_URL = "https://nominatim.openstreetmap.org"
 REQUEST_TIMEOUT = 1.5  # 秒
 GEOCODE_CACHE_MAX_SIZE = 4096
+# 并发逆地理编码上限：Nominatim 用量策略 ~1 req/s，去重外的突发请求必须限流（O5）。
+PREFETCH_MAX_CONCURRENT = 4
 
 
 class LocationInfo(NamedTuple):
@@ -46,6 +48,14 @@ def _get_client() -> httpx.AsyncClient:
             headers={"User-Agent": USER_AGENT},
         )
     return _client
+
+
+async def aclose_geocode_client() -> None:
+    """lifespan 关闭时关闭模块全局 httpx 客户端，释放连接池（O5）。"""
+    global _client
+    if _client is not None:
+        await _client.aclose()
+        _client = None
 
 
 async def reverse_geocode(
@@ -114,6 +124,81 @@ async def reverse_geocode(
         return None
 
 
+_FORWARD_CACHE: OrderedDict[str, dict] = OrderedDict()
+
+
+def _zoom_for_bbox(bbox: list[str] | None) -> int:
+    """据 Nominatim boundingbox 粗估缩放级别；无 bbox 给城市级默认。"""
+    if not bbox or len(bbox) != 4:
+        return 11
+    try:
+        south, north, west, east = (float(x) for x in bbox)
+    except (TypeError, ValueError):
+        return 11
+    span = max(abs(north - south), abs(east - west))
+    if span <= 0.02:
+        return 14
+    if span <= 0.1:
+        return 12
+    if span <= 1.0:
+        return 9
+    if span <= 10:
+        return 6
+    return 4
+
+
+async def forward_geocode(query: str) -> dict | None:
+    """正向地理编码：地名 → {display_name, center:[lon,lat], bbox?, zoom}。
+
+    供「对话控图」用：用户说"带我去深圳南山"→ 解析坐标让地图跳转。
+    复用 Nominatim /search（与前端浏览器原直连同端点），独立 LRU + 共享客户端/限流。
+    """
+    q = (query or "").strip()
+    if not q:
+        return None
+    key = q.lower()
+    cached = _FORWARD_CACHE.get(key)
+    if cached is not None:
+        _FORWARD_CACHE.move_to_end(key)
+        return cached
+    try:
+        resp = await _get_client().get(
+            f"{NOMINATIM_BASE_URL}/search",
+            params={"q": q, "format": "json", "limit": 1, "accept-language": "zh-CN"},
+        )
+        resp.raise_for_status()
+        items = resp.json()
+    except Exception:
+        logger.warning("forward_geocode failed", exc_info=True)
+        return None
+    if not items:
+        return None
+    item = items[0]
+    try:
+        lat = float(item["lat"])
+        lon = float(item["lon"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    result: dict = {
+        "display_name": item.get("display_name") or q,
+        "center": [lon, lat],
+        "zoom": _zoom_for_bbox(item.get("boundingbox")),
+    }
+    bbox = item.get("boundingbox")
+    if isinstance(bbox, list) and len(bbox) == 4:
+        try:
+            south, north, west, east = (float(x) for x in bbox)
+            # MapLibre fitBounds 期望 [[swLng, swLat], [neLng, neLat]]
+            result["bbox"] = [[west, south], [east, north]]
+        except (TypeError, ValueError):
+            pass
+    _FORWARD_CACHE[key] = result
+    _FORWARD_CACHE.move_to_end(key)
+    while len(_FORWARD_CACHE) > GEOCODE_CACHE_MAX_SIZE:
+        _FORWARD_CACHE.popitem(last=False)
+    return result
+
+
 def cached_location(
     lat: float,
     lon: float,
@@ -129,6 +214,9 @@ def cached_location(
 def prefetch_location(lat: float, lon: float) -> None:
     key = _result_key(lat, lon)
     if key in _GEOCODE_CACHE or key in _PREFETCH_TASKS:
+        return
+    # O5：限并发——超出上限的突发去重坐标不再发起 prefetch，避免把 Nominatim 打到限流/封禁。
+    if len(_PREFETCH_TASKS) >= PREFETCH_MAX_CONCURRENT:
         return
 
     task = asyncio.create_task(_safe_fill(lat, lon))

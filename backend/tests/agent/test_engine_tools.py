@@ -50,6 +50,8 @@ def _ndvi_tool(runner) -> RegisteredTool:
         definition=NDVI_TOOL,
         argument_model=NDVIArguments,
         runner=runner,
+        agent_name="spectral_agent",
+        resource_kind="imagery",
     )
 
 
@@ -59,6 +61,8 @@ def _detect_tool(runner) -> RegisteredTool:
         definition=DETECT_TOOL,
         argument_model=DetectArguments,
         runner=runner,
+        agent_name="detection_agent",
+        resource_kind="imagery",
     )
 
 

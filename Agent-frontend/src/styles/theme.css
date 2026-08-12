@@ -196,6 +196,29 @@
   padding: 1px 6px;
 }
 
+/* 阶段摘要的光带只裁进字形：没有底板、描边、图标或独立光晕层。 */
+@keyframes thinking-summary-shimmer {
+  0% { background-position: 180% 50%; }
+  100% { background-position: -80% 50%; }
+}
+
+.thinking-summary-glow {
+  color: transparent;
+  background-image: linear-gradient(
+    100deg,
+    color-mix(in srgb, var(--muted-foreground) 76%, transparent) 18%,
+    var(--primary) 42%,
+    color-mix(in srgb, white 86%, var(--primary)) 50%,
+    var(--primary) 58%,
+    color-mix(in srgb, var(--muted-foreground) 76%, transparent) 82%
+  );
+  background-size: 260% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: thinking-summary-shimmer 1.65s linear infinite;
+}
+
 /* 可访问性：系统开启"减少动态效果"时，全局收敛动画/过渡（含 tw-animate-css 与 Radix 的 CSS 动画，
    motion 组件另由 useReducedMotion() 降级）。保留极短时长以维持状态切换的可感知，不做完全 0。 */
 @media (prefers-reduced-motion: reduce) {

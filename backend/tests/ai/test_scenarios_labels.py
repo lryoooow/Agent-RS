@@ -6,7 +6,6 @@
 """
 from __future__ import annotations
 
-from app.agent.domain_agents import TOOL_DOMAIN
 from app.agent.prompting.scenarios import (
     TOOL_RUNNING_LABELS,
     tool_final_label,
@@ -14,6 +13,7 @@ from app.agent.prompting.scenarios import (
     tool_request_label,
     tool_running_label,
 )
+from app.agent.tool_registry import TOOLS
 
 
 # ---------- 常规：已登记工具显示具体能力名 ----------
@@ -35,10 +35,10 @@ def test_tool_running_label_unknown_tool_falls_back() -> None:
 
 # ---------- 历史重复点：每个领域工具都有专属 running 标签（防新增工具漏配） ----------
 
-def test_every_domain_tool_has_running_label() -> None:
-    # TOOL_DOMAIN 是工具→领域归属的单一数据源；新增工具若漏配 running 标签，
+def test_every_registered_tool_has_running_label() -> None:
+    # TOOLS 是工具→Agent 归属的单一数据源；新增工具若漏配 running 标签，
     # 执行阶段会退回兜底"正在执行工具：xxx"——本用例守住每个登记工具都有专名。
-    missing = [name for name in TOOL_DOMAIN if name not in TOOL_RUNNING_LABELS]
+    missing = [name for name in TOOLS if name not in TOOL_RUNNING_LABELS]
     assert missing == [], f"these tools lack a running label: {missing}"
 
 

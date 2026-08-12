@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { motion, useReducedMotion } from "motion/react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import {
   Bot,
   User,
@@ -17,17 +17,18 @@ import { Button } from "./ui/button";
 import { Textarea } from "./ui/textarea";
 import { Logo } from "./Logo";
 import { SUGGESTIONS } from "../data/rs";
-import type { ChatTurn } from "../types";
+import type { ChatTurn, ThinkingStrength } from "../types";
 import { toolBubbleForTurn, type ToolBubble } from "../lib/agent-status";
 import { GeospatialSummary } from "./GeospatialSummary";
 import { Markdown } from "./Markdown";
 import { fadeInUp } from "../lib/motion";
+import { THINKING_SUMMARY_LABELS } from "../lib/thinking-summary";
 
 const ANALYSIS_FALLBACK: Record<string, string> = {
-  analyzing: "正在思考中...",
-  preparing: "正在梳理结果...",
-  answering: "正在生成回复...",
-  complete: "思考完成",
+  analyzing: "正在思考",
+  preparing: "正在核对结果",
+  answering: "正在回复",
+  complete: "",
 };
 
 function ToolBubbleCard({ bubble }: { bubble: ToolBubble }) {
@@ -74,6 +75,15 @@ function AssistantTurn({
   const bubble = toolBubbleForTurn(turn);
   const showAnalysis = turn.analysisStatus != null && !turn.content && turn.analysisStatus !== "complete";
   const analysisText = turn.analysisLabel ?? ANALYSIS_FALLBACK[turn.analysisStatus ?? ""] ?? "";
+  const summaries = turn.thinkingSummary ?? [];
+  const currentSummary =
+    [...summaries].reverse().find((item) => item.status === "active") ??
+    summaries[summaries.length - 1];
+  const rollingText = currentSummary
+    ? THINKING_SUMMARY_LABELS[currentSummary.stage]
+    : analysisText;
+  // 阶段摘要只在回合仍进行时滚动展示；回合完成即彻底收起，不留下标题、图标或空容器。
+  const showRollingSummary = Boolean(rollingText) && (streaming || showAnalysis);
 
   return (
     <div className="flex gap-2.5">
@@ -85,9 +95,20 @@ function AssistantTurn({
         <Bot className="size-4" />
       </div>
       <div className="min-w-0 max-w-[85%]">
-        {showAnalysis && (
-          <div className="rounded-xl border border-border bg-card px-3 py-2 text-[12px] italic text-muted-foreground">
-            {analysisText}
+        {showRollingSummary && (
+          <div className="mb-1.5 h-5 overflow-hidden font-mono text-[12px] leading-5" aria-live="polite">
+            <AnimatePresence mode="wait" initial={false}>
+              <motion.span
+                key={rollingText}
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -8 }}
+                transition={{ duration: 0.22, ease: "easeOut" }}
+                className="thinking-summary-glow inline-block"
+              >
+                {rollingText}
+              </motion.span>
+            </AnimatePresence>
           </div>
         )}
         {turn.content && (
@@ -116,6 +137,14 @@ function AssistantTurn({
             reportPending={reportPending}
           />
         )}
+        {turn.usage && !streaming && (turn.usage.total_tokens || turn.usage.input_tokens || turn.usage.output_tokens) && (
+          <div className="mt-1 font-mono text-[10px] text-muted-foreground/70">
+            🧮 {turn.usage.total_tokens ?? ((turn.usage.input_tokens ?? 0) + (turn.usage.output_tokens ?? 0))} tokens
+            {turn.usage.input_tokens != null && turn.usage.output_tokens != null
+              ? `（入 ${turn.usage.input_tokens} / 出 ${turn.usage.output_tokens}）`
+              : ""}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -132,6 +161,8 @@ export function AgentChat({
   onBack,
   onGenerateReport,
   reportPending,
+  thinkingStrength,
+  onThinkingChange,
 }: {
   turns: ChatTurn[];
   loading: boolean;
@@ -143,6 +174,8 @@ export function AgentChat({
   onBack: () => void;
   onGenerateReport?: (imageryId: string) => void;
   reportPending?: boolean;
+  thinkingStrength: ThinkingStrength;
+  onThinkingChange: (s: ThinkingStrength) => void;
 }) {
   const [text, setText] = useState("");
   const endRef = useRef<HTMLDivElement>(null);
@@ -289,6 +322,22 @@ export function AgentChat({
               {hasImagery ? "替换影像" : "上传影像"}
             </Button>
             <span className="font-mono text-[10px] text-muted-foreground">GeoTIFF</span>
+            <div className="flex items-center gap-0.5 rounded-md border border-border bg-card p-0.5" title="思考强度（影响速度与精度）">
+              {(["low", "medium", "max"] as ThinkingStrength[]).map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => onThinkingChange(s)}
+                  className={`rounded px-1.5 py-0.5 font-mono text-[10px] transition-colors ${
+                    thinkingStrength === s
+                      ? "bg-primary text-primary-foreground"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {s === "low" ? "低" : s === "medium" ? "中" : "高"}
+                </button>
+              ))}
+            </div>
             <Button
               size="sm"
               onClick={submit}

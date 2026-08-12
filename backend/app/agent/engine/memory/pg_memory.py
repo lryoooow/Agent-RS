@@ -174,6 +174,16 @@ class PgVectorMemory(Memory):
             # 记忆写入是"锦上添花"，失败不该影响本次回答。
             logger.exception("长期记忆写入失败")
 
+    async def add_text(self, text: str, *, metadata: dict[str, Any] | None = None) -> None:
+        """Business-facing convenience method that keeps AutoGen types in engine/."""
+        await self.add(
+            MemoryContent(
+                content=text,
+                mime_type=MemoryMimeType.TEXT,
+                metadata=metadata,
+            )
+        )
+
     async def clear(self) -> None:
         # 清空记忆是破坏性操作，必须走带确认的记忆管理接口（/api/memories），
         # 不该由 Agent 在对话中间随手触发。

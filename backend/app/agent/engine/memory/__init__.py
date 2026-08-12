@@ -2,9 +2,8 @@
 
 ## 为什么用 Memory 协议而不是继续手工拼 prompt
 
-legacy 链路在 `request_builder.build_provider_request_context()` 里一次性把
-记忆和 RAG 结果拼进 system prompt。这在「单轮单工具」下够用，但多步链路下不行：
-模型跑完第一个工具后要接着决策第二步，那时的上下文已经变了，却拿不到新的检索结果。
+多步链路中模型跑完第一个工具后还要继续决策，检索必须能在后续模型调用前按当前问题更新，
+而不是只依赖回合开始时的一份快照。
 
 AutoGen 的 `AssistantAgent` **每一轮模型调用前**都会调
 `_update_model_context_with_memory()`（`_assistant_agent.py:940`），

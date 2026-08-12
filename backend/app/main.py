@@ -8,6 +8,8 @@ from fastapi.responses import JSONResponse
 from app.api.routes import router as api_router
 from app.agent.embedding.service import get_embedding_service
 from app.agent.errors import AIError
+from app.agent.geocode import aclose_geocode_client
+from app.agent.persistence import drain_persistence_tasks
 from app.agent.tool_jobs import start_tool_job_worker, stop_tool_job_worker
 from app.auth import reset_current_user_id, set_current_user_id
 from app.auth.session import AuthSessionUnavailable, get_session_user
@@ -33,6 +35,8 @@ async def lifespan(_: FastAPI):
     finally:
         await stop_tool_job_worker()
         await shutdown_tasks()
+        await drain_persistence_tasks()  # O1: 排空 embedding/memory 后台任务（须在关池前）
+        await aclose_geocode_client()  # O5: 关闭模块全局 httpx 客户端
         await close_db_pool()
 
 

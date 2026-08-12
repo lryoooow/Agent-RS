@@ -11,13 +11,8 @@ AutoGen 那个按「模型客户端报的 token 数」裁剪，策略是简单�
    见 settings 里那一串 `ai_context_max_*_chars`。丢弃时优先丢低价值块，
    而不是无脑丢最早的消息。
 
-多步工具链路会让上下文比 legacy 长得多（每一步的工具结果都留在里面），
-所以预算控制反而更重要。这里保留项目自己的策略，只把它套进 AutoGen 的协议。
-
-## 与 legacy 的关系
-
-legacy 在 `request_builder` 里一次性组装完整 prompt；这里是**逐轮生效**的裁剪，
-两者不冲突：system prompt 仍由 prompting/ 渲染，本类只管对话消息的预算。
+多步工具链路会保留每一步工具结果，所以预算控制尤其重要。system prompt 仍由
+prompting/ 渲染，本类负责每个 AutoGen 模型上下文的逐轮裁剪。
 
 ## 检索块单独存放，不进消息列表
 
@@ -74,7 +69,7 @@ class BudgetedChatCompletionContext(ChatCompletionContext):
     4. `FunctionExecutionResultMessage` 与它对应的 `AssistantMessage`(tool_calls)
        **成对丢弃**——只留一半会让 provider 报 "tool_call without response"。
 
-    第 4 条是多步工具链路特有的坑：legacy 一轮只有一个工具调用，不会遇到。
+    第 4 条防止多步工具链路生成不完整的 function-call 对。
     """
 
     def __init__(

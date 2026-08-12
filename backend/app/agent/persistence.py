@@ -6,8 +6,10 @@ from dataclasses import dataclass
 from typing import TypeAlias
 
 from app.agent.embedding.service import get_embedding_service
+from app.agent.errors import AIError, map_provider_error
 from app.agent.memory_judge import maybe_store_memory
 from app.auth import get_current_user_id
+from app.db.errors import is_missing_schema_error
 from app.db.pool import fetch_optional_pool
 from app.db.repositories.conversation import create_conversation, get_conversation, touch_conversation
 from app.db.repositories.identity import ensure_default_identity
@@ -23,6 +25,10 @@ from app.core.settings import get_settings
 logger = logging.getLogger(__name__)
 
 EmbeddingTarget: TypeAlias = tuple[str, str]
+
+# 后台任务（embedding/memory）强引用集合：asyncio.create_task 只持弱引用，不持有则可能被 GC，
+# 收尾逻辑跑不完（O1）。create 进集、done 出集。
+_background_tasks: set[asyncio.Task] = set()
 
 
 @dataclass
@@ -83,11 +89,16 @@ async def prepare_persistence(
                         status="streaming",
                     )
                 await touch_conversation(conn, conversation_id)
-    except Exception:
-        logger.exception("Database persistence setup failed; falling back to stateless chat.")
-        context.conversation_id = request.conversation_id
-        context.user_message_id = None
-        context.assistant_message_id = None
+    except Exception as exc:
+        if is_missing_schema_error(exc):
+            raise AIError(
+                "数据库 schema 未就绪，请运行 backend/sql/apply.py 并重启后端。",
+                status_code=503,
+            ) from exc
+        # 操作性 DB 错误（死锁/连接掉/约束冲突）不再静默降级为无状态——否则整轮问答会被
+        # 永久丢弃且客户端只收到 200。向上抛出 AIError(503)，由流式/非流式错误路径告知客户端本轮未保存。
+        logger.exception("Database persistence setup failed; surfacing error (no silent stateless downgrade).")
+        raise AIError("聊天持久化暂时不可用，请稍后重试。", status_code=503) from exc
     return context
 
 
@@ -163,21 +174,33 @@ async def save_streamed_assistant(
         logger.exception("Failed to save streamed assistant response.")
 
 
-async def mark_assistant_failed(persistence: PersistenceContext, exc: Exception) -> None:
-    if not persistence.assistant_message_id:
-        return
+async def mark_assistant_failed(
+    persistence: PersistenceContext, exc: Exception, *, content: str = ""
+) -> None:
     pool = await fetch_optional_pool()
     if pool is None:
         return
     try:
         async with pool.acquire() as conn:
-            await update_message_complete(
-                conn,
-                message_id=persistence.assistant_message_id,
-                content="",
-                status="failed",
-                metadata={"error": str(exc)},
-            )
+            if persistence.assistant_message_id:
+                await update_message_complete(
+                    conn,
+                    message_id=persistence.assistant_message_id,
+                    content=content,
+                    status="failed",
+                    metadata=_failure_metadata(exc),
+                )
+            elif persistence.conversation_id:
+                # 非流式路径未预建 assistant 行（O2）：失败时补一条 failed 行留痕，
+                # 否则失败轮在库里无任何 assistant 记录、按 status='failed' 统计的监控永远为 0。
+                persistence.assistant_message_id = await append_message(
+                    conn,
+                    conversation_id=persistence.conversation_id,
+                    role="assistant",
+                    content=content,
+                    status="failed",
+                    metadata=_failure_metadata(exc),
+                )
     except Exception:
         logger.exception("Failed to mark assistant message as failed.")
 
@@ -242,6 +265,14 @@ def latest_user_content(request: ChatRequest) -> str:
         if message.role == "user":
             return message.content
     return request.messages[-1].content
+
+
+def _failure_metadata(exc: Exception) -> dict[str, str]:
+    """失败记录只保存类别，不落异常原文（供应商异常可能携带请求/响应正文）。"""
+    return {
+        "error_code": map_provider_error(exc).code,
+        "error_type": type(exc).__name__,
+    }
 
 
 def _optional_int(value: object) -> int | None:
@@ -314,7 +345,10 @@ def _track_background_task(task: asyncio.Task, label: str) -> None:
         logger.debug("Background task handle has no callback support: %s", label)
         return
 
+    _background_tasks.add(task)  # 强引用，防被 GC（asyncio 仅持弱引用）
+
     def _log_failure(done: asyncio.Task) -> None:
+        _background_tasks.discard(done)
         try:
             done.result()
         except asyncio.CancelledError:
@@ -323,3 +357,21 @@ def _track_background_task(task: asyncio.Task, label: str) -> None:
             logger.exception("Background task failed: %s", label)
 
     task.add_done_callback(_log_failure)
+
+
+async def drain_persistence_tasks(timeout: float = 10.0) -> None:
+    """lifespan 关闭前排空 embedding/memory 后台任务（O1）。
+
+    必须在 close_db_pool 之前调用：这些任务要用连接池，先排空再关池，否则任务因池已关而失败。
+    """
+    pending = [t for t in _background_tasks if not t.done()]
+    if not pending:
+        return
+    try:
+        await asyncio.wait_for(
+            asyncio.gather(*pending, return_exceptions=True), timeout=timeout
+        )
+    except asyncio.TimeoutError:
+        logger.warning(
+            "Draining %d persistence background tasks timed out after %ss", len(pending), timeout
+        )

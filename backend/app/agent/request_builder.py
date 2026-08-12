@@ -11,7 +11,7 @@ from app.agent.context.history import normalize_chat_message_for_provider
 from app.agent.context.summarizer import build_context_summaries
 from app.agent.context.types import ContextAssembly
 from app.agent.embedding.service import get_embedding_service
-from app.agent.geocode import cached_location, format_location_context, prefetch_location
+from app.agent.geocode import cached_location, format_location_context, prefetch_location, reverse_geocode
 from app.agent.prompting.renderer import render_prompt_context
 from app.agent.prompting.scenarios import latest_user_text
 from app.agent.rag.formatter import format_retrieved_blocks
@@ -26,8 +26,6 @@ from app.core.logging import log_event
 from app.core.settings import get_settings
 
 logger = logging.getLogger(__name__)
-PLANNING_CONTEXT_RECENT_MESSAGES = 3
-PLANNING_CONTEXT_MESSAGE_CHARS = 400
 
 
 @dataclass(frozen=True)
@@ -70,7 +68,7 @@ async def build_provider_request_context(
                     "use_rag": request.use_rag,
                     "use_memory": request.use_memory,
                     "skipped": True,
-                    "reason": "direct_chat_route",
+                    "reason": "autogen_memory_deferred",
                 }
             )
             # skip_retrieval 时仍需并行查询其他上下文
@@ -138,7 +136,7 @@ async def build_provider_request_context(
         rag_context=rag_context,
         tool_context=tool_context,
         prior_analysis_results=prior_analysis_results,
-        # 影像清单始终注入答复上下文（与 planner 一贯注入保持一致）。
+        # 影像清单始终注入 AutoGen 的可信请求上下文。
         # 此前用 `if tool_context` 门控，导致未跑工具的轮次（如"根据刚才结果生成报告"
         # 这类纯追问）答复模型看不到影像，误判"用户没上传影像"。
         # build_imagery_inventory 无影像时返回 None，无影像用户零开销。
@@ -359,26 +357,6 @@ async def _load_rag_context(
     return result.context, result.retrieved_chunks
 
 
-async def build_planning_context(
-    request: ChatRequest,
-) -> list[dict[str, str]]:
-    messages: list[dict[str, str]] = []
-    recent = (
-        request.messages[-PLANNING_CONTEXT_RECENT_MESSAGES:]
-        if len(request.messages) > PLANNING_CONTEXT_RECENT_MESSAGES
-        else request.messages
-    )
-    for msg in recent:
-        provider_msg = normalize_chat_message_for_provider(msg)
-        messages.append(
-            {
-                "role": provider_msg["role"],
-                "content": provider_msg["content"][:PLANNING_CONTEXT_MESSAGE_CHARS],
-            }
-        )
-    return messages
-
-
 async def build_imagery_inventory(user_id: str | None) -> str | None:
     """Build a brief inventory of uploaded imagery for LLM context."""
     items: list[str] = []
@@ -395,7 +373,7 @@ async def build_imagery_inventory(user_id: str | None) -> str | None:
 
 
 async def build_document_inventory(user_id: str | None) -> str | None:
-    """Build an owner-filtered document inventory for planner and answer context."""
+    """Build an owner-filtered document inventory for AutoGen request context."""
     if not user_id or not get_settings().storage_active:
         return None
     pool = await fetch_optional_pool()
@@ -455,10 +433,16 @@ async def _resolve_geo_context(request: ChatRequest) -> str | None:
         logger.warning("Out-of-range map_context coordinates: %s", center)
         return None
 
-    # 地名仅从缓存读取；未命中时后台预取，当前请求立即使用坐标兜底。
+    # O-D：地名优先同步解析（短超时），让智能体首轮就知道"你在深圳南山"而非只看坐标；
+    # 超时/失败则后台预取 + 坐标兜底（与旧行为一致）。
     location = cached_location(lat, lon, zoom=zoom_int)
     if location is None:
-        prefetch_location(lat, lon)
+        try:
+            location = await asyncio.wait_for(reverse_geocode(lat, lon, zoom=zoom_int), timeout=1.5)
+        except asyncio.TimeoutError:
+            prefetch_location(lat, lon)
+        except Exception:
+            logger.debug("reverse_geocode failed in geo context; falling back to coords", exc_info=True)
 
     # 格式化为上下文文本
     context_parts = [format_location_context(location, fallback_coords=(lat, lon))]

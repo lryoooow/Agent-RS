@@ -1,0 +1,95 @@
+Agent-RS RESTRICTED SOURCE-AVAILABLE LICENSE
+Version 1.0, 12 August 2026
+
+Copyright (c) 2026 lryoooow / Agent-RS rights holder.
+All rights reserved.
+
+IMPORTANT: THIS IS NOT AN OPEN-SOURCE LICENSE.
+
+By accessing, downloading, copying, running, modifying, or otherwise using any
+part of this repository (the "Software"), you agree to the following terms.
+
+1. Limited permission
+
+Subject to continuous compliance with this License, the rights holder grants
+you a limited, personal, revocable, non-exclusive, non-transferable, and
+non-sublicensable permission to inspect and run the Software locally solely for
+your own non-commercial learning and evaluation.
+
+No other rights are granted. Any use outside this limited permission requires
+the rights holder's prior express written authorization.
+
+2. Prohibited commercial use
+
+You may not use the Software, in whole or in part, directly or indirectly, for
+any commercial, revenue-generating, business, governmental procurement, paid,
+or internal production purpose. Prohibited activities include, without
+limitation, providing hosted or managed services, consulting, demonstrations
+for sales, integrating the Software into a product or service, training or
+evaluating a commercial model, or using its outputs to support commercial
+decision-making.
+
+3. Prohibited academic and publication use
+
+Without the rights holder's prior express written authorization, you may not
+use or rely on the Software, its source code, architecture, prompts, workflows,
+data, tests, evaluation methods, outputs, results, or derivative works for any:
+
+  a. journal or conference paper;
+  b. preprint, technical report, book, or chapter;
+  c. thesis, dissertation, course project intended for publication, or degree
+     requirement;
+  d. patent application, research proposal, grant application, benchmark, or
+     competition submission; or
+  e. other public academic, scientific, or research disclosure.
+
+This restriction applies whether or not the Software is cited, modified, or
+used only to produce results.
+
+4. No redistribution or public deployment
+
+You may not publish, redistribute, sell, sublicense, transfer, mirror, or make
+available any copy or substantial portion of the Software or a derivative work.
+You may not operate the Software as a public or third-party-accessible service.
+You may not remove or alter copyright, license, attribution, access-control, or
+usage-restriction notices.
+
+5. No circumvention or extraction
+
+You may not circumvent access controls or usage restrictions, extract protected
+credentials or private data, or use the Software to reconstruct, imitate, or
+commercialize protected implementation details beyond the limited permission
+in Section 1.
+
+6. Third-party components
+
+Third-party libraries, models, data, and other components remain subject to
+their respective licenses and terms. This License does not grant rights that
+their owners have not granted. Where a third-party license applies to a
+specific component, that license governs that component only; it does not
+expand your rights in Agent-RS original material.
+
+7. Termination and enforcement
+
+Your permission terminates automatically and immediately upon any breach. On
+termination, you must stop using the Software and delete all copies and derived
+materials in your possession or control. The rights holder reserves all rights
+to investigate violations, seek injunctive relief, demand cessation and
+deletion, recover damages and costs, and pursue any other remedies available
+under applicable law.
+
+8. No warranty; limitation of liability
+
+THE SOFTWARE IS PROVIDED "AS IS" AND "AS AVAILABLE", WITHOUT WARRANTY OF ANY
+KIND, EXPRESS OR IMPLIED, INCLUDING MERCHANTABILITY, FITNESS FOR A PARTICULAR
+PURPOSE, TITLE, NON-INFRINGEMENT, ACCURACY, OR SECURITY. TO THE MAXIMUM EXTENT
+PERMITTED BY LAW, THE RIGHTS HOLDER SHALL NOT BE LIABLE FOR ANY CLAIM, LOSS, OR
+DAMAGE ARISING FROM OR RELATED TO THE SOFTWARE OR ITS USE.
+
+9. Reservation of rights and written permission
+
+All rights not expressly granted are reserved. Silence, repository visibility,
+issue discussion, or acceptance of a contribution does not constitute
+permission. Requests for commercial, publication, redistribution, or other
+rights must be approved in advance in a written authorization issued by the
+rights holder.

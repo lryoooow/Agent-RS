@@ -4,6 +4,7 @@ from app.agent.search.agent import run_web_search
 from app.agent.search.cache import get_result_cache
 from app.agent.search.schema import WebSearchArguments
 from app.agent.search.tavily_client import TavilySearchError
+from app.agent.search.credentials import tavily_key_scope
 from app.core.settings import get_settings
 
 
@@ -205,3 +206,23 @@ def test_effective_queries_caps_at_max():
     args = WebSearchArguments(query="q1", reason="r", queries=["q1", "q2", "q3", "q4", "q5"])
     assert args.effective_queries() == ["q1", "q2", "q3"]
     assert args.effective_queries(max_queries=2) == ["q1", "q2"]
+
+
+@pytest.mark.asyncio
+async def test_request_scoped_tavily_key_overrides_env_without_leaking(monkeypatch):
+    seen = []
+
+    async def fake_search_tavily(**kwargs):
+        seen.append(kwargs["api_key"])
+        return {"results": [_result("E", "https://e.test", "c")]}
+
+    monkeypatch.setenv("TAVILY_API_KEY", "env-key")
+    monkeypatch.setenv("AGENT_WEB_SEARCH_RERANK_ENABLED", "false")
+    reset_settings()
+    monkeypatch.setattr("app.agent.search.agent.search_tavily", fake_search_tavily)
+
+    with tavily_key_scope("browser-key"):
+        result = await run_web_search(WebSearchArguments(query="q", reason="r"))
+
+    assert seen == ["browser-key"]
+    assert "browser-key" not in result.tool_context

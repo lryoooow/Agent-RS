@@ -40,16 +40,12 @@ async def insert_chunks(
     document_id: str,
     chunks: list[tuple[int, str, list[float], int | None, dict[str, Any] | None]],
 ) -> None:
-    for chunk_index, content, embedding, token_count, metadata in chunks:
-        await conn.execute(
-            """
-            INSERT INTO public.document_chunks (
-              document_id, chunk_index, content, embedding, token_count, metadata
-            )
-            VALUES (
-              $1::uuid, $2, $3, $4::vector, $5, $6::jsonb
-            )
-            """,
+    # O4：逐块 INSERT 会把连接钉住做 N 次往返（上限 240 块），与 chat 持久化抢同一全局池；
+    # 改 executemany 一次性管道下发，连接 promptly 释放。
+    if not chunks:
+        return
+    rows = [
+        (
             document_id,
             chunk_index,
             sanitize_text(content),
@@ -57,6 +53,19 @@ async def insert_chunks(
             token_count,
             json.dumps(sanitize_json(metadata or {}), ensure_ascii=False),
         )
+        for chunk_index, content, embedding, token_count, metadata in chunks
+    ]
+    await conn.executemany(
+        """
+        INSERT INTO public.document_chunks (
+          document_id, chunk_index, content, embedding, token_count, metadata
+        )
+        VALUES (
+          $1::uuid, $2, $3, $4::vector, $5, $6::jsonb
+        )
+        """,
+        rows,
+    )
 
 
 async def list_documents(conn, *, user_id: str, limit: int = 100) -> list[dict[str, Any]]:

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
 import type { Map as MapLibreMap } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
-import { Layers, Crosshair, Eye, EyeOff, Plus, Minus, Search, Loader2, SquareDashedMousePointer, Grid3x3, Columns2, Pentagon, MapPin, Ruler, Trash2, ChevronDown } from "lucide-react";
+import { Layers, Crosshair, Eye, EyeOff, Plus, Minus, Search, Loader2, SquareDashedMousePointer, Grid3x3, Columns2, Pentagon, MapPin, Ruler, Trash2, ChevronDown, ScanSearch } from "lucide-react";
 import type { RSLayer } from "../lib/layers";
 import type { MapAnnotation } from "../types";
 import { ImageViewer } from "./ImageViewer";
@@ -15,9 +15,10 @@ import {
   DropdownMenuTrigger,
 } from "./ui/dropdown-menu";
 
-// 默认视图（无影像时的世界中心，随首个带 bounds 的结果 fitBounds 覆盖）。
-const DEFAULT_CENTER: [number, number] = [115.9, 22.9];
-const DEFAULT_ZOOM = 9;
+// 默认视图：北京（用户要求地图打开必须定位北京，不得是其它地点）。
+// 无影像时显示北京；首个带 bounds 的分析结果仍会 fitBounds 覆盖到对应区域。
+const DEFAULT_CENTER: [number, number] = [116.4074, 39.9042];
+const DEFAULT_ZOOM = 10;
 
 // MapLibre paint 属性必须是字面量颜色，不能解析 CSS 变量（hsl(var(--primary)) 会被校验器拒绝）。
 // 取主题色 --primary(#2bb8c2) 与深色底 #0a0e14 的字面量，供绘图/标注图层使用。
@@ -62,6 +63,7 @@ export function MapView({
   roi,
   onSelectRegion,
   onClearRegion,
+  onClassifyRegion,
   onAnnotationsChange,
 }: {
   mapRef?: React.MutableRefObject<MapLibreMap | null>;
@@ -69,6 +71,7 @@ export function MapView({
   roi: Roi | null;
   onSelectRegion: (roi: Roi) => void;
   onClearRegion: () => void;
+  onClassifyRegion?: () => void;
   onAnnotationsChange?: (annotations: MapAnnotation[]) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -100,6 +103,7 @@ export function MapView({
   const draftRef = useRef<[number, number][]>([]); // 进行中要素的顶点（lng,lat）
   const annotationsRef = useRef<MapAnnotation[]>([]); // 镜像 annotations 供事件回调读最新值（防 stale-closure）
   const hasRoi = roi !== null;
+  const hasImagery = layers.some((layer) => layer.kind === "imagery");
   const hasAnnotations = annotations.length > 0;
 
   // 从 localStorage 加载标注（挂载时一次）。
@@ -887,11 +891,21 @@ export function MapView({
               ? "border-primary/50 bg-primary/10 text-primary"
               : "border-border bg-card/80 text-foreground hover:text-primary"
           }`}
-          title="框选分析聚焦区（仅引导解读聚焦，工具仍按整幅影像计算）"
+          title="框选分析区域；地物分类可仅计算该选区"
         >
           <SquareDashedMousePointer className="size-3.5" />
           {selectMode ? "框选中" : "框选"}
         </button>
+        {hasRoi && hasImagery && onClassifyRegion && (
+          <button
+            onClick={onClassifyRegion}
+            className="flex items-center gap-1.5 rounded-full border border-primary/45 bg-primary/10 px-3 py-1.5 font-mono text-[11px] text-primary backdrop-blur-md transition-colors hover:bg-primary/20"
+            title="调用 AutoGen 地物分类工具，仅分析当前选区"
+          >
+            <ScanSearch className="size-3.5" />
+            分类选区
+          </button>
+        )}
         {/* 绘图工具按钮组（原生 MapLibre 事件 + GeoJSON 图层实现） */}
         {ready && (
           <>

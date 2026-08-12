@@ -3,7 +3,7 @@
 与 cases_generator 的模板**刻意不同**（不同句式骨架、不同词库），避免题库重叠。
 每个正向能力 6-8 个骨架、边界方向 4 个骨架，叠加前后缀/错别字/语序扰动，
 配合生成器的拒绝采样保证整句零重复（防"题量虚胖"）。
-所有随机来自传入的 Random(seed)，保证可复现。本模块禁止 import llm_planner。
+所有随机来自传入的 Random(seed)，保证可复现。本模块禁止导入 AutoGen 运行时 prompt。
 """
 
 from __future__ import annotations

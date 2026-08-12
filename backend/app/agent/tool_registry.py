@@ -1,5 +1,5 @@
 ﻿from dataclasses import dataclass
-from typing import Awaitable, Callable
+from typing import Awaitable, Callable, Literal
 
 from pydantic import BaseModel
 
@@ -13,6 +13,8 @@ from app.agent.tools.detect.runner import run_detect
 from app.agent.tools.detect.schema import DETECT_TOOL, DetectArguments
 from app.agent.tools.ndvi.runner import run_ndvi
 from app.agent.tools.ndvi.schema import NDVI_TOOL, NDVIArguments
+from app.agent.tools.look_at_location.runner import run_look_at_location
+from app.agent.tools.look_at_location.schema import LOOK_AT_LOCATION_TOOL, LookAtLocationArguments
 from app.agent.tools.ocr.runner import run_ocr
 from app.agent.tools.ocr.schema import OCR_TOOL, OcrArguments
 from app.agent.tools.parse_document.runner import run_parse_document
@@ -40,6 +42,8 @@ class RegisteredTool:
     definition: dict
     argument_model: type[BaseModel]
     runner: ToolRunner
+    agent_name: str
+    resource_kind: Literal["imagery", "document", "conversation", "none"]
     enabled: ToolEnabled | None = None
     tags: tuple[str, ...] = ()
 
@@ -95,12 +99,18 @@ async def _run_report(args: ReportArguments) -> ToolRunResult:
     return await run_report(args)
 
 
+async def _run_look_at_location(args: LookAtLocationArguments) -> ToolRunResult:
+    return await run_look_at_location(args)
+
+
 TOOLS: dict[str, RegisteredTool] = {
     "calculate_ndvi": RegisteredTool(
         name="calculate_ndvi",
         definition=NDVI_TOOL,
         argument_model=NDVIArguments,
         runner=_run_ndvi,
+        agent_name="spectral_agent",
+        resource_kind="imagery",
         tags=("imagery", "ndvi", "mcp"),
     ),
     "raster_inspect": RegisteredTool(
@@ -108,6 +118,8 @@ TOOLS: dict[str, RegisteredTool] = {
         definition=RASTER_INSPECT_TOOL,
         argument_model=RasterInspectArguments,
         runner=_run_raster_inspect,
+        agent_name="spectral_agent",
+        resource_kind="imagery",
         tags=("imagery", "inspect", "mcp"),
     ),
     "calculate_spectral_index": RegisteredTool(
@@ -115,6 +127,8 @@ TOOLS: dict[str, RegisteredTool] = {
         definition=SPECTRAL_INDEX_TOOL,
         argument_model=SpectralIndexArguments,
         runner=_run_spectral_index,
+        agent_name="spectral_agent",
+        resource_kind="imagery",
         tags=("imagery", "spectral", "mcp"),
     ),
     "render_band_composite": RegisteredTool(
@@ -122,6 +136,8 @@ TOOLS: dict[str, RegisteredTool] = {
         definition=BAND_COMPOSITE_TOOL,
         argument_model=BandCompositeArguments,
         runner=_run_band_composite,
+        agent_name="spectral_agent",
+        resource_kind="imagery",
         tags=("imagery", "composite", "mcp"),
     ),
     "detect_objects": RegisteredTool(
@@ -129,6 +145,8 @@ TOOLS: dict[str, RegisteredTool] = {
         definition=DETECT_TOOL,
         argument_model=DetectArguments,
         runner=_run_detect,
+        agent_name="detection_agent",
+        resource_kind="imagery",
         tags=("imagery", "detection", "mcp"),
     ),
     "segment_landcover": RegisteredTool(
@@ -136,6 +154,8 @@ TOOLS: dict[str, RegisteredTool] = {
         definition=SEGMENT_TOOL,
         argument_model=SegmentArguments,
         runner=_run_segment,
+        agent_name="segmentation_agent",
+        resource_kind="imagery",
         tags=("imagery", "segmentation", "mcp"),
     ),
     "cloud_shadow_mask": RegisteredTool(
@@ -143,6 +163,8 @@ TOOLS: dict[str, RegisteredTool] = {
         definition=CLOUD_MASK_TOOL,
         argument_model=CloudMaskArguments,
         runner=_run_cloud_mask,
+        agent_name="preprocess_agent",
+        resource_kind="imagery",
         tags=("imagery", "preprocess", "mcp"),
     ),
     "extract_water_mask": RegisteredTool(
@@ -150,6 +172,8 @@ TOOLS: dict[str, RegisteredTool] = {
         definition=WATER_MASK_TOOL,
         argument_model=WaterMaskArguments,
         runner=_run_water_mask,
+        agent_name="preprocess_agent",
+        resource_kind="imagery",
         tags=("imagery", "preprocess", "mcp"),
     ),
     "clip_reproject_raster": RegisteredTool(
@@ -157,6 +181,8 @@ TOOLS: dict[str, RegisteredTool] = {
         definition=CLIP_REPROJECT_TOOL,
         argument_model=ClipReprojectArguments,
         runner=_run_clip_reproject,
+        agent_name="preprocess_agent",
+        resource_kind="imagery",
         tags=("imagery", "preprocess", "mcp"),
     ),
     "parse_document": RegisteredTool(
@@ -164,6 +190,8 @@ TOOLS: dict[str, RegisteredTool] = {
         definition=PARSE_DOCUMENT_TOOL,
         argument_model=ParseDocumentArguments,
         runner=_run_parse_document,
+        agent_name="document_agent",
+        resource_kind="document",
         tags=("document", "process"),
     ),
     "ocr_recognize": RegisteredTool(
@@ -171,8 +199,9 @@ TOOLS: dict[str, RegisteredTool] = {
         definition=OCR_TOOL,
         argument_model=OcrArguments,
         runner=_run_ocr,
-        # 吃 imagery_id，走影像通道（不带 document tag，否则路由分流会判错通道）；
-        # 领域归属由 TOOL_DOMAIN 单独映射到 document_agent，与路由 tag 正交。
+        agent_name="document_agent",
+        resource_kind="imagery",
+        # 吃 imagery_id，因此资源保护按影像处理；Agent 所有权仍是 document_agent。
         tags=("imagery", "ocr", "mcp"),
     ),
     "generate_report": RegisteredTool(
@@ -180,9 +209,21 @@ TOOLS: dict[str, RegisteredTool] = {
         definition=REPORT_TOOL,
         argument_model=ReportArguments,
         runner=_run_report,
+        agent_name="report_agent",
+        resource_kind="conversation",
         # 不吃 imagery_id/document_id，读本对话已持久化的分析结果出 Word；
-        # 自成 report 通道（ALL_REPORT_TOOLS），归属由 build_conversation_report 的对话校验保证。
+        # 归属由 build_conversation_report 的对话校验保证。
         tags=("report",),
+    ),
+    "look_at_location": RegisteredTool(
+        name="look_at_location",
+        definition=LOOK_AT_LOCATION_TOOL,
+        argument_model=LookAtLocationArguments,
+        runner=_run_look_at_location,
+        agent_name="navigation_agent",
+        resource_kind="none",
+        # 对话控图：地名→坐标让地图跳转。无 docker/影像依赖，始终可用。
+        tags=("map", "location"),
     ),
 }
 

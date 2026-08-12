@@ -1,14 +1,15 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   clearStoredConfig,
   DEFAULT_ENDPOINT,
   DEFAULT_SYSTEM_PROMPT,
   getConfigEndpoint,
+  getModelsEndpoint,
   loadConfig,
   saveConfig,
 } from "../config";
-import { fetchConfig } from "../lib/chat-api";
-import type { ConfigResponse, ProviderConfig } from "../types";
+import { fetchConfig, fetchModels } from "../lib/chat-api";
+import type { AvailableModel, ConfigResponse, ProviderConfig, ThinkingStrength } from "../types";
 
 export function useSettings() {
   const [stored] = useState(() => loadConfig());
@@ -24,8 +25,17 @@ export function useSettings() {
       ? { base_url: stored.baseUrl ?? "", api_key: stored.apiKey ?? "" }
       : null,
   );
+  // 思考强度 low/medium/max（默认 medium）；持久化到 localStorage，随请求体发往后端。
+  const [thinkingStrength, setThinkingStrength] = useState<ThinkingStrength>(
+    stored.thinkingStrength ?? "medium",
+  );
+  const [tavilyApiKey, setTavilyApiKey] = useState(stored.tavilyApiKey ?? "");
   const [serverConfig, setServerConfig] = useState<ConfigResponse | null>(null);
   const [configError, setConfigError] = useState("");
+  const [availableModels, setAvailableModels] = useState<AvailableModel[]>([]);
+  const [modelsLoading, setModelsLoading] = useState(false);
+  const [modelsError, setModelsError] = useState("");
+  const modelsRequestRef = useRef(false);
 
   useEffect(() => {
     saveConfig({
@@ -35,8 +45,10 @@ export function useSettings() {
       model,
       baseUrl: providerConfig?.base_url,
       apiKey: providerConfig?.api_key,
+      tavilyApiKey,
+      thinkingStrength,
     });
-  }, [systemPrompt, streamEnabled, useRag, model, providerConfig]);
+  }, [systemPrompt, streamEnabled, useRag, model, providerConfig, tavilyApiKey, thinkingStrength]);
 
   useEffect(() => {
     let cancelled = false;
@@ -60,6 +72,26 @@ export function useSettings() {
     };
   }, [endpoint]);
 
+  const refreshModels = useCallback(async () => {
+    if (modelsRequestRef.current) return;
+    modelsRequestRef.current = true;
+    setModelsLoading(true);
+    setModelsError("");
+    try {
+      const data = await fetchModels(
+        getModelsEndpoint(endpoint),
+        providerConfig,
+        model || serverConfig?.default_model,
+      );
+      setAvailableModels(data.models);
+    } catch (err) {
+      setModelsError(err instanceof Error ? err.message : String(err));
+    } finally {
+      modelsRequestRef.current = false;
+      setModelsLoading(false);
+    }
+  }, [endpoint, model, providerConfig, serverConfig?.default_model]);
+
   function clearSettings() {
     clearStoredConfig();
     setSystemPrompt(DEFAULT_SYSTEM_PROMPT);
@@ -67,6 +99,10 @@ export function useSettings() {
     setUseRag(false);
     setModel("");
     setProviderConfig(null);
+    setTavilyApiKey("");
+    setThinkingStrength("medium");
+    setAvailableModels([]);
+    setModelsError("");
   }
 
   return {
@@ -76,13 +112,21 @@ export function useSettings() {
     useRag,
     model,
     providerConfig,
+    thinkingStrength,
+    tavilyApiKey,
     serverConfig,
     configError,
+    availableModels,
+    modelsLoading,
+    modelsError,
     setSystemPrompt,
     setStreamEnabled,
     setUseRag,
     setModel,
     setProviderConfig,
+    setThinkingStrength,
+    setTavilyApiKey,
+    refreshModels,
     clearSettings,
   };
 }

@@ -1,6 +1,6 @@
 import pytest
 
-from app.agent.embedding.service import EmbeddingService
+from app.agent.embedding.service import EmbeddingService, EmbeddingUnavailableError
 from app.core.settings import get_settings
 
 
@@ -45,3 +45,38 @@ async def test_embedding_service_batches_requests(monkeypatch: pytest.MonkeyPatc
     assert [len(call) for call in calls] == [10, 10, 5]
     assert len(vectors) == 25
     assert all(len(vector) == 3 for vector in vectors)
+
+
+@pytest.mark.asyncio
+async def test_auth_failure_is_not_retried_and_opens_circuit(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = 0
+
+    class AuthFailure(Exception):
+        status_code = 401
+
+    class FakeEmbeddings:
+        async def create(self, **_kwargs):
+            nonlocal calls
+            calls += 1
+            raise AuthFailure("provider response must not be copied into logs")
+
+    class FakeClient:
+        embeddings = FakeEmbeddings()
+
+    monkeypatch.setenv("EMBEDDING_BASE_URL", "https://example.test/v1")
+    monkeypatch.setenv("EMBEDDING_API_KEY", "bad-key")
+    monkeypatch.setenv("EMBEDDING_MODEL", "text-embedding-v4")
+    monkeypatch.setenv("EMBEDDING_DIMENSIONS", "3")
+    monkeypatch.setenv("EMBEDDING_MAX_RETRIES", "5")
+    get_settings.cache_clear()
+    monkeypatch.setattr("app.agent.embedding.service.create_embedding_client", lambda _: FakeClient())
+    service = EmbeddingService()
+
+    with pytest.raises(EmbeddingUnavailableError, match="authentication failed"):
+        await service.embed_text("first")
+    with pytest.raises(EmbeddingUnavailableError, match="not configured"):
+        await service.embed_text("second")
+
+    assert calls == 1
+    assert service.available is False
+    get_settings.cache_clear()

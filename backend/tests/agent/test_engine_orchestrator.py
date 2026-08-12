@@ -4,6 +4,8 @@
 """
 from __future__ import annotations
 
+from unittest.mock import AsyncMock
+
 import pytest
 from autogen_agentchat.messages import TextMessage, ToolCallRequestEvent
 from autogen_core import FunctionCall
@@ -12,11 +14,13 @@ from app.agent.engine.orchestrator import (
     AnswerStreamSanitizer,
     DONE_MARKER,
     _all_steps_done,
-    build_team,
+    build_orchestration,
     participant_names,
     strip_done_marker,
     strip_scaffolding,
 )
+from app.agent.engine.input import TurnInput
+from app.agent.engine.router import RouteResult
 
 
 def _text(content: str, source: str = "spectral_agent") -> TextMessage:
@@ -110,20 +114,13 @@ def test_strip_done_marker(raw: str, expected: str) -> None:
 # --------------------------------------------------------------- 团队组装
 
 
-def test_team_has_one_agent_per_domain() -> None:
+def test_participant_catalog_has_one_agent_per_domain() -> None:
     from app.agent.engine.agents import domain_specs
 
-    team = build_team(user_id="00000000-0000-4000-8000-000000000001")
-    names = {p.name for p in team._participants}  # noqa: SLF001
-    assert names == {spec.name for spec in domain_specs()} | (
+    names = set(participant_names())
+    assert names == {"general_agent", *[spec.name for spec in domain_specs()]} | (
         set() if "search_agent" not in participant_names() else {"search_agent"}
     )
-
-
-def test_team_allows_repeated_speaker() -> None:
-    """同一专家要能连续发言：它在自己的多步工具循环里不该被强行换人。"""
-    team = build_team(user_id="u1")
-    assert team._allow_repeated_speaker is True  # noqa: SLF001
 
 
 def test_search_agent_absent_without_tavily_key(monkeypatch) -> None:
@@ -132,10 +129,80 @@ def test_search_agent_absent_without_tavily_key(monkeypatch) -> None:
     monkeypatch.setenv("TAVILY_API_KEY", "")
     get_settings.cache_clear()
     try:
-        team = build_team(user_id="u1")
-        assert "search_agent" not in {p.name for p in team._participants}  # noqa: SLF001
+        assert "search_agent" not in participant_names()
     finally:
         get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_graph_route_builds_graphflow_and_never_builds_selector(monkeypatch) -> None:
+    client = type("Client", (), {"close": AsyncMock()})()
+    team = object()
+
+    async def choose(*_args, **_kwargs):
+        return RouteResult(
+            strategy="graph",
+            flow_name="detect_report",
+            reason="complete standard flow",
+        )
+
+    captured = {}
+
+    def build(name, **kwargs):
+        captured.update(name=name, **kwargs)
+        return team
+
+    monkeypatch.setattr("app.agent.engine.orchestrator.choose_route", choose)
+    monkeypatch.setattr("app.agent.engine.orchestrator.build_model_client", lambda *_: client)
+    monkeypatch.setattr("app.agent.engine.orchestrator.build_flow", build)
+    monkeypatch.setattr(
+        "app.agent.engine.orchestrator._build_selector_team",
+        lambda **_: pytest.fail("GraphFlow 路由不得构造 SelectorGroupChat"),
+    )
+
+    orchestration = await build_orchestration(
+        turn=TurnInput("检测并生成报告", ()),
+        user_id=None,
+        use_rag=False,
+        use_memory=False,
+        config=object(),  # type: ignore[arg-type]
+    )
+
+    assert orchestration.team is team
+    assert orchestration.route.strategy == "graph"
+    assert captured["name"] == "detect_report"
+    assert captured["context_factory"] is not None
+
+
+@pytest.mark.asyncio
+async def test_selector_route_never_builds_graphflow(monkeypatch) -> None:
+    client = type("Client", (), {"close": AsyncMock()})()
+    team = object()
+
+    async def choose(*_args, **_kwargs):
+        return RouteResult(strategy="selector", flow_name=None, reason="fallback")
+
+    monkeypatch.setattr("app.agent.engine.orchestrator.choose_route", choose)
+    monkeypatch.setattr("app.agent.engine.orchestrator.build_model_client", lambda *_: client)
+    monkeypatch.setattr(
+        "app.agent.engine.orchestrator.build_flow",
+        lambda *_args, **_kwargs: pytest.fail("Selector 路由不得构造 GraphFlow"),
+    )
+    monkeypatch.setattr(
+        "app.agent.engine.orchestrator._build_selector_team",
+        lambda **_: team,
+    )
+
+    orchestration = await build_orchestration(
+        turn=TurnInput("自由任务", ()),
+        user_id=None,
+        use_rag=False,
+        use_memory=False,
+        config=object(),  # type: ignore[arg-type]
+    )
+
+    assert orchestration.team is team
+    assert orchestration.route.strategy == "selector"
 
 
 # ------------------------------------------------- 编排脚手架不能进用户正文
@@ -254,6 +321,45 @@ def test_sanitizer_think_state_does_not_leak_across_speakers() -> None:
     assert sanitizer.feed("第二步完成。") == "第二步完成。"
 
 
+@pytest.mark.parametrize(
+    "wrapped",
+    [
+        "<THINK>绝密推理</THINK>公开内容",
+        "<thinking>绝密推理</thinking>公开内容",
+        "<analysis>绝密推理</analysis>公开内容",
+        "<reasoning>绝密推理</reasoning>公开内容",
+    ],
+)
+def test_sanitizer_discards_reasoning_aliases_and_case(wrapped: str) -> None:
+    sanitizer = AnswerStreamSanitizer()
+    output = "".join(sanitizer.feed(char) for char in wrapped) + sanitizer.flush()
+    assert output == "公开内容"
+    assert "绝密推理" not in output
+
+
+@pytest.mark.parametrize("chunk_size", [1, 2, 5, 13, 200])
+def test_sanitizer_discards_narrated_reasoning_in_content_channel(chunk_size: int) -> None:
+    """模型偶尔不走 reasoning_content，而把显式过程旁白误写进正文通道。"""
+    raw = (
+        "思考过程：\n分析用户需求；检查系统提示词；决定调用工具。\n"
+        "思考过程结束\n\n这是可展示的正式回答。"
+    )
+    output = _run_sanitizer(raw, chunk_size)
+    assert output == "这是可展示的正式回答。"
+    assert "系统提示词" not in output
+    assert "分析用户需求" not in output
+
+
+def test_sanitizer_does_not_mistake_normal_discussion_for_reasoning() -> None:
+    raw = "思考过程是否应该对用户展示？通常不应该展示原始推理。"
+    assert _run_sanitizer(raw, 1) == raw
+
+
+def test_unclosed_narrated_reasoning_fails_closed_without_unbounded_output() -> None:
+    raw = "思考过程：\n" + ("绝密推理" * 10_000)
+    assert _run_sanitizer(raw, 7) == ""
+
+
 # --------------------------------------------------- 正文要保住全链路的结论
 
 
@@ -265,7 +371,12 @@ def test_result_content_keeps_every_expert_step() -> None:
     """
     from autogen_agentchat.base import TaskResult
 
-    from app.agent.engine.orchestrator import _to_result
+    from unittest.mock import MagicMock
+
+    from autogen_agentchat.conditions import ExternalTermination
+
+    from app.agent.engine.orchestrator import Orchestration, _to_result
+    from app.agent.engine.router import RouteResult
     from app.agent.engine.turn_context import TurnToolState
 
     result = TaskResult(
@@ -276,7 +387,16 @@ def test_result_content_keeps_every_expert_step() -> None:
         ],
         stop_reason="done",
     )
-    content = _to_result(result, TurnToolState()).content
+    client = MagicMock()
+    client.total_usage.return_value.prompt_tokens = 0
+    client.total_usage.return_value.completion_tokens = 0
+    orchestration = Orchestration(
+        team=MagicMock(),
+        stop=ExternalTermination(),
+        model_client=client,
+        route=RouteResult(strategy="selector", flow_name=None, reason="test"),
+    )
+    content = _to_result(result, TurnToolState(), orchestration).content
     assert "均值 0.42" in content, "第一步的真实结论不能丢"
     assert "报告已生成" in content
     assert DONE_MARKER not in content

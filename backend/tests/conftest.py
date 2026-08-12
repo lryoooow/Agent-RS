@@ -1,10 +1,8 @@
 """全局测试夹具。
 
-1) `_reset_global_caches`（autouse）：每个用例前后重置进程级缓存与 settings，消除跨用例状态污染（M9）。
-   根因：`app.agent.search.cache` 的三个单例（decision/result/planner_decision）是进程级的，
-   惰性构造时会捕获当时的 settings（TTL/size）。若不重置：
-     ① 一个用例缓存的 planner 决策可能命中后一个用例的相同 query+scope，掩盖回归；
-     ② 先构造的单例会冻结旧 settings，后续用例 monkeypatch 缓存配置不生效。
+1) `_reset_global_caches`（autouse）：每个用例前后重置搜索结果缓存与 settings，消除跨用例状态污染。
+   搜索结果缓存惰性构造时会捕获当时的 settings（TTL/size）；若不重置，先构造的
+   单例会冻结旧 settings，后续用例 monkeypatch 缓存配置不生效。
    做法：把模块级单例置 None，下次 get_* 会用当前 settings 重建（比对旧实例 clear() 更彻底）。
 
 2) PG 仓储测试夹具（`pg_pool`/`pg_conn`/`_truncate_between_tests`）：连【独立测试库】
@@ -41,9 +39,7 @@ def _reset_global_caches():
     from app.core.settings import get_settings
 
     def _reset() -> None:
-        cache_module._decision_cache = None
         cache_module._result_cache = None
-        cache_module._planner_decision_cache = None
         get_settings.cache_clear()
 
     _reset()

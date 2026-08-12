@@ -4,7 +4,7 @@
 
 每个包装器内部走的是 `app/agent/tool_execution.py` 那一份共享管线
 （可用性 → 参数模型 → **归属鉴权** → durable 队列 → staging → runner → 终态落库），
-与 legacy 的 `ToolChildAgent` 完全一致。这里**不重新实现任何一步**。
+这里**不重新实现任何安全或执行步骤**。
 
 多步链路下这点尤其要紧：模型可能连续要 3 个工具，中间步骤的 `imagery_id` 是它现编的，
 所以**每一步都要各自过鉴权**，不存在"第一步过了后面放行"。
@@ -75,6 +75,8 @@ class RemoteSensingTool(BaseTool[BaseModel, str]):
 
         user_id = peek_current_user_id()
         arguments = args.model_dump()
+        if state is not None:
+            arguments = state.arguments_for(self._tool.name, arguments)
 
         # 审计日志：多步链路下一个回合可能有 5 次工具调用，出问题时需要能回溯
         # 「谁、用什么身份、对哪个资源」调了什么。这里是唯一同时掌握这三样的位置。

@@ -153,17 +153,24 @@ async def auth_login(request: AuthCredentials, response: Response) -> AuthMeResp
             if not valid:
                 raise _invalid_credentials()
             # 登录成功：若旧哈希工作因子偏低，用当前参数重哈希落库（透明升级）。
-            if needs_rehash(user["password_hash"]):
-                new_hash = await hash_password(request.password)
-                await update_user_password_hash(conn, user_id=user["id"], password_hash=new_hash)
-            token = issue_session_token()
-            await create_session(
-                conn,
-                user_id=user["id"],
-                token_hash=hash_session_token(token, settings.auth_secret_key),
-                days=settings.auth_session_days,
+            # 慢操作 hash_password 在事务外算，避免占着连接；三个写（rehash/session/prune）
+            # 包进同一事务，与 register 对齐——任一失败整体回滚，不残留半套（P2-10）。
+            new_hash = (
+                await hash_password(request.password)
+                if needs_rehash(user["password_hash"])
+                else None
             )
-            await prune_expired_sessions(conn)
+            token = issue_session_token()
+            async with conn.transaction():
+                if new_hash is not None:
+                    await update_user_password_hash(conn, user_id=user["id"], password_hash=new_hash)
+                await create_session(
+                    conn,
+                    user_id=user["id"],
+                    token_hash=hash_session_token(token, settings.auth_secret_key),
+                    days=settings.auth_session_days,
+                )
+                await prune_expired_sessions(conn)
         except HTTPException:
             raise
         except Exception as exc:

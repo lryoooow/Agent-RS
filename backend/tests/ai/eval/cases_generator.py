@@ -14,7 +14,7 @@ from tests.ai.eval.cases import (
     OTHER_IMAGERY_ID,
     OWNED_IMAGE,
     PRIMARY_IMAGERY_ID,
-    PlannerEvalCase,
+    AutogenEvalCase,
 )
 
 
@@ -54,7 +54,7 @@ FEW_SHOT_QUERIES: tuple[str, ...] = (
 )
 
 
-def generate_generated_cases(target_count: int = GENERATED_CASE_COUNT) -> tuple[PlannerEvalCase, ...]:
+def generate_generated_cases(target_count: int = GENERATED_CASE_COUNT) -> tuple[AutogenEvalCase, ...]:
     counts = _target_counts(target_count)
     pronoun_call_count = _missing_id_pronoun_call_count(counts["none"])
     cases = (
@@ -66,7 +66,7 @@ def generate_generated_cases(target_count: int = GENERATED_CASE_COUNT) -> tuple[
     return tuple(_with_prompt_near(case) for case in cases)
 
 
-def generation_summary(cases: Iterable[PlannerEvalCase]) -> dict[str, object]:
+def generation_summary(cases: Iterable[AutogenEvalCase]) -> dict[str, object]:
     generated = [case for case in cases if case.source == "generated"]
     buckets = Counter(_bucket(case) for case in generated)
     return {
@@ -80,7 +80,7 @@ def generation_summary(cases: Iterable[PlannerEvalCase]) -> dict[str, object]:
     }
 
 
-def stable_case_fingerprint(cases: Iterable[PlannerEvalCase]) -> str:
+def stable_case_fingerprint(cases: Iterable[AutogenEvalCase]) -> str:
     payload = []
     for case in cases:
         payload.append(
@@ -117,7 +117,7 @@ def _target_counts(target_count: int) -> dict[str, int]:
     return {"simple": simple, "none": none, "multiple": multiple, "parallel": parallel}
 
 
-def _generate_simple(total: int) -> tuple[PlannerEvalCase, ...]:
+def _generate_simple(total: int) -> tuple[AutogenEvalCase, ...]:
     slugs = (
         "raster_inspect",
         "calculate_ndvi",
@@ -132,7 +132,7 @@ def _generate_simple(total: int) -> tuple[PlannerEvalCase, ...]:
         "parse_document",
     )
     counts: Counter[str] = Counter()
-    cases: list[PlannerEvalCase] = []
+    cases: list[AutogenEvalCase] = []
     for slug in cycle(slugs):
         if len(cases) >= total:
             break
@@ -141,7 +141,7 @@ def _generate_simple(total: int) -> tuple[PlannerEvalCase, ...]:
     return tuple(cases)
 
 
-def _simple_case(slug: str, index: int) -> PlannerEvalCase:
+def _simple_case(slug: str, index: int) -> AutogenEvalCase:
     img = PRIMARY_IMAGERY_ID
     if slug == "raster_inspect":
         term = _pick(("元数据", "波段数量", "CRS 和范围", "像元尺寸"), index)
@@ -348,10 +348,10 @@ def _simple_case(slug: str, index: int) -> PlannerEvalCase:
     raise ValueError(f"unknown simple slug: {slug}")
 
 
-def _generate_none(total: int, *, multi_ambiguous_count: int = 0) -> tuple[PlannerEvalCase, ...]:
+def _generate_none(total: int, *, multi_ambiguous_count: int = 0) -> tuple[AutogenEvalCase, ...]:
     kinds = ("negation", "concept", "missing_id", "non_owner", "general", "contradiction")
     counts: Counter[str] = Counter()
-    cases: list[PlannerEvalCase] = []
+    cases: list[AutogenEvalCase] = []
     for kind in cycle(kinds):
         if len(cases) >= total:
             break
@@ -379,7 +379,7 @@ def _missing_id_pronoun_call_count(none_total: int) -> int:
     return pronoun_calls
 
 
-def _none_case(kind: str, index: int) -> PlannerEvalCase:
+def _none_case(kind: str, index: int) -> AutogenEvalCase:
     img = PRIMARY_IMAGERY_ID
     if kind == "negation":
         term = _pick(("NDVI", "水体指数", "云掩膜", "目标检测", "地物分割"), index)
@@ -501,7 +501,7 @@ def _none_case(kind: str, index: int) -> PlannerEvalCase:
     raise ValueError(f"unknown none kind: {kind}")
 
 
-def _generate_multiple(total: int) -> tuple[PlannerEvalCase, ...]:
+def _generate_multiple(total: int) -> tuple[AutogenEvalCase, ...]:
     builders = (
         _multiple_water_mask,
         _multiple_spectral_water,
@@ -514,7 +514,7 @@ def _generate_multiple(total: int) -> tuple[PlannerEvalCase, ...]:
         _multiple_clip,
     )
     counts: Counter[str] = Counter()
-    cases: list[PlannerEvalCase] = []
+    cases: list[AutogenEvalCase] = []
     for builder in cycle(builders):
         if len(cases) >= total:
             break
@@ -524,7 +524,7 @@ def _generate_multiple(total: int) -> tuple[PlannerEvalCase, ...]:
     return tuple(cases)
 
 
-def _multiple_water_mask(index: int) -> PlannerEvalCase:
+def _multiple_water_mask(index: int) -> AutogenEvalCase:
     query = _pick(
         (
             "我关注影像 {img} 的水域边界，不要只给指数，直接圈出水体范围",
@@ -542,7 +542,7 @@ def _multiple_water_mask(index: int) -> PlannerEvalCase:
     )
 
 
-def _multiple_spectral_water(index: int) -> PlannerEvalCase:
+def _multiple_spectral_water(index: int) -> AutogenEvalCase:
     query = _pick(
         (
             "我不是要水域矢量边界，只要影像 {img} 的 NDWI 指数",
@@ -560,7 +560,7 @@ def _multiple_spectral_water(index: int) -> PlannerEvalCase:
     )
 
 
-def _multiple_ocr(index: int) -> PlannerEvalCase:
+def _multiple_ocr(index: int) -> AutogenEvalCase:
     query = _pick(
         (
             "识别影像 {img} 里的地图文字标注，不是识别飞机车辆",
@@ -578,7 +578,7 @@ def _multiple_ocr(index: int) -> PlannerEvalCase:
     )
 
 
-def _multiple_detect(index: int) -> PlannerEvalCase:
+def _multiple_detect(index: int) -> AutogenEvalCase:
     query = _pick(
         (
             "识别影像 {img} 中的飞机目标，不是读文字",
@@ -596,7 +596,7 @@ def _multiple_detect(index: int) -> PlannerEvalCase:
     )
 
 
-def _multiple_inspect(index: int) -> PlannerEvalCase:
+def _multiple_inspect(index: int) -> AutogenEvalCase:
     query = _pick(
         (
             "先别分析地物，查看影像 {img} 的波段、CRS 和范围",
@@ -614,7 +614,7 @@ def _multiple_inspect(index: int) -> PlannerEvalCase:
     )
 
 
-def _multiple_segment(index: int) -> PlannerEvalCase:
+def _multiple_segment(index: int) -> AutogenEvalCase:
     query = _pick(
         (
             "不要只检测单个目标，把影像 {img} 做成地物类别分区",
@@ -632,7 +632,7 @@ def _multiple_segment(index: int) -> PlannerEvalCase:
     )
 
 
-def _multiple_cloud(index: int) -> PlannerEvalCase:
+def _multiple_cloud(index: int) -> AutogenEvalCase:
     query = _pick(
         (
             "影像 {img} 看起来有云，先做云阴影掩膜质检",
@@ -650,7 +650,7 @@ def _multiple_cloud(index: int) -> PlannerEvalCase:
     )
 
 
-def _multiple_composite(index: int) -> PlannerEvalCase:
+def _multiple_composite(index: int) -> AutogenEvalCase:
     mode = _pick(("true_color", "false_color"), index)
     term = "真彩色" if mode == "true_color" else "假彩色"
     query = "我现在只想看影像 {img} 的{term}显示，不做检测或分割".format(
@@ -667,7 +667,7 @@ def _multiple_composite(index: int) -> PlannerEvalCase:
     )
 
 
-def _multiple_clip(index: int) -> PlannerEvalCase:
+def _multiple_clip(index: int) -> AutogenEvalCase:
     crs = _pick(("EPSG:4326", "EPSG:3857"), index)
     query = "不要分析内容，先把影像 {img} 转到 {crs} 坐标系".format(
         img=PRIMARY_IMAGERY_ID,
@@ -683,13 +683,13 @@ def _multiple_clip(index: int) -> PlannerEvalCase:
     )
 
 
-def _generate_parallel(total: int) -> tuple[PlannerEvalCase, ...]:
+def _generate_parallel(total: int) -> tuple[AutogenEvalCase, ...]:
     web_count = max(1, total // 3)
     unsupported_count = total - web_count
     return _parallel_web_search(web_count) + _unsupported_multi_tool(unsupported_count)
 
 
-def _parallel_web_search(total: int) -> tuple[PlannerEvalCase, ...]:
+def _parallel_web_search(total: int) -> tuple[AutogenEvalCase, ...]:
     specs = (
         (
             "weather_travel",
@@ -707,7 +707,7 @@ def _parallel_web_search(total: int) -> tuple[PlannerEvalCase, ...]:
             2,
         ),
     )
-    cases: list[PlannerEvalCase] = []
+    cases: list[AutogenEvalCase] = []
     counts: Counter[str] = Counter()
     for spec in cycle(specs):
         if len(cases) >= total:
@@ -728,7 +728,7 @@ def _parallel_web_search(total: int) -> tuple[PlannerEvalCase, ...]:
     return tuple(cases)
 
 
-def _unsupported_multi_tool(total: int) -> tuple[PlannerEvalCase, ...]:
+def _unsupported_multi_tool(total: int) -> tuple[AutogenEvalCase, ...]:
     templates = (
         "对影像 {img} 同时计算 NDVI 并提取水体掩膜",
         "先给影像 {img} 做云掩膜，再马上做地物分割",
@@ -761,18 +761,18 @@ def _case(
     expected_capability: str | None,
     *,
     category: str = "simple",
-    notes: str = "程序化生成的 planner 路由评测样本。",
+    notes: str = "程序化生成的 AutoGen 决策评测样本。",
     imagery_inventory=OWNED_IMAGE,
     document_context: str = "",
     expected_arguments_subset: dict[str, object] | None = None,
     min_query_count: int = 0,
     scoring: str = "main",
-) -> PlannerEvalCase:
+) -> AutogenEvalCase:
     if expected_capability == "parse_document" or expected_arguments_subset == {"document_id": DOCUMENT_ID}:
         imagery_inventory = ()
     if expected_capability == "web_search":
         imagery_inventory = ()
-    return PlannerEvalCase(
+    return AutogenEvalCase(
         case_id=case_id,
         query=query,
         expected_action=expected_action,  # type: ignore[arg-type]
@@ -793,7 +793,7 @@ def _burned_case(
     query: str,
     capability: str,
     imagery_id: str,
-) -> PlannerEvalCase:
+) -> AutogenEvalCase:
     return _case(
         f"burned_heldout_v1_{source_case_id}",
         query,
@@ -806,7 +806,7 @@ def _burned_case(
     )
 
 
-HELDOUT_V1_BURNED_CASES: tuple[PlannerEvalCase, ...] = (
+HELDOUT_V1_BURNED_CASES: tuple[AutogenEvalCase, ...] = (
     _burned_case(
         "heldout_neg_missing_id_116",
         "麻烦了，对刚才传的那个直接做 水体掩膜，今天要",
@@ -858,7 +858,7 @@ HELDOUT_V1_BURNED_CASES: tuple[PlannerEvalCase, ...] = (
 )
 
 
-def _with_prompt_near(case: PlannerEvalCase) -> PlannerEvalCase:
+def _with_prompt_near(case: AutogenEvalCase) -> AutogenEvalCase:
     return replace(case, prompt_near=is_prompt_near(case.query))
 
 
@@ -866,7 +866,7 @@ def _pick(items, index: int):
     return items[(index - 1) % len(items)]
 
 
-def _bucket(case: PlannerEvalCase) -> str:
+def _bucket(case: AutogenEvalCase) -> str:
     if case.category == "simple":
         return "simple"
     if case.category.startswith("none") or case.category.startswith("edge"):

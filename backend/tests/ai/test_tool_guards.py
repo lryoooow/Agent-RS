@@ -5,9 +5,16 @@ from pathlib import Path
 
 import pytest
 
-from app.agent.routing import ALL_DOCUMENT_TOOLS, ALL_IMAGERY_TOOLS
 from app.agent.tool_guards import validate_tool_access
+from app.agent.tool_registry import TOOLS
 from app.core.settings import get_settings
+
+ALL_IMAGERY_TOOLS = tuple(
+    tool.name for tool in TOOLS.values() if tool.resource_kind == "imagery"
+)
+ALL_DOCUMENT_TOOLS = tuple(
+    tool.name for tool in TOOLS.values() if tool.resource_kind == "document"
+)
 
 
 def _write_meta(root: Path, imagery_id: str, owner: str) -> None:

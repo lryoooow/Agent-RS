@@ -1,10 +1,10 @@
 """engine/agents.py + engine/search.py：领域 Agent 与搜索 Agent。
 
-核心断言是「这次真的把假 Agent 变成了真 Agent」：
+核心断言是 AutoGen Agent 清单和工具注册表始终一致：
 - 领域指引进了 system_message 而不是拼在工具结果后面
 - 每个领域只拿到自己那批工具
-- 多步工具循环真的开着（legacy 硬编码为 1）
-- 领域划分与 legacy 的三张表严格一致，迁移不顺手改产品决策
+- 多步工具循环真的开着
+- 每个工具恰好归属一个 Agent
 """
 from __future__ import annotations
 
@@ -12,11 +12,17 @@ import pytest
 from autogen_core import CancellationToken
 from autogen_core.models import ChatCompletionClient, ModelFamily
 
-from app.agent.domain_agents import DOMAIN_GUIDANCE, DOMAIN_LABELS, TOOL_DOMAIN
-from app.agent.engine.agents import build_domain_agent, build_domain_agents, domain_specs
+from app.agent.engine.agents import (
+    DOMAIN_GUIDANCE,
+    DOMAIN_LABELS,
+    build_domain_agent,
+    build_domain_agents,
+    domain_specs,
+)
 from app.agent.engine.search import WebSearchTool, build_search_agent
 from app.agent.engine.turn_context import turn_scope
 from app.agent.search.schema import WebSearchArguments
+from app.agent.tool_registry import TOOLS
 from app.agent.types import ToolRunResult
 from app.core.settings import get_settings
 
@@ -65,13 +71,13 @@ def client():
     return _StubClient()
 
 
-def test_domain_specs_match_legacy_tables() -> None:
-    """领域划分必须与 legacy 完全一致——迁移不该顺手改产品决策。"""
+def test_domain_specs_are_derived_from_tool_registry() -> None:
+    """注册表是工具归属的唯一数据源。"""
     specs = {spec.name: spec for spec in domain_specs()}
 
     expected: dict[str, set[str]] = {}
-    for tool, domain in TOOL_DOMAIN.items():
-        expected.setdefault(domain, set()).add(tool)
+    for tool in TOOLS.values():
+        expected.setdefault(tool.agent_name, set()).add(tool.name)
 
     assert set(specs) == set(expected)
     for name, tools in expected.items():
@@ -79,12 +85,7 @@ def test_domain_specs_match_legacy_tables() -> None:
         assert specs[name].label == DOMAIN_LABELS[name]
 
 
-def test_guidance_becomes_system_message_not_appended_text() -> None:
-    """legacy 把领域指引拼在工具结果尾部；现在它必须是 Agent 的 system_message。
-
-    差别不是形式：拼在结果后面时模型只是"读到一段话"，
-    作为 system_message 时它才是这个 Agent 的行为准则，能影响它要不要再调一次工具。
-    """
+def test_guidance_is_in_system_message() -> None:
     for spec in domain_specs():
         assert DOMAIN_GUIDANCE[spec.name] in spec.system_message
         assert "绝不编造" in spec.system_message
@@ -99,11 +100,12 @@ def test_each_domain_agent_only_gets_its_own_tools(client) -> None:
 
 
 def test_multi_step_tool_loop_is_enabled(client) -> None:
-    """这一条就是整个迁移的目的：legacy 硬编码 max_tool_calls=1。"""
     settings = get_settings()
     assert settings.agent_max_tool_iterations > 1, "配置本身要允许多步"
 
     for agent in build_domain_agents(model_client=client):
+        if agent.name == "general_agent":
+            continue
         assert agent._max_tool_iterations == settings.agent_max_tool_iterations  # noqa: SLF001
 
 
@@ -159,7 +161,7 @@ async def test_search_tool_reports_failure_without_fabricating(monkeypatch) -> N
 
 @pytest.mark.asyncio
 async def test_empty_results_invite_a_retry(monkeypatch) -> None:
-    """零结果时要提示模型换检索词重试——这正是 legacy 做不到的自主性。"""
+    """零结果时提示模型换检索词重试。"""
 
     async def empty(_args):
         return ToolRunResult(tool_context="", result_count=0)
@@ -180,12 +182,19 @@ def test_search_agent_can_loop(client) -> None:
     assert {t.name for t in agent._tools} == {"web_search"}  # noqa: SLF001
 
 
+def test_search_agent_receives_the_same_autogen_memories(client) -> None:
+    """搜索 Agent 也必须获得 RAG/长期记忆，不能成为上下文注入的例外。"""
+    memory = object()
+    agent = build_search_agent(model_client=client, memory=[memory])  # type: ignore[list-item]
+    assert agent._memory == [memory]  # noqa: SLF001
+
+
 @pytest.mark.asyncio
 async def test_web_search_respects_per_turn_call_cap(monkeypatch) -> None:
     """`AGENT_WEB_SEARCH_MAX_CALLS` 必须真的是上限。
 
-    legacy 靠 `routing.max_tool_calls=1` 间接卡住了它；AutoGen 下 Agent 能连续要工具，
-    不在工具里拦就等于这个设置只剩「开/关」的作用，一个回合能打满 max_tool_iterations 次
+    AutoGen Agent 能连续请求工具，因此服务端仍须按回合强制限额；否则一次回合可以
+    打满 max_tool_iterations 次
     ——而 Tavily 是按次计费的。
     """
     calls = 0

@@ -10,6 +10,7 @@ from app.agent.search.filter import filter_search_results
 from app.agent.search.formatter import format_search_context
 from app.agent.search.schema import WebSearchArguments
 from app.agent.search.tavily_client import TavilySearchError, search_tavily
+from app.agent.search.credentials import resolve_tavily_api_key
 from app.agent.types import ToolRunResult
 from app.agent.rerank import get_rerank_service
 from app.core.settings import get_settings
@@ -30,6 +31,7 @@ async def run_web_search(
     args: WebSearchArguments,
 ) -> ToolRunResult:
     settings = get_settings()
+    api_key = resolve_tavily_api_key()
     max_results = args.max_results or settings.agent_web_search_max_results
 
     # 复合问题拆成多条检索词，各自独立检索；单一问题时 effective_queries 回退为 [query]，行为不变。
@@ -42,6 +44,7 @@ async def run_web_search(
                 query=q,
                 max_results=max_results,
                 settings=settings,
+                api_key=api_key,
                 result_cache=result_cache,
             )
             for q in queries
@@ -51,7 +54,7 @@ async def run_web_search(
     # 全部检索词都失败才视为搜索不可用；部分失败时用成功的结果继续，避免一条网络抖动拖垮整次回答。
     errored = [o for o in outcomes if o.error]
     if len(errored) == len(outcomes):
-        logger.warning("All web search queries failed: %s", errored[0].error)
+        logger.warning("All web search queries failed (count=%d)", len(errored))
         message = "联网搜索暂时不可用。请勿声称已完成实时联网检索；可基于已有知识谨慎回答并说明未能联网。"
         return ToolRunResult(tool_context=message, query=args.query, error=errored[0].error)
 
@@ -80,16 +83,17 @@ async def _search_single_query(
     query: str,
     max_results: int,
     settings,
+    api_key: str,
     result_cache,
 ) -> _QueryOutcome:
     cached = result_cache.get_results(query, max_results)
     if cached is not None:
-        logger.debug("Web search result cache hit for query: %s", query)
+        logger.debug("Web search result cache hit (query_chars=%d)", len(query))
         result = cached
     else:
         try:
             result = await search_tavily(
-                api_key=settings.tavily_api_key,
+                api_key=api_key,
                 search_url=settings.tavily_search_url,
                 query=query,
                 max_results=max_results,
@@ -98,7 +102,11 @@ async def _search_single_query(
                 country=settings.agent_web_search_country,
             )
         except (httpx.HTTPError, TavilySearchError) as exc:
-            logger.warning("Web search call failed for query %r: %s", query, exc)
+            logger.warning(
+                "Web search call failed (query_chars=%d error=%s)",
+                len(query),
+                type(exc).__name__,
+            )
             return _QueryOutcome(query=query, results=[], error=str(exc))
         result_cache.put_results(query, max_results, result)
 

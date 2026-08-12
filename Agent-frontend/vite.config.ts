@@ -45,6 +45,20 @@ export default defineConfig({
     },
   },
 
+  // MapLibre 是最大的稳定依赖，单独拆包供浏览器长期缓存；其余依赖交给 Rollup
+  // 维护依赖图，避免过度手工分包产生 vendor 之间的循环 chunk。
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('maplibre-gl')) return 'vendor-map'
+          return undefined
+        },
+      },
+    },
+    chunkSizeWarningLimit: 1100,
+  },
+
   // File types to support raw imports. Never add .css, .tsx, or .ts files to this.
   assetsInclude: ['**/*.svg', '**/*.csv'],
 

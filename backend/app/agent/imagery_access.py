@@ -8,9 +8,9 @@
 故策略：DB 可用且命中 → 用 DB（新影像走此路，修掉"靠约定"脆弱性）；
 否则 → 回落到本地 metadata.json（原有逻辑，已验证，零行为变化）。
 
-接口从同步改为 async：因为 DB 查询是 async，且三处调用方（tool_guards←child.py、
-build_imagery_inventory←llm_planner/request_builder、report/builder）全在 async 上下文，
-顺调用链 await 即可，无需在同步函数里 asyncio.run（那会在运行的 loop 里报错）。
+接口从同步改为 async：因为 DB 查询是 async，且调用方（AutoGen 工具鉴权、
+请求上下文装配与报告构建）都在 async 上下文，顺调用链 await 即可，无需在同步函数里
+asyncio.run（那会在运行的 loop 里报错）。
 """
 from __future__ import annotations
 

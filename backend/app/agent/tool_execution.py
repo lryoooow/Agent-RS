@@ -1,4 +1,4 @@
-"""工具执行管线：legacy 与 AutoGen 两条链路**共用同一份**。
+"""AutoGen 所有工具调用共用的确定性执行管线。
 
 ## 为什么要抽出来
 
@@ -7,20 +7,15 @@
     工具可用性 → 参数模型校验 → 资源归属鉴权 → durable 队列登记
     → 影像 staging → runner → 终态落库
 
-其中「归属鉴权」和「durable 队列」是这个项目最不能出错的两块。如果 AutoGen 链路
-另写一份，两边就会慢慢漂移——最坏情况是某条链路漏了 `validate_tool_access`，
-变成越权访问他人影像。所以这里只留一份实现，两条链路都必须经过。
+其中「归属鉴权」和「durable 队列」是安全关键边界。所有 AutoGen Tool 包装器都必须
+经过这一个实现，避免任何 Agent 绕过 `validate_tool_access` 越权访问资源。
 
 ## 为什么拆成 prepare / run 两段
 
-`child.py` 在校验完成之后、真正执行之前要发若干 trace 事件（`child_agent_running`、
-`tool_execution_started`），事件的 stage 名和 metadata 是前端契约的一部分。
+校验完成之后、真正执行之前需要发 `child_agent_running`、`tool_execution_started` 等
+前端契约事件，因此拆成 prepare / run 两段。事件桥在两段之间发状态，管线本身不碰 trace。
 
-如果把事件回调也塞进来，就得为两条链路各写一套 hook，反而更容易出错。所以拆两段，
-**事件发射完全留在调用方**：调用方在两段之间插自己的事件，管线本身不碰 trace。
-这样共享了安全逻辑，又对 legacy 的事件输出零改动。
-
-本模块不 import autogen，两条链路都能用。
+本模块不 import autogen，保持确定性和可独立测试。
 """
 
 from __future__ import annotations

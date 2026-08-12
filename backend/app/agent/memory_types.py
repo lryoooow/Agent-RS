@@ -1,8 +1,8 @@
 """长期记忆的结构化取值域。
 
 单独成文件（而不是放在 engine/memory/pg_memory.py）是因为：`memory_judge` 是业务代码，
-若从 engine/ 里取常量，会**传递性**把 autogen 拉进来，破坏 `AGENT_ENGINE=legacy`
-下不加载 autogen 的设计。这里不 import 任何 autogen。
+若从 engine/ 里取常量，会让纯数据库和 schema 模块传递性加载框架依赖。
+这里不 import 任何 autogen。
 
 改这里的取值域必须同步改两处：
 - `sql/migrations/0011_memory_structured.sql` 的 CHECK 约束

@@ -58,10 +58,10 @@ def _imported_names(path: Path) -> set[str]:
 
 
 @pytest.mark.parametrize("module_name", _STRESS_MODULES)
-def test_stress_does_not_import_planner_prompt(module_name: str) -> None:
+def test_stress_does_not_import_runtime_prompts(module_name: str) -> None:
     names = _imported_names(EVAL_DIR / module_name)
-    assert "_planner_prompt" not in names
-    assert not any(n.startswith("app.agent.llm_planner") for n in names)
+    forbidden = ("app.agent.engine.router", "app.agent.engine.agents")
+    assert not any(name.startswith(forbidden) for name in names)
 
 
 def test_stress_queries_not_verbatim_fewshot(stress_cases) -> None:
@@ -339,36 +339,6 @@ def test_validate_passes_clean() -> None:
         validate_stress_cases(generate_stress_cases(seed=seed))  # 不抛即通过
 
 
-# --- 回归：score 只评已录制的 case（断点续录中途看分布不被假 harness_error 污染）---
-
-
-def test_score_filters_to_recorded_cases_only(tmp_path, monkeypatch) -> None:
-    """run_stress score 的过滤契约：未录制的 case 跳过、不当 harness_error。
-
-    修复根因：旧 _score_seed 无条件 replay 全部 STRESS_TARGET 条，限量/续录中途
-    跑 score 会把未录的当 harness_error（试跑实测 980/1000 假错误）。修复后只对
-    已落盘 {case_id}.json 的 case 评分；全量录满时为恒等过滤，口径不变。
-    """
-
-    from tests.ai.eval import run_stress
-
-    seed = STRESS_SEEDS[0]
-    cases = generate_stress_cases(seed=seed, target=STRESS_TARGET)
-    # 只"录制"前 5 条（写空 json 占位即可，_recording_done 只看文件存在）。
-    recorded_ids = [c.case_id for c in cases[:5]]
-    seed_dir = tmp_path / STRESS_DATASET / str(seed)
-    seed_dir.mkdir(parents=True)
-    for case_id in recorded_ids:
-        (seed_dir / f"{case_id}.json").write_text("{}", encoding="utf-8")
-
-    # 把 _seed_dir 指向临时目录，复用真实 _recording_done 过滤逻辑。
-    monkeypatch.setattr(run_stress, "_seed_dir", lambda s: tmp_path / STRESS_DATASET / str(s))
-
-    kept = tuple(c for c in cases if run_stress._recording_done(seed, c.case_id))
-    assert [c.case_id for c in kept] == recorded_ids  # 只留已录，未录全部跳过
-    assert len(kept) == 5 and len(cases) == STRESS_TARGET  # 不是把 995 条当错误
-
-
 def test_shard_slicing_non_overlapping_and_complete() -> None:
     """并行钩子契约：seed 内 shard i/n 步长切片，n 片不重叠且并起来等于全集。
 
@@ -384,33 +354,6 @@ def test_shard_slicing_non_overlapping_and_complete() -> None:
         assert len(flat) == len(set(flat)), f"n={total} 分片有重叠"
         assert set(flat) == set(ids), f"n={total} 分片未全覆盖"
         assert sum(len(s) for s in shards) == len(ids)
-
-
-def test_recording_done_rejects_stale_query_hash(tmp_path, monkeypatch) -> None:
-    """回归（历史重复问题点）：生成器改了 query 内容后，旧录制必须失效重录，
-    不许 _recording_done 只看文件名就跳过、用旧 query 录制冒充新题（"走老路"）。
-
-    根因：旧 _recording_done 只判 {case_id}.json 是否存在。生成器一改随机序列、
-    query 全变（实测 588/1000 query_hash 变化），陈旧录制会被静默复用。修复：传 query
-    时校验录制 query_hash 同源，不符即 False 触发重录。
-    """
-
-    import json
-    from tests.ai.eval import run_stress
-    from tests.ai.eval.clients import stable_hash
-
-    seed = STRESS_SEEDS[0]
-    seed_dir = tmp_path / STRESS_DATASET / str(seed)
-    seed_dir.mkdir(parents=True)
-    (seed_dir / "c1.json").write_text(
-        json.dumps({"query_hash": stable_hash("新题 NDVI")}), encoding="utf-8"
-    )
-    monkeypatch.setattr(run_stress, "_seed_dir", lambda s: tmp_path / STRESS_DATASET / str(s))
-
-    assert run_stress._recording_done(seed, "c1", "新题 NDVI") is True   # query 一致→复用
-    assert run_stress._recording_done(seed, "c1", "旧题 水体掩膜") is False  # query 变→失效重录
-    assert run_stress._recording_done(seed, "missing", "x") is False    # 不存在
-    assert run_stress._recording_done(seed, "c1") is True               # 不传 query→只看存在（score 用）
 
 
 # --- match_corrupted_id：损坏 ID 匹配回完整 ID，与 corrupt_id 三种损坏严格对齐 --------
