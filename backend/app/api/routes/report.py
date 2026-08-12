@@ -41,7 +41,10 @@ async def create_report(request: ReportCreateRequest) -> ReportCreateResponse:
             imagery_id=request.imagery_id,
         )
     except ReportError as exc:
-        raise HTTPException(status_code=_ERROR_STATUS.get(exc.code, 400), detail=exc.message) from exc
+        raise HTTPException(
+            status_code=_ERROR_STATUS.get(exc.code, 400),
+            detail={"code": exc.code, "message": exc.message},
+        ) from exc
     return ReportCreateResponse(
         imagery_id=artifact.imagery_id,
         filename=artifact.filename,

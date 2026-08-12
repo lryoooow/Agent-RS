@@ -7,8 +7,8 @@ AutoGen 工具的返回值是给模型看的文本。但本项目的工具还会
 （地图图层）和 `tool_result`（执行详情），这些要经 SSE 回到前端渲染，不能塞进给模型的
 文本里（会把上下文撑爆，也会诱导模型复述图层元数据）。
 
-legacy 链路靠 `ToolRunResult` 一路 return 上去；AutoGen 链路中间隔着模型循环，
-return 链断了。所以用回合级 contextvar 收集，编排层在回合结束时取走。
+AutoGen 工具与最终响应之间隔着模型循环，所以用回合级 contextvar 收集产物，
+编排层在回合结束时取走。
 
 **2. 贵的工具要单独限流。**
 `AGENT_MAX_TOOL_ITERATIONS` 控制的是「模型能连续要几轮工具」，轻工具串 5 步只是秒级；
@@ -35,7 +35,7 @@ from typing import Iterator
 from app.agent.types import ToolRunResult
 from app.core.settings import get_settings
 
-# 需要 GPU 的重工具。与 domain_agents.TOOL_DOMAIN 的领域划分正交：
+# 需要 GPU 的重工具。与工具注册表里的 Agent 所有权正交：
 # 领域是「归谁管」，这里是「跑起来多贵」。
 GPU_HEAVY_TOOLS: frozenset[str] = frozenset({"detect_objects", "segment_landcover"})
 
@@ -75,6 +75,15 @@ class TurnToolState:
     # 与工具产物同理：AutoGen 的 Memory 协议没有返回值通道，只能靠回合级状态传递。
     retrieved_chunks: int = 0
     rag_trace: dict | None = None
+    # 「对话控图」目标：look_at_location 工具写入，编排层取走发 map_control 事件。
+    map_target: dict | None = None
+    # UI-originated parameters are trusted request context.  They override model
+    # arguments for the named tool so an LLM cannot silently expand a selected ROI.
+    trusted_tool_arguments: dict[str, dict] = field(default_factory=dict)
+
+    def arguments_for(self, tool_name: str, arguments: dict) -> dict:
+        trusted = self.trusted_tool_arguments.get(tool_name)
+        return {**arguments, **trusted} if trusted else arguments
 
     def record_retrieval(self, *, retrieved_chunks: int, trace: dict | None) -> None:
         self.retrieved_chunks += retrieved_chunks
@@ -166,7 +175,9 @@ def reset_turn_state(token: Token[TurnToolState | None]) -> None:
 
 
 @contextmanager
-def turn_scope() -> Iterator[TurnToolState]:
+def turn_scope(
+    *, trusted_tool_arguments: dict[str, dict] | None = None
+) -> Iterator[TurnToolState]:
     """一个回合的工具状态作用域。编排层在处理一次用户消息时包住整个链路。
 
     **按值保存/恢复，刻意不用 Token。** 这个作用域会被用在 async generator 里
@@ -178,7 +189,11 @@ def turn_scope() -> Iterator[TurnToolState]:
     `set()` 没有这个限制，所以改成先记住旧值、结束时再 set 回去。
     """
     previous = _turn_state.get()
-    state = TurnToolState()
+    state = TurnToolState(
+        trusted_tool_arguments={
+            name: dict(values) for name, values in (trusted_tool_arguments or {}).items()
+        }
+    )
     _turn_state.set(state)
     try:
         yield state

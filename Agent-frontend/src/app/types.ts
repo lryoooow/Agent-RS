@@ -28,32 +28,29 @@ export type Usage = {
 };
 
 export type AnalysisStatus = "analyzing" | "preparing" | "answering" | "complete";
+export type ThinkingSummaryStage =
+  | "context"
+  | "routing"
+  | "planning"
+  | "tool"
+  | "verification"
+  | "answer";
+export type ThinkingSummaryItem = {
+  stage: ThinkingSummaryStage;
+  status: "active" | "complete";
+};
 export type AgentStatus =
   | "context_assembled"
-  | "planning"
-  | "planning_fallback"
-  | "planner_started"
-  | "planner_completed"
-  | "planner_invalid"
-  | "planner_selected"
-  | "planner_no_call"
-  | "plan_validation_failed"
-  | "capability_guard_rejected"
-  | "classifier_skip"
-  | "classifier_force"
-  | "cache_hit_skip"
-  | "cache_hit_search"
+  | "routing_selected"
+  | "agent_selected"
   | "tool_requested"
   | "child_agent_running"
   | "tool_execution_started"
   | "tool_execution_completed"
   | "tool_execution_failed"
-  | "tool_fallback_used"
   | "tool_context_ready"
   | "geospatial_result_ready"
-  | "final_answering"
-  | "direct_answer"
-  | "tool_unavailable";
+  | "final_answering";
 
 export type ToolExecutionInfo = {
   mode: "docker_mcp" | "local_subprocess" | "local_fallback" | "failed";
@@ -194,6 +191,7 @@ export type ChatTurn = ChatMessage & {
   analysisLabel?: string;
   model?: string;
   provider?: string;
+  thinkingSummary?: ThinkingSummaryItem[];
   usage?: Usage;
   finishReason?: string;
   retrievedChunks?: number;
@@ -238,6 +236,18 @@ export type ConfigResponse = {
   auth_required: boolean;
   // 注册需邀请码：前端预留字段，当前后端已移除邀请码逻辑，恒为 false。
   invite_required: boolean;
+  agent_framework: "autogen";
+  available_flows: string[];
+  auto_flow_enabled: boolean;
+};
+
+export type ThinkingStrength = "low" | "medium" | "max";
+
+// 对话控图目标：agent 调 look_at_location 后经 map_control 事件下发，前端命令式应用到 mapRef。
+export type MapTarget = {
+  center: [number, number]; // [lng, lat]
+  zoom?: number;
+  bbox?: [[number, number], [number, number]]; // [[swLng, swLat], [neLng, neLat]] → fitBounds
 };
 
 export type StoredConfig = {
@@ -250,12 +260,26 @@ export type StoredConfig = {
   // 默认空，用户自行填写；后端按 client or env 链取值（填了就用、留空回落 .env）。
   baseUrl?: string;
   apiKey?: string;
+  // 仅保存在当前浏览器，并按请求送到本地后端；不写入对话或服务端配置。
+  tavilyApiKey?: string;
+  thinkingStrength?: ThinkingStrength;
 };
 
 export type ProviderConfig = {
   base_url?: string;
   api_key?: string;
   model?: string;
+};
+
+export type AvailableModel = {
+  id: string;
+  created?: number | null;
+  owned_by?: string | null;
+};
+
+export type ModelListResponse = {
+  models: AvailableModel[];
+  current_model: string;
 };
 
 export type ChatRequestBody = {
@@ -267,7 +291,12 @@ export type ChatRequestBody = {
   use_memory?: boolean;
   use_rag?: boolean;
   provider_config?: ProviderConfig;
+  search_config?: { api_key: string };
+  analysis_roi?:
+    | { kind: "geo"; bbox: [number, number, number, number] }
+    | { kind: "pixel"; rel: [number, number, number, number] };
   metadata?: Record<string, unknown>;
+  thinking_strength?: ThinkingStrength;
 };
 
 export type KnowledgeDocument = {

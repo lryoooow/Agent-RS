@@ -1,4 +1,5 @@
-import type { ChatRequestBody, ProviderConfig } from "../types";
+import type { ChatRequestBody, ProviderConfig, ThinkingStrength } from "../types";
+import type { Roi } from "./roi";
 
 export function buildChatRequestBody({
   messages,
@@ -9,6 +10,9 @@ export function buildChatRequestBody({
   model,
   providerConfig,
   metadata,
+  thinkingStrength,
+  tavilyApiKey,
+  analysisRoi,
 }: {
   messages: ChatRequestBody["messages"];
   systemPrompt: string;
@@ -18,6 +22,9 @@ export function buildChatRequestBody({
   model?: string | null;
   providerConfig?: ProviderConfig | null;
   metadata?: Record<string, unknown>;
+  thinkingStrength?: ThinkingStrength | null;
+  tavilyApiKey?: string | null;
+  analysisRoi?: Roi | null;
 }): ChatRequestBody {
   const body: ChatRequestBody = { messages, stream, use_memory: true, use_rag: useRag };
   if (systemPrompt.trim()) body.system_prompt = systemPrompt.trim();
@@ -33,5 +40,8 @@ export function buildChatRequestBody({
   if (metadata && Object.keys(metadata).length > 0) {
     body.metadata = metadata;
   }
+  if (thinkingStrength) body.thinking_strength = thinkingStrength;
+  if (tavilyApiKey?.trim()) body.search_config = { api_key: tavilyApiKey.trim() };
+  if (analysisRoi) body.analysis_roi = analysisRoi;
   return body;
 }

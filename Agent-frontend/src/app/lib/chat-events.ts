@@ -1,7 +1,15 @@
 import type { Dispatch, SetStateAction } from "react";
 import type { StreamHandlers } from "./sse";
 import { isHiddenAgentStatus, isToolRunningStatus, isToolSettlingStatus } from "./agent-status";
-import { appendToTurn, updateAnalysisStatus, uid, updateTurn } from "./turns";
+import {
+  appendThinkingSummary,
+  appendToTurn,
+  completeThinkingSummary,
+  updateAnalysisStatus,
+  uid,
+  updateTurn,
+} from "./turns";
+import { normalizeThinkingSummaryStage } from "./thinking-summary";
 import type {
   AgentStatus,
   AnalysisStatus,
@@ -21,6 +29,7 @@ export function createStreamHandlers(
   setTurns: SetTurns,
   assistantId: string,
   onConversationId?: (conversationId: string) => void,
+  onMapControl?: (target: Record<string, unknown>) => void,
 ): StreamHandlers {
   return {
     onMeta: (data) => {
@@ -37,6 +46,14 @@ export function createStreamHandlers(
     onDelta: (content) => {
       setTurns((prev) => appendToTurn(prev, assistantId, content));
     },
+    onThinkingSummary: (data) => {
+      const stage = normalizeThinkingSummaryStage(data.stage);
+      if (!stage) return;
+      setTurns((prev) => appendThinkingSummary(prev, assistantId, stage));
+    },
+    onMapControl: (target) => {
+      onMapControl?.(target);
+    },
     onAnalysisStatus: (data) => {
       const status = normalizeAnalysisStatus(data.status);
       if (!status) return;
@@ -47,15 +64,15 @@ export function createStreamHandlers(
       const status = normalizeAgentStatus(data.status);
       if (!status) return;
       const label = typeof data.label === "string" ? data.label : undefined;
-      // 规划等内部步骤：记录 agentStatus（气泡层已过滤不显示），但不覆盖顶部进度行，
-      // 否则"正在思考中"会被"正在判断是否需要联网/规划能力调用"等噪声闪掉。
+      // AutoGen 路由/选人等内部步骤只记录 agentStatus，不覆盖顶部进度行，
+      // 避免“正在思考中”被框架调度噪声闪掉。
       if (isHiddenAgentStatus(status)) {
         setTurns((prev) =>
           updateTurn(prev, assistantId, { agentStatus: status, agentLabel: label }),
         );
         return;
       }
-      // 顶部进度行（思考过程）与工具气泡分离：
+      // 顶部进度行（阶段摘要）与工具气泡分离：
       // - agentLabel 始终保留后端精确标签（如"正在进行地物分类"），喂工具气泡。
       // - analysisLabel 走干净的 4 段进度：执行态显示具体工具名（第 2 段），
       //   执行后态统一"正在梳理结果"（第 3 段），final_answering→"正在生成回复"。
@@ -89,9 +106,10 @@ export function createStreamHandlers(
       const finishReason = typeof data.finish_reason === "string" ? data.finish_reason : undefined;
       const failed = finishReason === "error";
       setTurns((prev) =>
-        updateTurn(prev, assistantId, {
+        completeThinkingSummary(
+          updateTurn(prev, assistantId, {
           analysisStatus: failed ? "answering" : "complete",
-          analysisLabel: failed ? "回答生成失败" : "思考完成",
+          analysisLabel: failed ? "回答生成失败" : "处理完成",
           error: failed,
           usage: data.usage as Usage | undefined,
           finishReason,
@@ -107,7 +125,9 @@ export function createStreamHandlers(
               : undefined,
           geospatialResult,
           toolResult,
-        }),
+          }),
+          assistantId,
+        ),
       );
     },
   };
@@ -145,30 +165,16 @@ function normalizeAnalysisStatus(value: unknown): AnalysisStatus | null {
 function normalizeAgentStatus(value: unknown): AgentStatus | null {
   if (
     value === "context_assembled" ||
-    value === "planning" ||
-    value === "planning_fallback" ||
-    value === "planner_started" ||
-    value === "planner_completed" ||
-    value === "planner_invalid" ||
-    value === "planner_selected" ||
-    value === "planner_no_call" ||
-    value === "plan_validation_failed" ||
-    value === "capability_guard_rejected" ||
-    value === "classifier_skip" ||
-    value === "classifier_force" ||
-    value === "cache_hit_skip" ||
-    value === "cache_hit_search" ||
+    value === "routing_selected" ||
+    value === "agent_selected" ||
     value === "tool_requested" ||
     value === "child_agent_running" ||
     value === "tool_execution_started" ||
     value === "tool_execution_completed" ||
     value === "tool_execution_failed" ||
-    value === "tool_fallback_used" ||
     value === "tool_context_ready" ||
     value === "geospatial_result_ready" ||
-    value === "final_answering" ||
-    value === "direct_answer" ||
-    value === "tool_unavailable"
+    value === "final_answering"
   ) {
     return value;
   }

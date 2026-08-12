@@ -7,7 +7,7 @@ class WebSearchArguments(BaseModel):
     query: str = Field(min_length=1)
     reason: str = Field(min_length=1)
     max_results: int | None = None
-    # 复合问题(如“天气+攻略”)可由 planner 拆成多个独立检索词；留空则回退到单一 query，向后兼容。
+    # 复合问题（如“天气+攻略”）可由搜索 Agent 拆成多个独立检索词；留空则回退到单一 query。
     queries: list[str] | None = None
 
     @field_validator("query", "reason")

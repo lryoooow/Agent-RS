@@ -1,7 +1,7 @@
 """heldout-v1 生成器：意图对象 → 自然语言 → 规则推导 label → 冻结 case。
 
 纪律：
-- 本模块禁止 import app.agent.llm_planner（不反向贴 prompt）。prompt_near 计算在 cases_generator。
+- 本模块禁止导入 AutoGen 运行时 prompt。prompt_near 计算在 cases_generator。
 - 配比 35/30/20/10/5；ID 来自 seed 确定性新池；label 由 derive_label 规则推导。
 - 整句零重复：拒绝采样保证 1000 条 query 互不相同（防"题量虚胖"）。
 - dataset_hash 由 (case_id, query, label) 指纹稳定计算，冻结后写 manifest。
@@ -20,7 +20,7 @@ import json
 from hashlib import sha256
 from random import Random
 
-from tests.ai.eval.cases import PlannerEvalCase
+from tests.ai.eval.cases import AutogenEvalCase
 from tests.ai.eval.cases_generator import is_prompt_near
 from tests.ai.eval.heldout_intents import (
     COMPOSITE_MODES,
@@ -61,7 +61,7 @@ HELDOUT_V4_DATASET = "heldout-v4"
 # v4 建于报告能力之前、含 0 条报告题，测不到新能力。v5 全新 seed 在 v4 基础上加报告维度：
 # positive 块嵌入"带分析史→call generate_report"正例，hard_negative 块嵌入"无分析史凭空要报告→none"
 # 反例（no_analysis_to_report）。报告通道不吃 imagery/document id，call/none 由 history 分析信号决定
-# （已实证 planner 判定成立）。改题加能力开新版冻结，遵盲测铁律（sealed run 禁换 prompt 重采）。
+# （已实证框架判定成立）。改题加能力开新版冻结，遵盲测铁律（sealed run 禁换 prompt 重采）。
 HELDOUT_V5_SEED = 20260618
 HELDOUT_V5_DATASET = "heldout-v5"
 
@@ -81,7 +81,7 @@ _VALID_RATIO_TOL = 0.03
 
 _DOC_CONTEXT = "用户已经上传了需要解析的 PDF/Word 文档。"
 
-# case_id 前缀 → 层 kind（稳定映射，避免给 PlannerEvalCase 加冗余字段）。
+# case_id 前缀 → 层 kind（稳定映射，避免给 AutogenEvalCase 加冗余字段）。
 _KIND_PREFIX = {
     "heldout_pos_": "positive",
     "heldout_neg_": "hard_negative",
@@ -122,12 +122,12 @@ class _UniqueQueries:
 
 def generate_heldout_cases(
     *, seed: int = HELDOUT_V1_SEED, target: int = HELDOUT_V1_TARGET, dataset: str = HELDOUT_DATASET
-) -> tuple[PlannerEvalCase, ...]:
+) -> tuple[AutogenEvalCase, ...]:
     rng = Random(seed)
     pool = HeldoutIdPool(rng)
     uniq = _UniqueQueries()
     counts = _counts(target)
-    cases: list[PlannerEvalCase] = []
+    cases: list[AutogenEvalCase] = []
     cases += _gen_positive(counts["positive"], rng, pool, uniq, seed, dataset)
     cases += _gen_hard_negative(counts["hard_negative"], rng, pool, uniq, seed, dataset)
     cases += _gen_boundary(counts["boundary"], rng, pool, uniq, seed, dataset)
@@ -157,7 +157,7 @@ def _build_case(
     dataset: str,
     extra_imagery: tuple[str, ...] = (),
     history: tuple[dict[str, str], ...] = (),
-) -> PlannerEvalCase:
+) -> AutogenEvalCase:
     inventory = imagery_inventory_for(intent.imagery_state, img)
     # 多图边界：追加诱饵自有图（指代/残缺ID 在多图下的歧义判定，验证修正后 derive_label 口径）。
     if extra_imagery:
@@ -168,7 +168,7 @@ def _build_case(
         )
     label = derive_label(intent, imagery_id=img, document_id=doc, inventory=inventory)
     document_context = _DOC_CONTEXT if intent.document_state == "valid" else ""
-    return PlannerEvalCase(
+    return AutogenEvalCase(
         case_id=case_id,
         query=query,
         expected_action=label.expected_action,  # type: ignore[arg-type]

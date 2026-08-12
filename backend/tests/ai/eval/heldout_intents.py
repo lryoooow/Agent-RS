@@ -1,9 +1,9 @@
 """heldout-v1 意图对象与规则推导（场景先行的 ground truth 源头）。
 
-设计纪律（对应规划五条铁律 + 防作弊约束）：
+设计纪律（对应评测五条铁律 + 防作弊约束）：
 - label 不手填：expected_action / capability / arguments 全部由 IntentSpec 经 derive_label 规则推导。
 - ID 不复用 dev-set 常量：新 ID 池由 seed 确定性生成，断言排除 PRIMARY/OTHER/DOCUMENT_ID。
-- 本模块禁止 import app.agent.llm_planner._planner_prompt（题库不得反向贴 prompt）。
+- 本模块禁止导入 AutoGen 运行时路由或 Agent prompt（题库不得反向贴 prompt）。
 """
 
 from __future__ import annotations
@@ -120,7 +120,7 @@ def derive_label(
         return DerivedLabel("call", "parse_document", {"document_id": document_id}, "main")
     if intent.wants == "generate_report":
         # 报告通道：不吃 imagery_id/document_id，只看本对话此前是否已产出分析结果。
-        # 有分析史 → call generate_report；无分析史（凭空要报告）→ none（与 planner no_analysis_to_report 同口径）。
+        # 有分析史 → call generate_report；无分析史（凭空要报告）→ none。
         if intent.prior_analysis_state != "has":
             return DerivedLabel("none", None, {}, "main")
         return DerivedLabel("call", "generate_report", {}, "main")

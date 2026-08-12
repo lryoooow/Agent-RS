@@ -1,54 +1,47 @@
-﻿from __future__ import annotations
+"""AutoGen structured Agent that extracts durable user memories."""
 
-import json
+from __future__ import annotations
+
 import logging
 
 from app.agent.config import resolve_ai_config
-from app.agent.embedding.service import get_embedding_service
-from app.agent.provider import create_chat_client
-from app.db.pool import fetch_optional_pool
-from app.db.repositories.memory import insert_memory
+from app.agent.engine import MemoryDecision, PgVectorMemory, decide_memory
+from app.agent.memory_types import DEFAULT_IMPORTANCE, DEFAULT_MEMORY_TYPE, MEMORY_TYPES
 from app.core.settings import get_settings
+from app.db.pool import fetch_optional_pool
 
 logger = logging.getLogger(__name__)
 
 MEMORY_JUDGE_INPUT_MAX_CHARS = 3000
 
 MEMORY_JUDGE_PROMPT = """你负责判断对话片段是否值得长期记忆。
-只记录用户稳定偏好、长期事实、项目约束、反复需要遵守的工作方式。
-不要记录一次性问题、普通寒暄、模型内部过程、密钥、隐私敏感信息。
-只返回 JSON：{"remember": true|false, "content": "...", "tags": ["..."]}
+只记录用户稳定偏好、长期事实、项目约束和反复需要遵守的工作方式。
+不要记录一次性问题、寒暄、模型内部过程、密钥或隐私敏感信息。
 
-示例（仅供格式与判别参考，不要照搬内容）：
-用户: 以后回复我都用中文，并且固定用 qwen3.7-max 模型。
--> {"remember": true, "content": "用户偏好：始终用中文回复，固定使用 qwen3.7-max 模型。", "tags": ["语言偏好", "模型偏好"]}
-用户: 帮我算一下 3 乘以 7 等于多少？
--> {"remember": false, "content": "", "tags": []}
-用户: 你好呀，在吗？
--> {"remember": false, "content": "", "tags": []}
-用户: 我们项目规定影像分析结论必须标注数据来源和时间。
--> {"remember": true, "content": "项目约束：影像分析结论必须标注数据来源与时间。", "tags": ["项目约束"]}"""
+memory_type 只能是 fact、preference、constraint、project：
+- preference：用户稳定偏好；constraint：违反就会出错的硬约束；
+- project：长期项目与数据设定；fact：其它稳定客观事实。
+importance 为 0.0-1.0；低于 0.4 的普通信息通常 remember=false。
+remember=false 时 content 为空、tags 为空。
+""".strip()
 
 
-def _parse_memory_payload(raw: str) -> dict:
+def _normalize_memory_type(value: object) -> str:
+    if isinstance(value, str) and value in MEMORY_TYPES:
+        return value
+    if value not in (None, ""):
+        logger.info("记忆判官给出未知 memory_type=%r，回退为 %s", value, DEFAULT_MEMORY_TYPE)
+    return DEFAULT_MEMORY_TYPE
+
+
+def _normalize_importance(value: object) -> float:
     try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError:
-        start = raw.find("{")
-        end = raw.rfind("}")
-        if start < 0 or end <= start:
-            raise
-        payload = json.loads(raw[start : end + 1])
-    if not isinstance(payload, dict):
-        raise json.JSONDecodeError("Memory judge payload is not a JSON object.", raw, 0)
-    return payload
-
-
-def _short_log_value(value: str, limit: int = 240) -> str:
-    normalized = " ".join(value.split())
-    if len(normalized) <= limit:
-        return normalized
-    return f"{normalized[:limit]}..."
+        number = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return DEFAULT_IMPORTANCE
+    if number > 1.0:
+        number = number / 100.0 if number <= 100.0 else 1.0
+    return min(1.0, max(0.0, number))
 
 
 async def maybe_store_memory(
@@ -64,53 +57,39 @@ async def maybe_store_memory(
         return
     if len(user_content.strip()) < settings.memory_judge_min_user_chars:
         return
-    pool = await fetch_optional_pool()
-    if pool is None:
+    if await fetch_optional_pool() is None:
         return
 
-    clipped_user_content = user_content[:MEMORY_JUDGE_INPUT_MAX_CHARS]
-    clipped_assistant_content = assistant_content[:MEMORY_JUDGE_INPUT_MAX_CHARS]
-
+    config = resolve_ai_config(request_model=settings.memory_judge_model or None)
     try:
-        config = resolve_ai_config(request_model=settings.memory_judge_model or None)
-        client = create_chat_client(config)
-        response = await client.chat.completions.create(
-            model=config.model,
-            messages=[
-                {"role": "system", "content": MEMORY_JUDGE_PROMPT},
-                {
-                    "role": "user",
-                    "content": (
-                        "用户消息：\n"
-                        f"{clipped_user_content}\n\n助手回复：\n{clipped_assistant_content}"
-                    ),
-                },
-            ],
-            stream=False,
+        task = (
+            "用户消息：\n"
+            f"{user_content[:MEMORY_JUDGE_INPUT_MAX_CHARS]}\n\n"
+            "助手回复：\n"
+            f"{assistant_content[:MEMORY_JUDGE_INPUT_MAX_CHARS]}"
         )
-        raw = response.choices[0].message.content or "{}"
-        try:
-            payload = _parse_memory_payload(raw)
-        except json.JSONDecodeError:
-            logger.warning("Memory judge returned non-JSON payload: %s", _short_log_value(raw))
+        decision = await decide_memory(
+            config=config,
+            model_override=settings.memory_judge_model or None,
+            system_message=MEMORY_JUDGE_PROMPT,
+            task=task,
+        )
+        if decision is None:
+            logger.warning("Memory judge returned no structured decision; skipping extraction.")
             return
-        if not payload.get("remember"):
+        content = decision.content.strip()
+        if not decision.remember or not content:
             return
-        content = str(payload.get("content") or "").strip()
-        if not content:
-            return
-        embedding = await get_embedding_service().embed_text(content)
-        async with pool.acquire() as conn:
-            await insert_memory(
-                conn,
-                user_id=user_id,
-                content=content,
-                embedding=embedding,
-                source_session_id=conversation_id,
-                metadata={
-                    "tags": payload.get("tags") or [],
-                    "source_message_id": source_message_id,
-                },
-            )
+
+        await PgVectorMemory(user_id=user_id).add_text(
+            content,
+            metadata={
+                "memory_type": _normalize_memory_type(decision.memory_type),
+                "importance": _normalize_importance(decision.importance),
+                "tags": decision.tags,
+                "source_session_id": conversation_id,
+                "source_message_id": source_message_id,
+            },
+        )
     except Exception:
         logger.exception("Memory judge pipeline failed.")

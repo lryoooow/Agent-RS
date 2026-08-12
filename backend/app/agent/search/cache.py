@@ -1,4 +1,4 @@
-﻿"""In-memory TTL caches for web search decisions and results."""
+﻿"""In-memory TTL cache for web-search results."""
 
 from __future__ import annotations
 
@@ -7,13 +7,7 @@ import re
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
-from enum import Enum
 from typing import Any
-
-
-class CachedDecision(Enum):
-    SEARCH = "search"
-    NO_SEARCH = "no_search"
 
 
 @dataclass(frozen=True)
@@ -68,24 +62,6 @@ class TTLCache:
         return len(self._store)
 
 
-class DecisionCache:
-    """Cache for search/no-search decisions keyed by normalized query and scope."""
-
-    def __init__(self, max_size: int = 256, ttl_seconds: float = 1800) -> None:
-        self._cache = TTLCache(max_size=max_size, ttl_seconds=ttl_seconds)
-
-    def get_decision(self, query: str, *, scope: str = "") -> CachedDecision | None:
-        key = _hash_key(f"{scope}|{_normalize_query(query)}")
-        return self._cache.get(key)
-
-    def put_decision(self, query: str, decision: CachedDecision, *, scope: str = "") -> None:
-        key = _hash_key(f"{scope}|{_normalize_query(query)}")
-        self._cache.put(key, decision)
-
-    def clear(self) -> None:
-        self._cache.clear()
-
-
 class ResultCache:
     """Cache for actual search results keyed by normalized query + max_results."""
 
@@ -104,40 +80,7 @@ class ResultCache:
         self._cache.clear()
 
 
-class PlannerDecisionCache:
-    """Cache validated planner decisions keyed by normalized query and scope."""
-
-    def __init__(self, max_size: int = 256, ttl_seconds: float = 1800) -> None:
-        self._cache = TTLCache(max_size=max_size, ttl_seconds=ttl_seconds)
-
-    def get_plan(self, query: str, *, scope: str = "") -> dict[str, Any] | None:
-        key = _hash_key(f"{scope}|{_normalize_query(query)}")
-        value = self._cache.get(key)
-        return value if isinstance(value, dict) else None
-
-    def put_plan(self, query: str, plan: dict[str, Any], *, scope: str = "") -> None:
-        key = _hash_key(f"{scope}|{_normalize_query(query)}")
-        self._cache.put(key, plan)
-
-    def clear(self) -> None:
-        self._cache.clear()
-
-
-_decision_cache: DecisionCache | None = None
 _result_cache: ResultCache | None = None
-_planner_decision_cache: PlannerDecisionCache | None = None
-
-
-def get_decision_cache() -> DecisionCache:
-    global _decision_cache
-    if _decision_cache is None:
-        from app.core.settings import get_settings
-        s = get_settings()
-        _decision_cache = DecisionCache(
-            max_size=s.agent_decision_cache_max_size,
-            ttl_seconds=s.agent_decision_cache_ttl_seconds,
-        )
-    return _decision_cache
 
 
 def get_result_cache() -> ResultCache:
@@ -150,15 +93,3 @@ def get_result_cache() -> ResultCache:
             ttl_seconds=s.agent_result_cache_ttl_seconds,
         )
     return _result_cache
-
-
-def get_planner_decision_cache() -> PlannerDecisionCache:
-    global _planner_decision_cache
-    if _planner_decision_cache is None:
-        from app.core.settings import get_settings
-        s = get_settings()
-        _planner_decision_cache = PlannerDecisionCache(
-            max_size=s.agent_decision_cache_max_size,
-            ttl_seconds=s.agent_decision_cache_ttl_seconds,
-        )
-    return _planner_decision_cache

@@ -20,11 +20,12 @@ class EmbeddingService:
     def __init__(self) -> None:
         self.settings = get_settings()
         self._semaphore = asyncio.Semaphore(self.settings.embedding_background_concurrency)
+        self._disabled_reason: str | None = None
         self._client = create_embedding_client(self.settings) if self.available else None
 
     @property
     def available(self) -> bool:
-        return bool(
+        return self._disabled_reason is None and bool(
             self.settings.resolved_embedding_base_url
             and self.settings.resolved_embedding_api_key
             and self.settings.embedding_model
@@ -69,17 +70,29 @@ class EmbeddingService:
                 raise
             except Exception as exc:
                 last_exc = exc
+                status_code = getattr(exc, "status_code", None)
+                if status_code in (401, 403):
+                    self._disabled_reason = "authentication_failed"
+                    logger.warning(
+                        "Embedding authentication failed; disabled until the service restarts."
+                    )
+                    raise EmbeddingUnavailableError(
+                        "Embedding authentication failed; service temporarily disabled."
+                    ) from None
                 if attempt >= max_retries:
                     break
                 sleep_seconds = delay * (2 ** attempt)
                 logger.warning(
-                    "Embedding batch failed; retrying.",
-                    extra={"attempt": attempt + 1, "sleep_seconds": sleep_seconds},
-                    exc_info=True,
+                    "Embedding batch failed; retrying (attempt=%d error=%s).",
+                    attempt + 1,
+                    type(exc).__name__,
                 )
                 if sleep_seconds:
                     await asyncio.sleep(sleep_seconds)
-        raise EmbeddingUnavailableError(f"Embedding batch failed after retries: {last_exc}") from last_exc
+        error_type = type(last_exc).__name__ if last_exc is not None else "unknown"
+        raise EmbeddingUnavailableError(
+            f"Embedding batch failed after retries ({error_type})."
+        ) from None
 
     async def _embed_batch_once(self, texts: list[str]) -> list[list[float]]:
         async with self._semaphore:
@@ -114,8 +127,8 @@ class EmbeddingService:
             return False
         try:
             await self.embed_text("ping")
-        except Exception:
-            logger.warning("Embedding startup ping failed.", exc_info=True)
+        except Exception as exc:
+            logger.warning("Embedding startup ping failed (error=%s).", type(exc).__name__)
             return False
         logger.info("Embedding startup ping succeeded.")
         return True

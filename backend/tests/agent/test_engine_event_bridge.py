@@ -1,12 +1,10 @@
-"""engine/event_bridge.py：AutoGen 消息 → 现有 SSE 契约。
-
-前端零改动是硬要求，所以这里逐条钉死契约：stage 名、五个 run/kind 字段、
-以及多步链路下气泡的归组方式。
-"""
+"""engine/event_bridge.py：AutoGen 消息 → SSE 契约。"""
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
+from typing import get_args
 
 import pytest
 from autogen_agentchat.messages import (
@@ -25,34 +23,9 @@ from app.agent.engine.event_bridge import (
     emit_geospatial_ready,
     translate,
 )
-from app.agent.types import AgentTrace
+from app.agent.types import AgentStage, AgentTrace
 
-# 前端 agent-status.ts 认识的全部 stage。事件桥不允许发明新 stage。
-FRONTEND_STAGES = {
-    "child_agent_running",
-    "tool_execution_started",
-    "tool_execution_completed",
-    "tool_fallback_used",
-    "tool_context_ready",
-    "geospatial_result_ready",
-    "planner_invalid",
-    "plan_validation_failed",
-    "capability_guard_rejected",
-    "tool_execution_failed",
-    "tool_unavailable",
-    "final_answering",
-    "direct_answer",
-    "planner_no_call",
-    "cache_hit_skip",
-    "cache_hit_search",
-    "context_assembled",
-    "planning",
-    "planning_fallback",
-    "planner_started",
-    "planner_completed",
-    "planner_selected",
-    "tool_requested",
-}
+BACKEND_STAGES = set(get_args(AgentStage))
 
 REQUIRED_TOOL_FIELDS = {
     "execution_kind",
@@ -100,13 +73,27 @@ def test_every_emitted_stage_is_known_to_the_frontend(bridge) -> None:
         emit_geospatial_ready(trace=trace, state=state, tool_name="calculate_ndvi", result_type="ndvi")
     )
 
-    unknown = {e.stage for e in events} - FRONTEND_STAGES
-    assert not unknown, f"发明了前端不认识的 stage: {unknown}"
+    unknown = {e.stage for e in events} - BACKEND_STAGES
+    assert not unknown, f"事件桥发出了 AgentStage 未声明的 stage: {unknown}"
 
 
-def test_tool_request_emits_the_legacy_three_step_sequence(bridge) -> None:
-    """legacy 的 ToolChildAgent 发 tool_requested → child_agent_running →
-    tool_execution_started 三连，前端据此把气泡推进到"转圈"。顺序不能变。"""
+def test_backend_and_frontend_agent_stage_unions_are_identical() -> None:
+    """跨语言契约不能靠两份手写清单碰巧一致。"""
+    frontend_types = (
+        Path(__file__).resolve().parents[3] / "Agent-frontend/src/app/types.ts"
+    ).read_text(encoding="utf-8")
+    match = re.search(
+        r"export type AgentStatus\s*=\s*(.*?);",
+        frontend_types,
+        flags=re.DOTALL,
+    )
+    assert match is not None
+    frontend_stages = set(re.findall(r'"([a-z_]+)"', match.group(1)))
+    assert frontend_stages == BACKEND_STAGES
+
+
+def test_tool_request_emits_the_three_step_sequence(bridge) -> None:
+    """工具请求发出三段状态，前端据此把气泡推进到“转圈”。"""
     trace, state = bridge
     events = translate(_request("spectral_agent", _call("calculate_ndvi", "c1")), trace=trace, state=state)
     assert [e.stage for e in events] == [
@@ -194,7 +181,7 @@ def test_unknown_message_type_is_ignored_not_fatal(bridge) -> None:
     assert translate(SomethingNew(), trace=trace, state=state) == []
 
 
-def test_trace_payload_shape_matches_legacy() -> None:
+def test_trace_payload_shape_is_stable() -> None:
     """agent_trace 的 JSON 结构是前端契约，字段名不能变。"""
     trace = AgentTrace(enabled=True)
     state = BridgeState()
@@ -205,19 +192,3 @@ def test_trace_payload_shape_matches_legacy() -> None:
     event = payload["events"][0]
     assert set(event) == {"stage", "label", "metadata", "elapsed_ms"}
     json.dumps(payload, ensure_ascii=False)  # 必须可序列化进 SSE
-
-
-def test_frontend_stage_list_is_in_sync_with_backend_types() -> None:
-    """本文件顶部那份 stage 清单必须与 app/agent/types.py 的 AgentStage 一致。
-
-    两边漂移时，要么后端发了前端不认识的 stage，要么这份测试失去意义。
-    """
-    types_path = Path(__file__).resolve().parents[2] / "app" / "agent" / "types.py"
-    source = types_path.read_text(encoding="utf-8-sig")
-    declared = set(
-        line.strip().strip('",')
-        for line in source.split("AgentStage = Literal[")[1].split("]")[0].splitlines()
-        if line.strip().startswith('"')
-    )
-    # 前端另有几个历史 stage（classifier_*）不在后端枚举里，只校验后端 ⊆ 本清单
-    assert declared <= FRONTEND_STAGES, f"后端新增了未登记的 stage: {declared - FRONTEND_STAGES}"

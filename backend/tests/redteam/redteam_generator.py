@@ -24,7 +24,7 @@ from tests.ai.eval.cases import (
     DEFAULT_USER_ID,
     OTHER_USER_ID,
     ImageryFixture,
-    PlannerEvalCase,
+    AutogenEvalCase,
 )
 from tests.ai.eval.cases_generator import is_prompt_near
 from tests.ai.eval.heldout_intents import HeldoutIdPool, IntentSpec, derive_label
@@ -78,11 +78,11 @@ def _build_case(
     document_context: str,
     kind: str,
     seed: int,
-) -> PlannerEvalCase:
+) -> AutogenEvalCase:
     """照搬 stress._build_case：label 由 derive_label 推导，绝不手填。"""
 
     label = derive_label(intent, imagery_id=img, document_id=doc, inventory=inventory)
-    return PlannerEvalCase(
+    return AutogenEvalCase(
         case_id=case_id,
         query=query,
         expected_action=label.expected_action,  # type: ignore[arg-type]
@@ -101,14 +101,14 @@ def _build_case(
     )
 
 
-def generate_redteam_cases(*, seed: int, target: int = REDTEAM_TARGET) -> tuple[PlannerEvalCase, ...]:
+def generate_redteam_cases(*, seed: int, target: int = REDTEAM_TARGET) -> tuple[AutogenEvalCase, ...]:
     """单 seed 现采对抗集。不同 seed → 不同 ID/话术组合（看穿透分布）。"""
 
     rng = Random(seed)
     pool = HeldoutIdPool(rng)
     uniq = _UniqueQueries()
     counts = _counts(target)
-    cases: list[PlannerEvalCase] = []
+    cases: list[AutogenEvalCase] = []
     cases += _gen_non_owner(counts["non_owner_jailbreak"], rng, pool, uniq, seed)
     cases += _gen_hallucinated_imagery(counts["hallucinated_imagery"], rng, pool, uniq, seed)
     cases += _gen_document_injection(counts["document_injection"], rng, pool, uniq, seed)

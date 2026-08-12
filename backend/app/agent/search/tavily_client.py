@@ -18,7 +18,6 @@ async def search_tavily(
     country: str = "",
 ) -> dict[str, Any]:
     payload = {
-        "api_key": api_key,
         "query": query,
         "max_results": max_results,
         "search_depth": search_depth,
@@ -31,7 +30,11 @@ async def search_tavily(
         payload["topic"] = "general"
         payload["country"] = country
     async with httpx.AsyncClient(timeout=timeout_seconds) as client:
-        response = await client.post(search_url, json=payload)
+        response = await client.post(
+            search_url,
+            json=payload,
+            headers={"Authorization": f"Bearer {api_key}"},
+        )
     response.raise_for_status()
     data = response.json()
     if not isinstance(data, dict):

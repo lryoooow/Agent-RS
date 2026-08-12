@@ -19,9 +19,9 @@ AutoGen 只认识 OpenAI 官方模型名，其它一律要求调用方显式声�
 
 ## 关于 extra_body
 
-项目原有代码给两类调用传了不同的 thinking 参数（阿里云百炼特有）：
+项目给两类调用传不同的 thinking 参数（阿里云百炼特有）：
 
-- 规划：`{"enable_thinking": False}`
+- 结构化路由：`{"enable_thinking": False}`
 - 主回答：`{"enable_thinking": True, "thinking_budget": N}`
 
 AutoGen 的 `create_kwargs` 允许 `extra_body`，所以这里原样保留。对不认识这些字段的
@@ -38,7 +38,7 @@ from autogen_core.models import ChatCompletionClient, ModelFamily, ModelInfo
 from autogen_ext.models.openai import OpenAIChatCompletionClient
 from autogen_ext.models.openai import _model_info as autogen_model_info
 
-from app.agent.config import ResolvedAIConfig, resolve_ai_config
+from app.agent.config import ResolvedAIConfig, resolve_ai_config, resolve_thinking_budget
 from app.core.settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -89,43 +89,47 @@ def resolve_model_info(model: str) -> ModelInfo:
         return dict(_COMPATIBLE_DEFAULT)  # type: ignore[return-value]
 
 
-def thinking_extra_body(*, enable: bool) -> dict[str, Any]:
+def thinking_extra_body(*, enable: bool, strength: str | None = None) -> dict[str, Any]:
     """项目原有的 thinking 透传参数。
 
-    与 legacy 链路保持一字不差，避免迁移后模型行为悄悄变化：
-    - 规划走 `enable_thinking: False`（llm_planner._create_completion）
-    - 主回答走 `enable_thinking: True` + budget（ai_service / runtime）
+    - 路由和结构化判定走 `enable_thinking: False`
+    - 主回答走 `enable_thinking: True` + budget
+    budget 由思考强度 strength 决定（low/medium/max 三档；None 回落服务端默认）。
     """
     if not enable:
         return {"enable_thinking": False}
     return {
         "enable_thinking": True,
-        "thinking_budget": get_settings().ai_thinking_budget,
+        "thinking_budget": resolve_thinking_budget(strength),
     }
 
 
 def build_model_client(
     config: ResolvedAIConfig | None = None,
     *,
-    for_planning: bool = False,
+    for_routing: bool = False,
+    model_override: str | None = None,
+    enable_thinking: bool | None = None,
     **create_args: Any,
 ) -> ChatCompletionClient:
     """构造 AutoGen 模型客户端。
 
     Args:
         config: 不传则用 `resolve_ai_config()`（env + 前端配置页降级链）。
-        for_planning: True 时使用 `AGENT_PLANNING_MODEL`（留空则复用主模型）并关闭 thinking，
-            与 legacy 的 `llm_planner` 行为一致。
+        for_routing: 流程路由调用；使用 `AGENT_ROUTER_MODEL` 并关闭 thinking。
+        model_override: 为后台专用 Agent 指定模型（例如记忆判官）。
+        enable_thinking: 显式控制 thinking；默认主回答开、路由调用关。
         **create_args: 追加的 create 参数（如 max_tokens、temperature）。
     """
     settings = get_settings()
     config = config or resolve_ai_config()
 
-    model = config.model
-    if for_planning:
-        model = settings.agent_planning_model.strip() or config.model
+    model = (model_override or "").strip() or config.model
+    if for_routing and not model_override:
+        model = settings.agent_router_model.strip() or config.model
 
-    extra_body = thinking_extra_body(enable=not for_planning)
+    thinking_enabled = not for_routing if enable_thinking is None else enable_thinking
+    extra_body = thinking_extra_body(enable=thinking_enabled, strength=config.thinking_strength)
 
     return OpenAIChatCompletionClient(
         model=model,

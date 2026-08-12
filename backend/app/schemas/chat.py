@@ -1,7 +1,9 @@
 import json
+import math
 from typing import Literal
+from urllib.parse import urlsplit
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 
 
 class ChatMessage(BaseModel):
@@ -21,6 +23,60 @@ class ProviderConfig(BaseModel):
     api_key: str | None = None
     model: str | None = None
 
+    @field_validator("base_url")
+    @classmethod
+    def base_url_must_be_http_scheme(cls, value: str | None) -> str | None:
+        # 在 API 边界快速拒掉 file://、ftp://、gopher:// 等非 http(s) scheme；
+        # 主机/内网范围的深度校验在 resolve_ai_config._validate_client_base_url 完成。
+        if value is None or not value.strip():
+            return None
+        scheme = urlsplit(value.strip()).scheme.lower()
+        if scheme not in ("http", "https"):
+            raise ValueError("base_url 必须是 http(s) 地址。")
+        return value
+
+
+class SearchConfig(BaseModel):
+    """Per-request search credential; deliberately excluded from repr/log output."""
+
+    api_key: SecretStr | None = Field(default=None, repr=False)
+
+    @field_validator("api_key")
+    @classmethod
+    def validate_api_key(cls, value: SecretStr | None) -> SecretStr | None:
+        if value is None:
+            return None
+        raw = value.get_secret_value().strip()
+        if not raw:
+            return None
+        if len(raw) > 512:
+            raise ValueError("Tavily API key is too long.")
+        return SecretStr(raw)
+
+
+class AnalysisROI(BaseModel):
+    """Trusted box selection sent by the map UI for ROI-capable tools."""
+
+    kind: Literal["geo", "pixel"]
+    bbox: tuple[float, float, float, float] | None = None
+    rel: tuple[float, float, float, float] | None = None
+
+    @model_validator(mode="after")
+    def validate_roi(self) -> "AnalysisROI":
+        values = self.bbox if self.kind == "geo" else self.rel
+        other = self.rel if self.kind == "geo" else self.bbox
+        if values is None or other is not None or not all(math.isfinite(v) for v in values):
+            raise ValueError("ROI fields do not match its kind.")
+        x0, y0, x1, y1 = values
+        if not (x0 < x1 and y0 < y1):
+            raise ValueError("ROI must have a positive area.")
+        if self.kind == "geo":
+            if not (-180 <= x0 <= 180 and -180 <= x1 <= 180 and -90 <= y0 <= 90 and -90 <= y1 <= 90):
+                raise ValueError("Geographic ROI is outside EPSG:4326 bounds.")
+        elif not all(0 <= value <= 1 for value in values):
+            raise ValueError("Pixel ROI coordinates must be within [0, 1].")
+        return self
+
 
 class ChatRequest(BaseModel):
     messages: list[ChatMessage] = Field(min_length=1, max_length=64)
@@ -28,10 +84,17 @@ class ChatRequest(BaseModel):
     system_prompt: str | None = None
     stream: bool = False
     provider_config: ProviderConfig | None = None
+    search_config: SearchConfig | None = Field(default=None, repr=False)
+    analysis_roi: AnalysisROI | None = None
     conversation_id: str | None = None
     use_memory: bool = True
     use_rag: bool = False
     metadata: dict | None = None
+    thinking_strength: Literal["low", "medium", "max"] | None = None
+
+    def tavily_api_key(self) -> str | None:
+        secret = self.search_config.api_key if self.search_config else None
+        return secret.get_secret_value() if secret else None
 
     @field_validator("metadata")
     @classmethod

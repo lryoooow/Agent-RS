@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
-from app.agent.tool_registry import RegisteredTool, get_tool, list_tool_definitions
+from app.agent.tool_registry import TOOLS, RegisteredTool, get_tool, list_tool_definitions
 from app.agent.types import ToolRunResult
 from app.core.settings import get_settings
 
@@ -40,53 +40,20 @@ def test_web_search_is_not_in_tool_registry() -> None:
     assert "parse_document" in names
 
 
-def test_every_registered_tool_is_allowed_by_its_route_channel() -> None:
-    """每个注册工具都必须在其对应的路由候选通道里，否则 plan_validator 会把它
-    静默降级为 capability_not_allowed_by_route。影像工具走 ALL_IMAGERY_TOOLS（吃 imagery_id），
-    文档工具走 ALL_DOCUMENT_TOOLS（吃 document_id），报告工具走 ALL_REPORT_TOOLS（读本对话结果），
-    按 tag 分流校验。新增工具时漏登记 routing 是已知坑，这条多通道回归测试守住它。"""
-    from app.agent.routing import ALL_DOCUMENT_TOOLS, ALL_IMAGERY_TOOLS, ALL_REPORT_TOOLS
-
-    imagery_channel = set(ALL_IMAGERY_TOOLS)
-    document_channel = set(ALL_DOCUMENT_TOOLS)
-    report_channel = set(ALL_REPORT_TOOLS)
-    # 三条通道两两不相交，否则分流语义被破坏。
-    assert not (imagery_channel & document_channel), "imagery/document 通道存在重叠工具"
-    assert not (imagery_channel & report_channel), "imagery/report 通道存在重叠工具"
-    assert not (document_channel & report_channel), "document/report 通道存在重叠工具"
-
-    unrouted: list[str] = []
-    for definition in list_tool_definitions(available_only=False):
-        name = definition["function"]["name"]
-        tool = get_tool(name)
-        assert tool is not None
-        tags = set(tool.tags)
-        if "report" in tags:
-            if name not in report_channel:
-                unrouted.append(f"{name} (report tag, missing from ALL_REPORT_TOOLS)")
-        elif "document" in tags:
-            if name not in document_channel:
-                unrouted.append(f"{name} (document tag, missing from ALL_DOCUMENT_TOOLS)")
-        else:
-            if name not in imagery_channel:
-                unrouted.append(f"{name} (imagery tag, missing from ALL_IMAGERY_TOOLS)")
-
-    assert not unrouted, f"these registered tools are missing from their route channel: {unrouted}"
+def test_every_registered_tool_declares_autogen_ownership_and_resource_kind() -> None:
+    for tool in TOOLS.values():
+        assert tool.agent_name.endswith("_agent")
+        assert tool.resource_kind in {"imagery", "document", "conversation", "none"}
 
 
-def test_document_tool_not_in_imagery_channel() -> None:
-    """文档工具绝不能混进影像通道——否则会被当成吃 imagery_id 的工具校验。"""
-    from app.agent.routing import ALL_IMAGERY_TOOLS
-
-    assert "parse_document" not in set(ALL_IMAGERY_TOOLS)
+def test_document_tool_not_marked_as_imagery() -> None:
+    assert get_tool("parse_document").resource_kind == "document"
 
 
-def test_cloud_shadow_mask_capability_auto_derived() -> None:
-    from app.agent.capability_registry import get_capability
-
-    cap = get_capability("cloud_shadow_mask")
-    assert cap is not None
-    assert cap.kind == "tool"
+def test_cloud_shadow_mask_has_preprocess_owner() -> None:
+    tool = get_tool("cloud_shadow_mask")
+    assert tool is not None
+    assert tool.agent_name == "preprocess_agent"
 
 
 def test_registered_tool_enabled_defaults_to_true() -> None:
@@ -98,6 +65,8 @@ def test_registered_tool_enabled_defaults_to_true() -> None:
         definition={"type": "function"},
         argument_model=Args,
         runner=_fake_runner,
+        agent_name="test_agent",
+        resource_kind="none",
     )
 
     assert tool.is_enabled() is True

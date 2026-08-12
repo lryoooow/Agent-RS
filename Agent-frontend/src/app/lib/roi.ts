@@ -2,10 +2,8 @@
 // 两种来源：
 //   - geo：带地理坐标的影像，地图上框选 → 经纬度 bbox [west, south, east, north]（EPSG:4326）。
 //   - pixel：无地理坐标的影像，查看器内框选 → 影像内相对位置 [x0, y0, x1, y1]，取值 0..1，左上角为原点。
-// 重要事实：后端所有分析工具（NDVI/检测/分割…）都是「全图计算」、无区域参数，
-// 只有 clip_reproject_raster 接受 bbox。所以 ROI 不会真正裁剪计算范围，
-// 它只作为「解读聚焦提示」注入下一轮对话 + 在图面画出。roiContextLine 必须显式声明这一点，
-// 避免模型谎称「只计算了选区」。意图识别仍由后端 LLM 负责，这里不做任何关键词路由。
+// segment_landcover 已支持可信 ROI：请求体将框选值作为 analysis_roi 发送，后端框架在
+// 工具执行前覆盖模型参数并先裁影像，所以地物分类只计算选区。其它未声明 ROI 的工具仍全图。
 
 export type GeoRoi = {
   kind: "geo";
@@ -78,7 +76,7 @@ function fmtPct(value01: number): string {
 
 /**
  * 生成注入下一轮对话的 system 提示文本。
- * 末句明确「工具计算仍基于整幅影像」——对齐后端全图计算事实，防止模型谎称只算选区。
+ * 明确能力边界：地物分类按 ROI 计算，其它工具仍基于整幅影像。
  */
 export function roiContextLine(roi: Roi): string {
   if (roi.kind === "geo") {
@@ -90,13 +88,13 @@ export function roiContextLine(roi: Roi): string {
       `右上[${fmtCoord(east)}, ${fmtCoord(north)}]、` +
       `左下[${fmtCoord(west)}, ${fmtCoord(south)}]、` +
       `右下[${fmtCoord(east)}, ${fmtCoord(south)}]。` +
-      `请在解读结果时重点关注该区域，并明确说明：当前遥感工具仍基于整幅影像计算，该范围仅用于聚焦解读。`
+      `地物分类工具 segment_landcover 将仅计算该选区；其它未声明 ROI 参数的遥感工具仍按整幅影像计算。`
     );
   }
   const [x0, y0, x1, y1] = roi.rel;
   return (
     `用户在影像上框选了分析聚焦区：以影像左上角为原点，` +
     `横向 ${fmtPct(x0)}–${fmtPct(x1)}、纵向 ${fmtPct(y0)}–${fmtPct(y1)} 的矩形区域（该影像无地理坐标，按影像内相对位置描述）。` +
-    `请在解读结果时重点关注该区域，并明确说明：当前遥感工具仍基于整幅影像计算，该范围仅用于聚焦解读。`
+    `地物分类工具 segment_landcover 将仅计算该选区；其它未声明 ROI 参数的遥感工具仍按整幅影像计算。`
   );
 }

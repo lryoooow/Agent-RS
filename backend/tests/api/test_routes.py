@@ -51,7 +51,65 @@ def test_config_route_does_not_leak_api_key(monkeypatch) -> None:
     assert body["prompt_dynamic_modules_enabled"] is True
     assert body["system_prompt_language"] == "zh-CN"
     assert body["allow_user_extra_instructions"] is True
+    assert body["agent_framework"] == "autogen"
+    assert body["available_flows"] == [
+        "detect_report",
+        "inspect_index_report",
+        "mask_segment_report",
+    ]
+    assert body["auto_flow_enabled"] is True
     assert "sk-test-secret" not in response.text
+
+
+def test_models_route_lists_provider_models_newest_first_without_key_leak(monkeypatch) -> None:
+    seen: dict = {}
+
+    class FakeResponse:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "data": [
+                    {"id": "older-model", "created": 10, "owned_by": "test"},
+                    {"id": "latest-model", "created": 20, "owned_by": "test"},
+                ]
+            }
+
+    class FakeClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        async def get(self, url, *, headers):
+            seen["url"] = url
+            seen["authorization"] = headers["Authorization"]
+            return FakeResponse()
+
+    monkeypatch.setenv("AI_BASE_URL", "https://provider.example/v1")
+    monkeypatch.setenv("AI_API_KEY", "server-secret")
+    monkeypatch.setenv("AI_DEFAULT_MODEL", "older-model")
+    monkeypatch.setattr("app.api.routes.config.httpx.AsyncClient", FakeClient)
+    client = make_client()
+
+    response = client.post("/api/config/models", json={})
+
+    assert response.status_code == 200
+    assert [item["id"] for item in response.json()["models"]] == [
+        "latest-model",
+        "older-model",
+    ]
+    assert response.json()["current_model"] == "older-model"
+    assert seen["url"] == "https://provider.example/v1/models"
+    assert seen["authorization"] == "Bearer server-secret"
+    assert "server-secret" not in response.text
 
 
 def test_chat_route_validates_messages() -> None:

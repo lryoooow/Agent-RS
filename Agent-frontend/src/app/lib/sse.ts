@@ -6,8 +6,10 @@ type ParsedSSEEvent = {
 export type StreamHandlers = {
   onMeta: (data: Record<string, unknown>) => void;
   onDelta: (content: string) => void;
+  onThinkingSummary?: (data: Record<string, unknown>) => void;
   onAnalysisStatus: (data: Record<string, unknown>) => void;
   onAgentStatus?: (data: Record<string, unknown>) => void;
+  onMapControl?: (target: Record<string, unknown>) => void;
   onDone: (data: Record<string, unknown>) => void;
 };
 
@@ -18,13 +20,17 @@ export async function readStreamResponse(res: Response, handlers: StreamHandlers
   const decoder = new TextDecoder();
   let buffer = "";
 
-  async function handleEvent(parsed: ParsedSSEEvent) {
+  async function handleEvent(parsed: ParsedSSEEvent): Promise<boolean> {
     if (parsed.event === "meta") {
       handlers.onMeta(parsed.data);
     }
 
     if (parsed.event === "delta" && typeof parsed.data.content === "string") {
       handlers.onDelta(parsed.data.content);
+    }
+
+    if (parsed.event === "thinking_summary") {
+      handlers.onThinkingSummary?.(parsed.data);
     }
 
     if (parsed.event === "analysis_status") {
@@ -35,13 +41,25 @@ export async function readStreamResponse(res: Response, handlers: StreamHandlers
       handlers.onAgentStatus?.(parsed.data);
     }
 
+    if (parsed.event === "map_control") {
+      handlers.onMapControl?.(parsed.data);
+    }
+
     if (parsed.event === "done") {
       handlers.onDone(parsed.data);
+      return true;
     }
 
     if (parsed.event === "error") {
       throw new Error(typeof parsed.data.message === "string" ? parsed.data.message : "Streaming request failed.");
     }
+    return false;
+  }
+
+  async function finishAtProtocolEnd() {
+    // SSE 的 done 是应用层终点。部分代理/浏览器会迟迟不关闭 HTTP 连接；继续等 EOF
+    // 会让发送按钮和光标一直处于生成态。后端在发送 done 前已经完成持久化，可安全取消 reader。
+    await reader.cancel().catch(() => undefined);
   }
 
   while (true) {
@@ -54,7 +72,10 @@ export async function readStreamResponse(res: Response, handlers: StreamHandlers
       buffer = buffer.slice(separator + 2);
       if (block) {
         const parsed = parseSSEBlock(block);
-        if (parsed) await handleEvent(parsed);
+        if (parsed && (await handleEvent(parsed))) {
+          await finishAtProtocolEnd();
+          return;
+        }
       }
       separator = buffer.indexOf("\n\n");
     }
@@ -63,7 +84,10 @@ export async function readStreamResponse(res: Response, handlers: StreamHandlers
       const block = buffer.trim();
       if (block) {
         const parsed = parseSSEBlock(block);
-        if (parsed) await handleEvent(parsed);
+        if (parsed && (await handleEvent(parsed))) {
+          await finishAtProtocolEnd();
+          return;
+        }
       }
       return;
     }

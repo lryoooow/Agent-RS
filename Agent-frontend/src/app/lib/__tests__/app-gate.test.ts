@@ -20,6 +20,9 @@ function cfg(overrides: Partial<ConfigResponse> = {}): ConfigResponse {
     web_search_configured: true,
     auth_required: true,
     invite_required: false,
+    agent_framework: "autogen",
+    available_flows: ["detect_report", "inspect_index_report", "mask_segment_report"],
+    auto_flow_enabled: true,
     ...overrides,
   };
 }

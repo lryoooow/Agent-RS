@@ -1,25 +1,10 @@
-"""联网搜索：从「一次性检索管道」升级成真 Agent。
+"""AutoGen 联网搜索 Agent。
 
-## legacy 的现状
-
-`docs/agent-tool-architecture.md:15` 原文写着：
-
-> Web search is a child agent. It currently has no internal LLM loop; if query rewriting,
-> multi-step search, or source self-checking is needed later, that logic belongs inside
-> `SearchChildAgent`.
-
-也就是说 legacy 的 `SearchChildAgent` 只是「拿 planner 给的检索词去调 Tavily，
-把结果格式化」，没有任何自主性。检索词不好就只能得到坏结果，没有第二次机会。
-
-## 升级后
-
-把 `run_web_search` 包成工具交给一个真 `AssistantAgent`，它就能：
+把确定性的 `run_web_search` 包成工具交给 `AssistantAgent`，它可以：
 
 - **改写检索词**：第一次没查到有用的，换个说法再来
 - **多轮检索**：复合问题先查一个意图，看结果再决定第二个怎么查
 - **来源自查**：结果自相矛盾或明显过期时，主动补一次检索而不是照抄
-
-这三件正是那段注释预告的「later」。
 
 检索实现本身（Tavily 客户端、结果过滤、去重、格式化、缓存）一行不改。
 """
@@ -30,9 +15,11 @@ import logging
 
 from autogen_agentchat.agents import AssistantAgent
 from autogen_core import CancellationToken
+from autogen_core.memory import Memory
 from autogen_core.models import ChatCompletionClient
 from autogen_core.tools import BaseTool
 
+from app.agent.engine.agents import COMPLETION_PROTOCOL, ContextFactory
 from app.agent.engine.context import BudgetedChatCompletionContext
 from app.agent.engine.turn_context import (
     WEB_SEARCH_TOOL,
@@ -40,14 +27,15 @@ from app.agent.engine.turn_context import (
     current_turn_state,
 )
 from app.agent.search.agent import run_web_search
+from app.agent.search.credentials import resolve_tavily_api_key
 from app.agent.search.schema import WebSearchArguments
 from app.core.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
 SEARCH_AGENT_NAME = "search_agent"
-# 检索专家不在 domain_agents 的三张表里（那三张表只管遥感工具的领域归属），
-# 所以它的中文名要单独给，否则事件桥回落到原始 name，
+# 检索专家不持有遥感工具注册表中的工具，所以中文名在这里单独声明，
+# 否则事件桥回落到原始 name，
 # 前端会显示成「由 search_agent 处理」这种中英夹杂的字样。
 SEARCH_AGENT_LABEL = "联网检索"
 
@@ -69,7 +57,7 @@ _SEARCH_SYSTEM_MESSAGE = """
 
 
 class WebSearchTool(BaseTool[WebSearchArguments, str]):
-    """Tavily 检索工具。检索实现复用 legacy 的 `run_web_search`。"""
+    """Tavily 检索工具。"""
 
     def __init__(self) -> None:
         super().__init__(
@@ -87,8 +75,7 @@ class WebSearchTool(BaseTool[WebSearchArguments, str]):
 
         state = current_turn_state()
         # 检索按次计费，`AGENT_WEB_SEARCH_MAX_CALLS` 必须真的是上限。
-        # legacy 靠 `routing.max_tool_calls=1` 间接卡住了它；AutoGen 下 Agent 能连续要工具，
-        # 不在这里拦就等于这个设置只剩「开/关」的作用，一个回合能打满 max_tool_iterations 次。
+        # Agent 能连续要工具，因此服务端必须在这里强制按回合计费配额。
         if state is not None and not state.try_reserve(WEB_SEARCH_TOOL):
             limit = state.quota_limit(WEB_SEARCH_TOOL)
             logger.info("联网检索被回合配额拦下（上限 %s 次）", limit)
@@ -123,15 +110,21 @@ class WebSearchTool(BaseTool[WebSearchArguments, str]):
         return result.tool_context
 
 
-def build_search_agent(*, model_client: ChatCompletionClient) -> AssistantAgent:
+def build_search_agent(
+    *,
+    model_client: ChatCompletionClient,
+    memory: list[Memory] | None = None,
+    context_factory: ContextFactory | None = None,
+) -> AssistantAgent:
     settings = get_settings()
     return AssistantAgent(
         name=SEARCH_AGENT_NAME,
         description="联网检索专家，负责查证实时、最新或需要外部来源的信息（天气、价格、政策、官网等）。",
         model_client=model_client,
         tools=[WebSearchTool()],
-        system_message=_SEARCH_SYSTEM_MESSAGE,
-        model_context=BudgetedChatCompletionContext(),
+        system_message=f"{_SEARCH_SYSTEM_MESSAGE}\n\n{COMPLETION_PROTOCOL}",
+        model_context=context_factory() if context_factory else BudgetedChatCompletionContext(),
+        memory=memory or None,
         # 多轮检索的上限。与遥感工具共用同一个设置：都是"模型能连续要几次工具"。
         max_tool_iterations=max(1, settings.agent_max_tool_iterations),
         reflect_on_tool_use=True,
@@ -140,6 +133,6 @@ def build_search_agent(*, model_client: ChatCompletionClient) -> AssistantAgent:
 
 
 def search_agent_available() -> bool:
-    """与 legacy 的 `_web_search_enabled` 判定保持一致。"""
+    """只有配置密钥且配额大于零时才组装搜索 Agent。"""
     settings = get_settings()
-    return bool(settings.tavily_api_key.strip() and settings.agent_web_search_max_calls > 0)
+    return bool(resolve_tavily_api_key() and settings.agent_web_search_max_calls > 0)

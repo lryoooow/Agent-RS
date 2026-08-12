@@ -105,7 +105,7 @@ async def list_recent_messages(
               AND c.created_by_user_id = $2::uuid
               AND m.status = 'complete'
               AND m.role IN ('user', 'assistant', 'system')
-            ORDER BY m.created_at DESC
+            ORDER BY m.created_at DESC, m.seq DESC
             LIMIT $3
             """,
             conversation_id,
@@ -120,7 +120,7 @@ async def list_recent_messages(
             WHERE conversation_id = $1::uuid
               AND status = 'complete'
               AND role IN ('user', 'assistant', 'system')
-            ORDER BY created_at DESC
+            ORDER BY created_at DESC, seq DESC
             LIMIT $2
             """,
             conversation_id,

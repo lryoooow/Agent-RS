@@ -113,7 +113,8 @@ async def claim_stale_job(conn, *, stale_after_seconds: int) -> dict[str, Any] |
           FROM public.tool_jobs
           WHERE attempts < max_attempts
             AND (
-              status = 'pending'
+              (status = 'pending'
+               AND (heartbeat_at IS NULL OR heartbeat_at < now()))
               OR (status = 'running'
                   AND (heartbeat_at IS NULL
                        OR heartbeat_at < now() - make_interval(secs => $1)))

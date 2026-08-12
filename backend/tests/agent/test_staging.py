@@ -164,6 +164,30 @@ async def test_minio_staging_cleans_up_on_exception(minio_backend) -> None:
 
 
 @pytest.mark.asyncio
+async def test_minio_staging_preserves_tempdir_on_upload_failure(minio_backend, monkeypatch) -> None:
+    # P1-5：runner 成功产出结果但上传对象存储失败时，不得抹掉临时目录（GPU 结果的唯一本地副本）。
+    store = minio_backend
+    store.seed("94e758f38ede/source.tif", b"SRC")
+    monkeypatch.setattr(staging, "_UPLOAD_BACKOFF_SECONDS", 0.0)  # 重试不等，加速测试
+
+    async def fail_put(key: str, path: Path) -> None:
+        raise ConnectionError("simulated minio 5xx")
+
+    monkeypatch.setattr(store, "put", fail_put)
+
+    captured: dict[str, Path] = {}
+    async with stage_imagery("94e758f38ede"):
+        tmp_dir = staged_imagery_dir("94e758f38ede")
+        (tmp_dir / "results" / "ndvi.png").write_bytes(b"PNG")
+        captured["dir"] = tmp_dir
+
+    # 上传失败 → 临时目录保留（结果可恢复），不再被无条件清理。
+    assert captured["dir"].exists()
+    assert (captured["dir"] / "results" / "ndvi.png").read_bytes() == b"PNG"
+    assert staged_imagery_dir("94e758f38ede") is None  # contextvar 仍复原
+
+
+@pytest.mark.asyncio
 async def test_minio_staging_restores_outer_contextvar(minio_backend) -> None:
     # 嵌套隔离：外层已有一个 staged 映射时，内层 staging 进出不破坏外层条目。
     store = minio_backend

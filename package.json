@@ -3,6 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "scripts": {
+    "dev": "bash scripts/dev.sh",
     "dev:frontend": "npm --prefix Agent-frontend run dev",
     "build:frontend": "npm --prefix Agent-frontend run build",
     "typecheck:frontend": "npm --prefix Agent-frontend run type-check",

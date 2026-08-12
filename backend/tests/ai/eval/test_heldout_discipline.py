@@ -71,11 +71,11 @@ def _imported_names(path: Path) -> set[str]:
 
 
 @pytest.mark.parametrize("module_name", _HELDOUT_MODULES)
-def test_generator_does_not_import_planner_prompt(module_name: str) -> None:
+def test_generator_does_not_import_runtime_prompts(module_name: str) -> None:
     names = _imported_names(EVAL_DIR / module_name)
-    assert "_planner_prompt" not in names, f"{module_name} 反向贴 prompt 被拦截"
-    assert not any(name.startswith("app.agent.llm_planner") for name in names), (
-        f"{module_name} 不得 import llm_planner 模块"
+    forbidden = ("app.agent.engine.router", "app.agent.engine.agents")
+    assert not any(name.startswith(forbidden) for name in names), (
+        f"{module_name} 不得 import AutoGen 运行时 prompt 模块"
     )
 
 

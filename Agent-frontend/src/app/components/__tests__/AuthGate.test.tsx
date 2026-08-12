@@ -33,11 +33,11 @@ describe("AuthGate 登录页", () => {
     expect(screen.getByRole("button", { name: "登录" })).toBeInTheDocument();
   });
 
-  it("【注册页】切到注册页显示姓名、邮箱、密码字段", async () => {
+  it("【注册页】切到注册页显示昵称、邮箱、密码字段", async () => {
     const user = userEvent.setup();
     render(<AuthGate auth={makeAuth()} />);
     await user.click(screen.getByRole("tab", { name: "注册" }));
-    expect(screen.getByText("姓名")).toBeInTheDocument();
+    expect(screen.getByText("昵称")).toBeInTheDocument();
     expect(screen.getByText("邮箱")).toBeInTheDocument();
     expect(screen.getByText("密码")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "注册并登录" })).toBeInTheDocument();

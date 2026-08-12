@@ -1,24 +1,7 @@
-"""顶层编排：SelectorGroupChat 选领域，替换 legacy 的三件套。
+"""顶层 AutoGen 编排：自动 GraphFlow 路由与 SelectorGroupChat 兜底。
 
-## 替换掉了什么
-
-legacy 的 `AgentRuntime` + `TaskSelector` + `LLMCapabilityPlanner`：
-一个自定义 JSON 协议的规划器，选一个能力，执行一次，结束。硬编码
-`max_tool_calls=1`（`routing.py:38`）。
-
-现在是：selector 选领域 → 领域 Agent 自己跑多步工具循环 → 需要跨领域时
-selector 再选下一个 → 直到有 Agent 说 [DONE] 或到轮次上限。
-
-## 判别规则的去向
-
-`llm_planner._planner_prompt()` 里那一大段规则是真实踩坑沉淀，必须全部保留，
-但它们分属两个层次：
-
-- **选谁来做** → 本文件的 selector prompt
-- **该不该调工具、ID 怎么处理** → 领域 Agent 的 system_message（见 agents.py:_SHARED_RULES）
-
-拆开是因为在 AutoGen 架构下，"要不要调工具"已经是 Agent 自己的决定，
-不再是选人阶段的事。硬塞进 selector 反而会让它越权替 Agent 做决定。
+Selector 选领域，领域 Agent 自己运行多步工具循环，需要跨领域时再选择下一位；
+完整命中标准作业的请求则走固定 GraphFlow。直到 Agent 以 [DONE] 收尾或达到轮次上限。
 
 ## 终止
 
@@ -47,7 +30,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, AsyncGenerator, AsyncIterator, Sequence
 
-from autogen_agentchat.base import TaskResult
+from autogen_agentchat.base import TaskResult, Team
 from autogen_agentchat.conditions import (
     ExternalTermination,
     FunctionalTermination,
@@ -60,27 +43,46 @@ from autogen_core.memory import Memory
 from autogen_core.models import ChatCompletionClient
 
 from app.agent.engine.agents import build_domain_agents, domain_specs
-from app.agent.engine.context import BudgetedChatCompletionContext
+from app.agent.engine.flows import build_flow
+from app.agent.engine.input import TurnInput
 from app.agent.engine.memory import PgVectorMemory, RagMemory
 from app.agent.engine.model_client import build_model_client
+from app.agent.engine.router import RouteResult, choose_route
 from app.agent.engine.search import build_search_agent, search_agent_available
 from app.agent.engine.turn_context import TurnToolState, turn_scope
-from app.agent.config import ResolvedAIConfig
-from app.agent.reasoning import ReasoningPart, ThinkTagParser, split_think_blocks
+from app.agent.config import ResolvedAIConfig, resolve_ai_config
+from app.agent.reasoning import (
+    NarratedReasoningFilter,
+    ReasoningPart,
+    ThinkTagParser,
+    split_think_blocks,
+)
 from app.auth import user_scope
-from app.core.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
 DONE_MARKER = "[DONE]"
 _DONE_PATTERN = re.compile(r"\s*\[DONE\]\s*$")
+HANDOFF_PREFIX = "[HANDOFF:"
+_HANDOFF_PATTERN = re.compile(
+    r"\[HANDOFF:\s*(?P<target>[A-Za-z][A-Za-z0-9_]*)\]\s*$",
+    re.IGNORECASE,
+)
 
-# 「进度自检」是 agents.py 第 12 条铁律要求 Agent 输出的完成度清单，
-# 它存在的唯一目的是让 selector 判断链路走完没有。对用户来说是内部噪声。
+# 旧版协议曾要求输出「进度自检」。新协议已删除，但净化器继续兼容历史模型输出，
+# 防止滚动升级或提示缓存把旧脚手架泄露给用户。
 SELF_CHECK_HEADER = "进度自检"
 
 # 出现即表示「后面都是脚手架」的标记。顺序无关，取最早出现的那个。
-_SCAFFOLD_SENTINELS: tuple[str, ...] = (SELF_CHECK_HEADER, DONE_MARKER)
+_SCAFFOLD_SENTINELS: tuple[str, ...] = (
+    SELF_CHECK_HEADER,
+    DONE_MARKER,
+    HANDOFF_PREFIX,
+)
+
+# SelectorGroupChat 是自由请求的兜底，不是无限自治循环。标准的长作业已经走 GraphFlow；
+# 兜底团队最多保留四位专家接力，避免供应商漏控制行时把一次请求拖成十余轮。
+_SELECTOR_MAX_TURNS = 4
 
 _SELECTOR_PROMPT = """你是 Agent-RS 的调度器，负责决定下一步由哪个专家来做。
 
@@ -93,16 +95,15 @@ _SELECTOR_PROMPT = """你是 Agent-RS 的调度器，负责决定下一步由哪
 从 {participants} 中选出下一个发言者，只返回角色名。
 
 判别要点：
-- 用户问概念、原理、翻译、代码、数学、写作等一般性问题：选任意一个专家直接作答即可，
-  专家自己会判断不调用工具。
+- 用户问概念、原理、翻译、代码、数学、写作等一般性问题：选 general_agent。
 - 需要实时、最新、外部可验证的信息（天气、价格、政策、官网、最新数据集）：选检索专家。
+- 用户要求查看、前往、定位或跳转到一个地名：选 navigation_agent。
 - 涉及影像计算：按任务类型选对应领域专家。
 
 **跨领域接力（最容易出错的地方，务必读完）：**
 - 用户一句话要求多个步骤时（例如"重投影 → 算 NDVI → 出报告"），
   这些步骤分属不同专家，必须**一棒一棒接力**完成，不能只做第一步就收工。
-- 上一位专家做完自己那部分、并说明"接下来需要 XXX 专家 / 这一步不在我的工具集"时：
-  **立刻选它点名的那个专家**，不要重复选同一个人。
+- 上一位专家以 `[HANDOFF: XXX_agent]` 收尾时，下一位必须是它明确点名的专家。
 - 判断还有没有剩余步骤，看的是**用户最初的请求**，不是上一条消息。
   只要用户要求里还有没做的步骤，就继续选人。
 - 只有当用户最初请求的**全部**步骤都完成时，才停止选人。
@@ -112,12 +113,18 @@ _SELECTOR_PROMPT = """你是 Agent-RS 的调度器，负责决定下一步由哪
 
 @dataclass
 class OrchestrationResult:
-    """一次编排的产出。字段与 legacy 的 AgentPlanResult 对齐，便于上层复用。"""
+    """一次 AutoGen 编排的产出。"""
 
     content: str
     messages: list[BaseChatMessage] = field(default_factory=list)
     turn_state: TurnToolState | None = None
     stop_reason: str | None = None
+    usage: dict | None = None
+    map_target: dict | None = None
+    framework: str = "autogen"
+    strategy: str = "selector"
+    flow_name: str | None = None
+    route_reason: str = ""
 
     @property
     def geospatial_result(self):
@@ -141,7 +148,7 @@ class OrchestrationResult:
 
 
 def _all_steps_done(messages: Sequence[Any]) -> bool:
-    """终止判据：最新一条对话消息**以** [DONE] 结尾。
+    """严格 DONE 判据：最新一条对话消息**以** [DONE] 结尾。
 
     为什么不用 `TextMentionTermination(DONE_MARKER)`：它检查消息里**任意位置**是否出现该串，
     而 `[DONE]` 这个串本身就写在 Agent 的 system prompt 里。实测中 Agent 复述规则
@@ -156,6 +163,48 @@ def _all_steps_done(messages: Sequence[Any]) -> bool:
             continue
         return text.rstrip().endswith(DONE_MARKER)
     return False
+
+
+def _explicit_handoff(
+    messages: Sequence[Any], participant_names: Sequence[str]
+) -> str | None:
+    """读取最新专家消息末尾的严格交接控制行。
+
+    只接受已注册专家，并拒绝把任务交回给当前发言者。自然语言里偶然提到
+    ``report_agent`` 不算交接，避免 selector 因正文中的名册或示例继续空转。
+    """
+    latest: TextMessage | None = None
+    for message in reversed(messages):
+        if isinstance(message, TextMessage) and message.source != "user":
+            latest = message
+            break
+    if latest is None:
+        return None
+
+    match = _HANDOFF_PATTERN.search(latest.to_model_text())
+    if match is None:
+        return None
+    registered = {name.lower(): name for name in participant_names}
+    target = registered.get(match.group("target").lower())
+    if target is None or target == latest.source:
+        return None
+    return target
+
+
+def _selector_turn_complete(
+    messages: Sequence[Any], participant_names: Sequence[str]
+) -> bool:
+    """专家已经给出文本且没有合法交接时立即结束当前回合。
+
+    ``[DONE]`` 仍是正常协议，但不再是唯一逃生口。供应商偶尔漏写控制行时，
+    一条完整答复应当被视为最终答复，而不是触发下一次选人和重复生成。
+    """
+    if _all_steps_done(messages):
+        return True
+    has_agent_text = any(_message_text(message) is not None for message in messages)
+    if not has_agent_text:
+        return False
+    return _explicit_handoff(messages, participant_names) is None
 
 
 def _message_text(message: Any) -> str | None:
@@ -195,6 +244,7 @@ def strip_scaffolding(text: str) -> str:
     cut = text.find(SELF_CHECK_HEADER)
     if cut != -1:
         text = _drop_trailing_rule(text[:cut])
+    text = _HANDOFF_PATTERN.sub("", text)
     return strip_done_marker(text)
 
 
@@ -250,11 +300,7 @@ def _held_back(buffer: str) -> int:
 
 
 def _visible(parts: list[ReasoningPart]) -> str:
-    """只取 ThinkTagParser 的正文通道，思考内容直接丢弃。
-
-    legacy 的 SSE 把 reasoning 单独发一条通道给前端展示；这里不发，
-    因为 event_bridge 的映射表里没有对应 stage，凭空加一个就等于让前端改。
-    """
+    """只取 ThinkTagParser 的正文通道，内部推理永久丢弃。"""
     return "".join(value for channel, value in parts if channel == "content")
 
 
@@ -275,6 +321,7 @@ class AnswerStreamSanitizer:
         self._buffer = ""
         self._suppressed = False
         self._think = ThinkTagParser()
+        self._narrated = NarratedReasoningFilter()
 
     def feed(self, chunk: str) -> str:
         """喂进一个分片，返回可以安全发给用户的部分（可能是空串）。"""
@@ -283,7 +330,9 @@ class AnswerStreamSanitizer:
         # 思考块先剥，理由同 strip_scaffolding：<think> 里复述规则写出的
         # 「进度自检」会误触发下面的截断。ThinkTagParser 同样是有状态的
         # （`<think>` 也会被切成 `<th` + `ink>`），与标记缓冲逻辑正交。
-        self._buffer += _visible(self._think.feed(chunk))
+        # reasoning 通道绝不能缓存、返回或记录。此前这里把它累积后经 thinking SSE
+        # 原样发给浏览器，既泄漏内部推理，也造成无上限前端状态增长。
+        self._buffer += self._narrated.feed(_visible(self._think.feed(chunk)))
         if not self._buffer:
             return ""
 
@@ -313,12 +362,13 @@ class AnswerStreamSanitizer:
         `in_reasoning` 状态，否则上一条若以未闭合的 `<think>` 结束，
         下一位专家的正文会被整段当成思考丢掉。
         """
-        self._buffer += _visible(self._think.flush())
+        self._buffer += self._narrated.feed(_visible(self._think.flush()))
+        self._buffer += self._narrated.flush()
         pending, self._buffer = self._buffer, ""
         self._suppressed = False
         self._think = ThinkTagParser()
+        self._narrated = NarratedReasoningFilter()
         return pending.rstrip()
-
 
 @dataclass
 class Orchestration:
@@ -330,13 +380,23 @@ class Orchestration:
       httpx 连接池。
     """
 
-    team: SelectorGroupChat
+    team: Team
     stop: ExternalTermination
     model_client: ChatCompletionClient
+    route: RouteResult
 
 
-def build_orchestration(
+@dataclass(frozen=True)
+class OrchestrationMetadata:
+    framework: str
+    strategy: str
+    flow_name: str | None
+    route_reason: str
+
+
+async def build_orchestration(
     *,
+    turn: TurnInput,
     user_id: str | None,
     use_rag: bool = True,
     use_memory: bool = True,
@@ -349,73 +409,94 @@ def build_orchestration(
 
     config 透传给 build_model_client：不传时用服务端 env 默认值；
     传了客户端的 provider_config 解析结果时，编排链路（selector + 领域 Agent）
-    全部使用该配置，与 legacy 路径行为一致。
+    全部使用该请求解析出的配置。
     """
+    config = config or resolve_ai_config()
+    route = await choose_route(turn, config)
     model_client = build_model_client(config)
 
-    memory: list[Memory] = []
-    if use_rag:
-        memory.append(RagMemory(user_id=user_id))
-    if use_memory and user_id:
-        memory.append(PgVectorMemory(user_id=user_id))
+    try:
+        memory: list[Memory] = []
+        if use_rag:
+            memory.append(RagMemory(user_id=user_id))
+        if use_memory and user_id:
+            memory.append(PgVectorMemory(user_id=user_id))
 
-    participants = build_domain_agents(model_client=model_client, memory=memory)
+        # `external` 平时永不触发，只有调用方主动 set() 才生效——用来在断连时喊停。
+        external = ExternalTermination()
+        if route.strategy == "graph" and route.flow_name:
+            team: Team = build_flow(
+                route.flow_name,
+                model_client=model_client,
+                memory=memory,
+                context_factory=turn.context,
+                external_termination=external,
+            )
+        else:
+            team = _build_selector_team(
+                model_client=model_client,
+                memory=memory,
+                context_factory=turn.context,
+                external=external,
+            )
+    except Exception:
+        await _close_quietly(model_client)
+        raise
+    return Orchestration(
+        team=team,
+        stop=external,
+        model_client=model_client,
+        route=route,
+    )
+
+
+def _build_selector_team(
+    *,
+    model_client: ChatCompletionClient,
+    memory: list[Memory],
+    context_factory,
+    external: ExternalTermination,
+) -> SelectorGroupChat:
+    participants = build_domain_agents(
+        model_client=model_client,
+        memory=memory,
+        context_factory=context_factory,
+    )
     if search_agent_available():
-        participants.append(build_search_agent(model_client=model_client))
+        participants.append(
+            build_search_agent(
+                model_client=model_client,
+                memory=memory,
+                context_factory=context_factory,
+            )
+        )
     else:
         logger.info("未配置 TAVILY_API_KEY，本次编排不含检索专家")
 
-    # 轮次上限：领域数 + 余量。够覆盖「预处理→分析→报告」这类三段链路，
-    # 又不至于让模型在专家之间无限踢皮球。
-    max_turns = max(3, len(participants) + 2)
-
-    # `external` 平时永不触发，只有调用方主动 set() 才生效——用来在断连时喊停。
-    external = ExternalTermination()
+    participant_names = [participant.name for participant in participants]
+    max_turns = _SELECTOR_MAX_TURNS
     termination = (
-        FunctionalTermination(_all_steps_done)
-        | MaxMessageTermination(max_turns * 2)
+        FunctionalTermination(
+            lambda messages: _selector_turn_complete(messages, participant_names)
+        )
+        | MaxMessageTermination(max_turns + 1)
         | external
     )
-
-    team = SelectorGroupChat(
+    return SelectorGroupChat(
         participants=participants,
         model_client=model_client,
         selector_prompt=_SELECTOR_PROMPT,
         termination_condition=termination,
         max_turns=max_turns,
-        # 同一个专家可以连续发言：它在自己的 max_tool_iterations 内多步执行时
-        # 不该被强行换人。
-        allow_repeated_speaker=True,
-        model_context=BudgetedChatCompletionContext(),
-        # 刻意**不**注入自定义 runtime：注入后 BaseGroupChat 会把 _embedded_runtime 置 False，
-        # 不再负责 start/stop（_base_group_chat.py:135-142、487-490），必须调用方自己管，
-        # 漏了就会永远排队不执行。用内嵌 runtime 让 AutoGen 管生命周期。
-        # 鉴权兜底不放在 runtime 拦截层，原因见 tools.py 的审计日志段落。
+        allow_repeated_speaker=False,
+        # 明确交接不再额外请求一次 selector 模型：既降低延迟，也杜绝调度器忽略点名。
+        selector_func=lambda messages: _explicit_handoff(messages, participant_names),
+        model_context=context_factory(),
     )
-    return Orchestration(team=team, stop=external, model_client=model_client)
-
-
-def build_team(
-    *,
-    user_id: str | None,
-    use_rag: bool = True,
-    use_memory: bool = True,
-) -> SelectorGroupChat:
-    """只要团队本身（配置导出、测试等只关心结构的场景）。
-
-    要跑回合请用 `build_orchestration`——它还给出断连喊停开关和必须关闭的模型客户端。
-
-    注意：这里构造的 model_client 不会被关闭（调用方拿不到它）。
-    仅用于只读结构检查的场景；跑回合一律走 build_orchestration / run_turn / stream_turn，
-    那些路径的 finally 会关闭 model_client。
-    """
-    return build_orchestration(
-        user_id=user_id, use_rag=use_rag, use_memory=use_memory
-    ).team
 
 
 async def run_turn(
-    task: str,
+    turn: TurnInput,
     *,
     user_id: str | None,
     use_rag: bool = True,
@@ -425,21 +506,27 @@ async def run_turn(
 ) -> OrchestrationResult:
     """跑完一个回合，返回最终答复与本回合产物。"""
     with user_scope(user_id):
-        orchestration = build_orchestration(
-            user_id=user_id, use_rag=use_rag, use_memory=use_memory, config=config
+        orchestration = await build_orchestration(
+            turn=turn,
+            user_id=user_id,
+            use_rag=use_rag,
+            use_memory=use_memory,
+            config=config,
         )
         try:
-            with turn_scope() as state:
+            with turn_scope(trusted_tool_arguments=turn.trusted_tool_arguments) as state:
                 result: TaskResult = await orchestration.team.run(
-                    task=task, cancellation_token=cancellation_token
+                    task=TextMessage(content=turn.query, source="user"),
+                    cancellation_token=cancellation_token,
+                    output_task_messages=False,
                 )
-            return _to_result(result, state)
+            return _to_result(result, state, orchestration)
         finally:
             await _close_quietly(orchestration.model_client)
 
 
 async def stream_turn(
-    task: str,
+    turn: TurnInput,
     *,
     user_id: str | None,
     use_rag: bool = True,
@@ -454,15 +541,27 @@ async def stream_turn(
     调用方没消费完就退出（前端断连）时走 `_abandon`，见那里的说明。
     """
     with user_scope(user_id):
-        orchestration = build_orchestration(
-            user_id=user_id, use_rag=use_rag, use_memory=use_memory, config=config
+        orchestration = await build_orchestration(
+            turn=turn,
+            user_id=user_id,
+            use_rag=use_rag,
+            use_memory=use_memory,
+            config=config,
+        )
+        yield OrchestrationMetadata(
+            framework="autogen",
+            strategy=orchestration.route.strategy,
+            flow_name=orchestration.route.flow_name,
+            route_reason=orchestration.route.reason,
         )
         stream = orchestration.team.run_stream(
-            task=task, cancellation_token=cancellation_token
+            task=TextMessage(content=turn.query, source="user"),
+            cancellation_token=cancellation_token,
+            output_task_messages=False,
         )
         drained = False
         try:
-            with turn_scope() as state:
+            with turn_scope(trusted_tool_arguments=turn.trusted_tool_arguments) as state:
                 final: TaskResult | None = None
                 async for item in stream:
                     if isinstance(item, TaskResult):
@@ -471,7 +570,7 @@ async def stream_turn(
                         yield item
                 drained = True
                 if final is not None:
-                    yield _to_result(final, state)
+                    yield _to_result(final, state, orchestration)
         finally:
             if drained:
                 await _close_quietly(orchestration.model_client)
@@ -554,7 +653,46 @@ async def _close_quietly(model_client: ChatCompletionClient) -> None:
         logger.debug("关闭模型客户端时出错", exc_info=True)
 
 
-def _to_result(result: TaskResult, state: TurnToolState) -> OrchestrationResult:
+def _extract_usage(model_client: ChatCompletionClient) -> dict | None:
+    """从模型客户端取本回合累计 token 用量（AutoGen 在 total_usage 里累计）。
+
+    防御性读取：autogen 不同版本/端点的 total_usage 形态不一，任一缺失返回 None
+    （上层回落到不写 usage，与旧行为一致），不再静默把 tokens_in/out 写成 NULL。
+    """
+    try:
+        usage = model_client.total_usage
+        if callable(usage):
+            usage = usage()
+    except Exception:
+        return None
+    prompt = getattr(usage, "prompt_tokens", None)
+    completion = getattr(usage, "completion_tokens", None)
+    prompt = prompt or 0
+    completion = completion or 0
+    if not (prompt or completion):
+        return None
+    return {
+        "input_tokens": prompt,
+        "output_tokens": completion,
+        "total_tokens": prompt + completion,
+    }
+
+
+def _merge_usage(*items: dict | None) -> dict | None:
+    input_tokens = sum(int(item.get("input_tokens", 0) or 0) for item in items if item)
+    output_tokens = sum(int(item.get("output_tokens", 0) or 0) for item in items if item)
+    if not (input_tokens or output_tokens):
+        return None
+    return {
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": input_tokens + output_tokens,
+    }
+
+
+def _to_result(
+    result: TaskResult, state: TurnToolState, orchestration: Orchestration
+) -> OrchestrationResult:
     # 取**全部**专家的正文而不是最后一条：跨领域链路里每位专家各产出一段真实结论，
     # 只留最后一条等于把前面几步的结果从落库正文里删掉——而用户在流式过程中看到过它们，
     # 刷新页面后却消失，前后不一致。
@@ -571,11 +709,20 @@ def _to_result(result: TaskResult, state: TurnToolState) -> OrchestrationResult:
         messages=list(result.messages),
         turn_state=state,
         stop_reason=result.stop_reason,
+        usage=_merge_usage(
+            orchestration.route.usage,
+            _extract_usage(orchestration.model_client),
+        ),
+        map_target=(state.map_target if state else None),
+        framework="autogen",
+        strategy=orchestration.route.strategy,
+        flow_name=orchestration.route.flow_name,
+        route_reason=orchestration.route.reason,
     )
 
 
 def participant_names() -> list[str]:
-    names = [spec.name for spec in domain_specs()]
+    names = ["general_agent", *[spec.name for spec in domain_specs()]]
     if search_agent_available():
         from app.agent.engine.search import SEARCH_AGENT_NAME
 

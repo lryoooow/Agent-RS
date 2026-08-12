@@ -57,6 +57,16 @@ export function getDocumentsEndpoint(chatEndpoint: string) {
   }
 }
 
+export function getModelsEndpoint(chatEndpoint: string) {
+  try {
+    const url = new URL(chatEndpoint);
+    url.pathname = url.pathname.replace(/\/chat\/?$/, "/config/models");
+    return url.toString();
+  } catch {
+    return "/api/config/models";
+  }
+}
+
 export function getApiBaseEndpoint(chatEndpoint: string) {
   try {
     const url = new URL(chatEndpoint);

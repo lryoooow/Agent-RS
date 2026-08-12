@@ -211,43 +211,64 @@ async def recover_one_stale_job() -> str | None:
 
 
 async def _rerun_job(job: dict[str, Any]) -> ToolRunResult:
-    """据 job 行重建工具调用并执行。无效 tool_name/参数 → 直接返回失败 result（不进死循环）。"""
-    from app.agent.tool_registry import get_tool
-    from app.agent.tools.staging import stage_imagery
+    """据 job 行重建工具调用并执行。
 
-    tool = get_tool(job["tool_name"])
-    if tool is None or not tool.is_enabled():
-        return ToolRunResult(
-            tool_context="工具不可用，已跳过重跑。",
-            error=f"tool_unavailable: {job['tool_name']}",
-            metadata={"error_code": "tool_unavailable"},
-        )
-    try:
-        args = tool.argument_model.model_validate(job.get("arguments") or {})
-    except Exception as exc:
-        return ToolRunResult(
-            tool_context="工具参数无效，已跳过重跑。",
-            error=str(exc),
-            metadata={"error_code": "invalid_arguments"},
-        )
-    try:
-        imagery_id = str((job.get("arguments") or {}).get("imagery_id") or "")
-        if imagery_id:
-            async with stage_imagery(imagery_id):
-                return await tool.runner(args)
-        return await tool.runner(args)
-    except Exception as exc:
-        return ToolRunResult(
-            tool_context="工具重跑失败。",
-            error=str(exc),
-            metadata={"error_code": "tool_runner_exception"},
-        )
+    恢复 worker 在 lifespan 起、HTTP 中间件之外运行，用户/会话 ContextVar 为 None；故必须：
+    ① 用 job 行的 user_id/conversation_id 重建身份上下文——身份相关工具（parse_document/
+       generate_report）的 runner 经 get_current_user_id()/get_current_conversation_id() 取值，
+       不重建会读到 default_user_id 而必然失败；
+    ② 经 prepare_tool_call 复验工具可用性/参数/资源归属（与请求内执行走**同一安全管线**），
+       避免 imagery 所属在入队与恢复之间变更（TOCTOU）后被越权重跑。
+    无效 tool_name/参数/越权 → 直接返回失败 result（不进死循环）。
+    """
+    from app.agent.tool_execution import PrepareRejected, prepare_tool_call
+    from app.agent.tools.staging import stage_imagery
+    from app.auth import get_current_conversation_id, set_current_conversation_id, user_scope
+
+    user_id = job.get("user_id")
+    conversation_id = job.get("conversation_id")
+
+    with user_scope(user_id):
+        # 会话 id 同样按值恢复，避免跨恢复轮次泄漏到无 conversation_id 的 job。
+        prev_conv = get_current_conversation_id()
+        set_current_conversation_id(conversation_id)
+        try:
+            prepared = await prepare_tool_call(
+                job["tool_name"],
+                job.get("arguments") or {},
+                user_id=user_id,
+            )
+            if isinstance(prepared, PrepareRejected):
+                return prepared.result
+            try:
+                if prepared.imagery_id:
+                    async with stage_imagery(prepared.imagery_id):
+                        return await prepared.tool.runner(prepared.arguments)
+                return await prepared.tool.runner(prepared.arguments)
+            except Exception as exc:
+                return ToolRunResult(
+                    tool_context="工具重跑失败。",
+                    error=str(exc),
+                    metadata={"error_code": "tool_runner_exception"},
+                )
+        finally:
+            set_current_conversation_id(prev_conv)
 
 
 async def _requeue_job(conn, *, job_id: str) -> None:
+    # P2-9：把 heartbeat_at 置到 now()+backoff，配合 claim 对 pending 也判 heartbeat_at，
+    # 让失败 job 退避一个窗口再被重领——否则一个 poll cycle 内会连跑到 max_attempts 次 docker。
+    backoff = get_settings().tool_jobs_requeue_backoff_seconds
     await conn.execute(
-        "UPDATE public.tool_jobs SET status = 'pending', updated_at = now() WHERE id = $1::uuid",
+        """
+        UPDATE public.tool_jobs
+        SET status = 'pending',
+            heartbeat_at = now() + make_interval(secs => $2),
+            updated_at = now()
+        WHERE id = $1::uuid
+        """,
         job_id,
+        backoff,
     )
 
 

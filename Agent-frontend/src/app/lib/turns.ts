@@ -1,4 +1,4 @@
-import type { AnalysisStatus, ChatMessage, ChatTurn } from "../types";
+import type { AnalysisStatus, ChatMessage, ChatTurn, ThinkingSummaryStage } from "../types";
 
 export function uid() {
   return Math.random().toString(36).slice(2, 10);
@@ -15,6 +15,43 @@ export function toModelHistory(turns: ChatTurn[], nextUserMessage: string): Chat
 
 export function appendToTurn(turns: ChatTurn[], id: string, content: string) {
   return turns.map((turn) => (turn.id === id ? { ...turn, content: turn.content + content } : turn));
+}
+
+export function appendThinkingSummary(
+  turns: ChatTurn[],
+  id: string,
+  stage: ThinkingSummaryStage,
+) {
+  return turns.map((turn) =>
+    turn.id === id
+      ? {
+          ...turn,
+          thinkingSummary: turn.thinkingSummary?.some((item) => item.stage === stage)
+            ? turn.thinkingSummary
+            : [
+                ...(turn.thinkingSummary ?? []).map((item) => ({
+                  ...item,
+                  status: "complete" as const,
+                })),
+                { stage, status: "active" as const },
+              ],
+        }
+      : turn,
+  );
+}
+
+export function completeThinkingSummary(turns: ChatTurn[], id: string) {
+  return turns.map((turn) =>
+    turn.id === id && turn.thinkingSummary
+      ? {
+          ...turn,
+          thinkingSummary: turn.thinkingSummary.map((item) => ({
+            ...item,
+            status: "complete" as const,
+          })),
+        }
+      : turn,
+  );
 }
 
 export function updateAnalysisStatus(

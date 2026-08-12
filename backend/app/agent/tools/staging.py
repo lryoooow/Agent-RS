@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import shutil
 import tempfile
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
@@ -35,6 +36,9 @@ _staged_dir: ContextVar[dict[str, Path] | None] = ContextVar("staged_imagery_dir
 
 # staging 时从对象存储拉取的影像文件（存在才拉，working/metadata 可能缺）。
 _STAGE_FILES = ("source.tif", "working.tif", "metadata.json")
+# 结果上传重试：minio 5xx/连接重置/配额等瞬时异常逐文件重试；全部失败则保留临时目录待恢复。
+_UPLOAD_RETRIES = 3
+_UPLOAD_BACKOFF_SECONDS = 0.5
 
 
 def staged_imagery_dir(imagery_id: str) -> Path | None:
@@ -59,10 +63,13 @@ async def stage_imagery(imagery_id: str) -> AsyncIterator[None]:
         return
 
     store = get_object_store()
-    tmp = tempfile.TemporaryDirectory(prefix=f"imagery_{imagery_id}_")
-    tmp_root = Path(tmp.name)
+    # mkdtemp 不自动清理：上传失败时保留临时目录（GPU 结果的唯一本地副本）供恢复，
+    # 成功才 rmtree。改自 TemporaryDirectory——后者 GC/finally 会无条件抹掉，丢结果。
+    tmp_root = Path(await asyncio.to_thread(tempfile.mkdtemp, prefix=f"imagery_{imagery_id}_"))
     results_dir = tmp_root / "results"
     results_dir.mkdir(parents=True, exist_ok=True)
+    runner_ok = False
+    upload_ok = False
     try:
         # 拉取已存在的影像文件（source 必有；working/metadata 尽力）。
         for name in _STAGE_FILES:
@@ -75,19 +82,49 @@ async def stage_imagery(imagery_id: str) -> AsyncIterator[None]:
         token = _staged_dir.set(current)
         try:
             yield
-            # 正常结束：上传容器新写入的 results/* 回对象存储。
-            await _upload_results(store, imagery_id, results_dir)
+            runner_ok = True
         finally:
             _staged_dir.reset(token)
+        # runner 正常结束：上传容器新写入的 results/* 回对象存储（带重试）。
+        upload_ok = await _upload_results(store, imagery_id, results_dir)
     finally:
-        # 用完即清，异常路径也清（杜绝临时目录泄漏）。
-        await asyncio.to_thread(tmp.cleanup)
+        if upload_ok or not runner_ok:
+            # 上传成功，或 runner 自身异常（无成功结果可恢复）→ 清理，杜绝临时目录泄漏。
+            await asyncio.to_thread(shutil.rmtree, tmp_root, ignore_errors=True)
+        else:
+            # runner 成功但上传失败：保留临时目录（GPU 结果的唯一本地副本）并告警，待恢复。
+            logger.error(
+                "影像结果未完整上传到对象存储，已保留临时目录待恢复：%s（imagery_id=%s）",
+                tmp_root,
+                imagery_id,
+            )
 
 
-async def _upload_results(store, imagery_id: str, results_dir: Path) -> None:
-    """把临时 results 目录下所有文件上传回对象存储 {imagery_id}/results/*。"""
+async def _upload_results(store, imagery_id: str, results_dir: Path) -> bool:
+    """把临时 results 目录下所有文件上传回对象存储 {imagery_id}/results/*。
+
+    逐文件重试；返回是否全部成功。任一文件最终失败则返回 False，调用方据此保留临时目录，
+    避免抹掉尚未完整落到对象存储的 GPU 结果。
+    """
     if not results_dir.exists():
-        return
+        return True
+    all_ok = True
     for path in results_dir.glob("*"):
-        if path.is_file():
-            await store.put(f"{imagery_id}/results/{path.name}", path)
+        if not path.is_file():
+            continue
+        key = f"{imagery_id}/results/{path.name}"
+        uploaded = False
+        for attempt in range(_UPLOAD_RETRIES):
+            try:
+                await store.put(key, path)
+                uploaded = True
+                break
+            except Exception:
+                logger.warning(
+                    "上传 %s 第 %d/%d 次失败", key, attempt + 1, _UPLOAD_RETRIES, exc_info=True
+                )
+                if attempt < _UPLOAD_RETRIES - 1:
+                    await asyncio.sleep(_UPLOAD_BACKOFF_SECONDS * (attempt + 1))
+        if not uploaded:
+            all_ok = False
+    return all_ok

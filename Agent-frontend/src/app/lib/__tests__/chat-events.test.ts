@@ -1,7 +1,28 @@
 import { describe, it, expect } from "vitest";
-import { parseGeospatialResult } from "../chat-events";
+import { createStreamHandlers, parseGeospatialResult } from "../chat-events";
 import { layersFromTurns } from "../layers";
 import type { ChatTurn } from "../../types";
+
+describe("思考摘要安全边界", () => {
+  it("忽略服务端任意 label，使用本地固定文案并按阶段去重", () => {
+    let turns: ChatTurn[] = [{ id: "assistant", role: "assistant", content: "" }];
+    const setTurns = (update: ChatTurn[] | ((previous: ChatTurn[]) => ChatTurn[])) => {
+      turns = typeof update === "function" ? update(turns) : update;
+    };
+    const stream = createStreamHandlers(setTurns, "assistant");
+
+    stream.onThinkingSummary?.({ stage: "context", label: "RAW_CHAIN_SECRET" });
+    stream.onThinkingSummary?.({ stage: "context", label: "第二次恶意覆盖" });
+
+    expect(turns[0].thinkingSummary).toEqual([
+      {
+        stage: "context",
+        status: "active",
+      },
+    ]);
+    expect(JSON.stringify(turns)).not.toContain("RAW_CHAIN_SECRET");
+  });
+});
 
 describe("parseGeospatialResult — report 类型", () => {
   it("接受合法的 report 结果（带 download_url）", () => {

@@ -1,6 +1,17 @@
-﻿from functools import lru_cache
-
+﻿import logging
+import os
+from functools import lru_cache
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = logging.getLogger(__name__)
+_DEPRECATED_AGENT_ENV = (
+    "AGENT_ENGINE",
+    "AGENT_PLANNING_MODEL",
+    "AGENT_PLANNER_MAX_TOKENS",
+    "AGENT_DECISION_CACHE_TTL_SECONDS",
+    "AGENT_DECISION_CACHE_MAX_SIZE",
+)
 
 
 class Settings(BaseSettings):
@@ -22,6 +33,11 @@ class Settings(BaseSettings):
     ai_api_key: str = ""
     ai_default_model: str = "gpt-4.1-mini"
     ai_thinking_budget: int = 128
+    # 思考强度分档（三档都开思考，预算真正拉开 → 时长/速度/精度不同）。
+    # thinking_strength=None / 旧客户端回落到 ai_thinking_budget（保持旧行为）。
+    ai_thinking_budget_low: int = 128
+    ai_thinking_budget_medium: int = 1024
+    ai_thinking_budget_max: int = 8192
     ai_timeout_seconds: float = 60
     ai_max_retries: int = 2
     ai_trust_env_proxy: bool = False
@@ -54,6 +70,9 @@ class Settings(BaseSettings):
     # （resolve_ai_config 的 client_xxx or settings.xxx 链保证 env 已填时前端留空仍走 env）。
     # 公网多用户部署应设 false，锁定服务端密钥、禁止客户端覆盖。
     allow_client_provider_config: bool = True
+    # provider_config.base_url 主机白名单（逗号分隔）。命中者跳过 DNS/内网校验，
+    # 用于可信内部端点与测试。留空 = 仅放行通过校验的公网 https / 回环地址。
+    ai_provider_allowed_hosts: str = ""
     allow_user_extra_instructions: bool = True
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
     max_json_body_bytes: int = 2_000_000
@@ -61,8 +80,6 @@ class Settings(BaseSettings):
     tavily_api_key: str = ""
     tavily_search_url: str = "https://api.tavily.com/search"
     tavily_search_depth: str = "basic"
-    agent_planning_model: str = ""
-    agent_planner_max_tokens: int = 256
     agent_document_inventory_limit: int = 100
     agent_web_search_max_calls: int = 1
     agent_web_search_max_results: int = 5
@@ -71,17 +88,32 @@ class Settings(BaseSettings):
     agent_web_search_timeout_seconds: float = 15
     agent_web_search_input_max_chars: int = 2000
     agent_web_search_result_max_chars: int = 6000
-    agent_decision_cache_ttl_seconds: float = 1800
-    agent_decision_cache_max_size: int = 256
     agent_result_cache_ttl_seconds: float = 300
     agent_result_cache_max_size: int = 64
     agent_web_search_rerank_enabled: bool = True
     agent_web_search_rerank_top_n: int = 5
 
+    # ---- AutoGen 唯一编排引擎 ----
+    # 标准作业先由结构化路由 Agent 判断是否走 GraphFlow；其它请求走 SelectorGroupChat。
+    agent_router_model: str = ""
+    agent_router_max_tokens: int = 256
+    agent_auto_flow_enabled: bool = True
+    # 单轮内允许的工具调用轮数上限。
+    agent_max_tool_iterations: int = 5
+    # GPU 重工具（detect_objects / segment_landcover）单轮调用次数上限。
+    # 与 agent_max_tool_iterations 分开限制：轻工具串 5 步只是秒级，
+    # 而两个 GPU 工具串起来可能到分钟级，单独设闸避免单次请求超时。
+    agent_max_gpu_tool_calls: int = 1
+    # AutoGen 只认识 OpenAI 官方模型名，其它一律要求显式声明能力（vision/function_calling/
+    # json_output/structured_output/family）。留空 = 先试 AutoGen 推断，失败则用兼容端点默认集
+    # （见 app/agent/engine/model_client.py:_COMPATIBLE_DEFAULT）。
+    # 换到不支持 function calling 的供应商时，用这个 JSON 覆盖。
+    agent_model_info: str = ""
+
     auth_enabled: bool = True
     auth_secret_key: str = "dev-change-me"
     auth_session_cookie_name: str = "agent_rs_session"
-    auth_session_days: int = 14
+    auth_session_days: int = 30
     auth_cookie_secure: bool = False
     auth_cookie_samesite: str = "lax"
     auth_password_min_length: int = 10
@@ -167,6 +199,9 @@ class Settings(BaseSettings):
     # 孤儿判定阈值（秒）：running 状态 heartbeat 超过此值视为被重启打断的孤儿。
     # 取 max(工具 timeout)×1.5 ≈ 450s 覆盖 segment 的 300s，避免长任务被误判。
     tool_jobs_stale_after_seconds: int = 450
+    # 失败 job 重排队后的退避（秒）：requeue 把 heartbeat_at 置到 now()+backoff，claim 在此窗口内
+    # 不重领，避免必失败 job 在一个 poll cycle 内连跑 max_attempts 次 docker（P2-9）。
+    tool_jobs_requeue_backoff_seconds: float = 10.0
     rs_tools_docker_timeout_seconds: int = 120
     rs_tools_mcp_image: str = "rs-tools-mcp:0.1.0"
     rs_tools_mcp_use_docker: bool = True
@@ -197,9 +232,28 @@ class Settings(BaseSettings):
     rs_doc_mcp_cpus: float = 2.0
     rs_doc_mcp_network: str = "none"
 
+    def model_post_init(self, __context) -> None:
+        configured = [name for name in _DEPRECATED_AGENT_ENV if name in os.environ]
+        if configured:
+            logger.warning(
+                "Ignoring retired legacy Agent settings: %s; AutoGen is the only engine.",
+                ", ".join(configured),
+            )
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    @field_validator("tool_jobs_stale_after_seconds")
+    @classmethod
+    def _stale_after_floor(cls, value: int) -> int:
+        # P2-8：stale_after 过小（如 0）会让 claim 谓词 heartbeat_at < now() - stale 退化为恒真，
+        # 误领在途 running job 双跑 docker。强制下限 15s（> 心跳间隔 max(5, stale//3)）。
+        return max(15, value)
+
+    @property
+    def ai_provider_allowed_host_set(self) -> set[str]:
+        return {h.strip().lower() for h in self.ai_provider_allowed_hosts.split(",") if h.strip()}
 
     @property
     def auth_required(self) -> bool:

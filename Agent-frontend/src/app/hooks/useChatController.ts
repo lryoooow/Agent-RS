@@ -18,6 +18,7 @@ import type {
   GeospatialResult,
   ProviderConfig,
   MapContext,
+  ThinkingStrength,
 } from "../types";
 
 type ChatControllerSettings = {
@@ -29,6 +30,9 @@ type ChatControllerSettings = {
   providerConfig?: ProviderConfig | null;
   roi?: Roi | null;
   getMapContext?: () => MapContext | null;
+  thinkingStrength?: ThinkingStrength | null;
+  tavilyApiKey?: string | null;
+  onMapControl?: (target: Record<string, unknown>) => void;
 };
 
 export function useChatController({
@@ -40,6 +44,9 @@ export function useChatController({
   providerConfig,
   roi,
   getMapContext,
+  thinkingStrength,
+  tavilyApiKey,
+  onMapControl,
 }: ChatControllerSettings) {
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [input, setInput] = useState("");
@@ -110,6 +117,9 @@ export function useChatController({
       model,
       providerConfig,
       metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
+      thinkingStrength,
+      tavilyApiKey,
+      analysisRoi: activeRoi,
     });
 
     if (shouldStream) {
@@ -138,7 +148,10 @@ export function useChatController({
       const res = await postChat(endpoint, body, controller.signal);
 
       if (shouldStream) {
-        await readStreamResponse(res, createStreamHandlers(setTurns, assistantId, setConversationId));
+        await readStreamResponse(
+          res,
+          createStreamHandlers(setTurns, assistantId, setConversationId, onMapControl),
+        );
         return;
       }
 

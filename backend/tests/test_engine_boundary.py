@@ -12,6 +12,19 @@ from pathlib import Path
 
 APP_ROOT = Path(__file__).resolve().parent.parent / "app"
 ENGINE_ROOT = APP_ROOT / "agent" / "engine"
+LEGACY_AGENT_MODULES = {
+    "runtime.py",
+    "child.py",
+    "domain_agents.py",
+    "search_agent.py",
+    "tool_selector.py",
+    "llm_planner.py",
+    "plan_validator.py",
+    "capability_registry.py",
+    "routing.py",
+    "provider.py",
+    "normalizer.py",
+}
 
 
 def _imports_autogen(path: Path) -> list[tuple[int, str]]:
@@ -48,10 +61,52 @@ def test_only_engine_package_imports_autogen() -> None:
 
 
 def test_engine_facade_does_not_import_autogen_at_module_level() -> None:
-    """门面本身必须保持延迟导入，否则 AGENT_ENGINE=legacy 也会被迫加载 autogen。"""
+    """门面保持延迟导入，让轻量配置/诊断代码无需初始化框架依赖。"""
     facade = ENGINE_ROOT / "__init__.py"
     hits = _imports_autogen(facade)
     assert not hits, (
         "app/agent/engine/__init__.py 不应在模块顶层导入 autogen（应走 __getattr__ 延迟导入）。\n"
         f"越界处：{hits}"
     )
+
+
+def test_business_code_uses_only_the_engine_facade() -> None:
+    """业务层不得依赖 engine 内部布局，所有框架调用必须穿过稳定门面。"""
+    violations: list[str] = []
+    for path in sorted(APP_ROOT.rglob("*.py")):
+        if ENGINE_ROOT in path.parents:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8-sig"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and (node.module or "").startswith(
+                "app.agent.engine."
+            ):
+                rel = path.relative_to(APP_ROOT.parent)
+                violations.append(f"{rel}:{node.lineno} import {node.module}")
+    assert not violations, "业务代码绕过 app.agent.engine 门面：\n  " + "\n  ".join(violations)
+
+
+def test_legacy_agent_runtime_modules_are_absent() -> None:
+    agent_root = APP_ROOT / "agent"
+    present = sorted(name for name in LEGACY_AGENT_MODULES if (agent_root / name).exists())
+    assert not present, f"旧 Agent 引擎模块重新出现：{present}"
+
+
+def test_openai_sdk_outside_engine_is_embedding_only() -> None:
+    """生成式 SDK 调用不得绕开 AutoGen；embedding 是唯一允许的确定性例外。"""
+    violations: list[str] = []
+    embedding_root = APP_ROOT / "agent" / "embedding"
+    for path in sorted(APP_ROOT.rglob("*.py")):
+        if ENGINE_ROOT in path.parents or embedding_root in path.parents:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8-sig"), filename=str(path))
+        for node in ast.walk(tree):
+            module = ""
+            if isinstance(node, ast.ImportFrom):
+                module = node.module or ""
+            elif isinstance(node, ast.Import):
+                module = ",".join(alias.name for alias in node.names)
+            if any(part.split(".")[0] == "openai" for part in module.split(",")):
+                rel = path.relative_to(APP_ROOT.parent)
+                violations.append(f"{rel}:{node.lineno} import {module}")
+    assert not violations, "生成式 OpenAI SDK 调用绕开 AutoGen：\n  " + "\n  ".join(violations)

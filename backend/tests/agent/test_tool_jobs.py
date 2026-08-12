@@ -26,6 +26,28 @@ from app.db.repositories import tool_job as repo
 pytestmark = pytest.mark.asyncio(loop_scope="session")
 
 
+@pytest.fixture(autouse=True)
+def _route_get_tool_and_bypass_access(monkeypatch):
+    """本模块聚焦队列机制（持久化/恢复/并发），用注入的假工具、不复核资源归属。
+
+    两件事：
+    1) 把 tool_execution.get_tool 路由到注册表（按属性实时查找），让各用例对
+       app.agent.tool_registry.get_tool 的 monkeypatch 能透传到 prepare_tool_call
+       （后者在模块顶层 by-value 导入了 get_tool，直接改注册表无效）。
+    2) 把 prepare_tool_call 内的 validate_tool_access 短路为「通过」——归属鉴权在
+       tool_guards 的专项测试里覆盖，这里不重复。
+    """
+    import app.agent.tool_execution as tool_execution
+    import app.agent.tool_registry as tool_registry
+
+    monkeypatch.setattr(tool_execution, "get_tool", lambda name: tool_registry.get_tool(name))
+
+    async def _no_access_error(tool_name, args, user_id):  # noqa: ANN001
+        return None
+
+    monkeypatch.setattr("app.agent.tool_execution.validate_tool_access", _no_access_error)
+
+
 def _wrap(pool):
     """把就绪 pool 包成 awaitable，匹配 fetch_optional_pool 的 async 调用约定。"""
     async def _inner():
@@ -163,6 +185,7 @@ async def test_pending_job_is_picked_up(pg_conn, pg_pool, monkeypatch) -> None:
 # ───────────────────────── 失败重试上限：到 max_attempts 转 failed 不再重试 ─────────────────────────
 async def test_failed_job_retries_until_max_then_terminal(pg_conn, pg_pool, monkeypatch) -> None:
     monkeypatch.setattr(tool_jobs, "fetch_optional_pool", lambda: _wrap(pg_pool))
+    monkeypatch.setenv("TOOL_JOBS_REQUEUE_BACKOFF_SECONDS", "0")  # P2-9: 关退避，同步跑到 max_attempts
     get_settings.cache_clear()
 
     async def _always_fail(args):
@@ -190,6 +213,7 @@ async def test_failed_job_retries_until_max_then_terminal(pg_conn, pg_pool, monk
 # ───────────────────────── 非法输入：无效 tool_name → 失败不死循环 ─────────────────────────
 async def test_unknown_tool_name_fails_without_loop(pg_conn, pg_pool, monkeypatch) -> None:
     monkeypatch.setattr(tool_jobs, "fetch_optional_pool", lambda: _wrap(pg_pool))
+    monkeypatch.setenv("TOOL_JOBS_REQUEUE_BACKOFF_SECONDS", "0")  # P2-9: 关退避，同步跑到终态
     get_settings.cache_clear()
     monkeypatch.setattr("app.agent.tool_registry.get_tool", lambda name: None)  # 注册表无此工具
 
@@ -360,3 +384,106 @@ async def test_heartbeat_tool_job_none_is_noop() -> None:
     # 边界：job_id=None（功能关闭/无库）→ 纯 no-op，不起协程、不抛异常。
     async with tool_jobs.heartbeat_tool_job(None):
         pass
+
+
+# ───────────────────────── P1-4：恢复重建身份 + 复验归属 ─────────────────────────
+async def test_rerun_job_rebuilds_user_context_and_revalidates_access(monkeypatch) -> None:
+    # P1-4：worker 在中间件外、ContextVar 为 None；_rerun_job 必须用 job 的 user_id 重建身份
+    # 并经 prepare_tool_call 复验归属——不能再裸调 runner（否则身份相关工具读到 default_user_id）。
+    # 这里不需要 DB：直接 mock prepare_tool_call，断言它以 job.user_id 被调用、且调用期间身份已重建。
+    from app.agent.tool_execution import PreparedTool
+    from app.auth import get_current_user_id
+
+    seen: dict[str, object] = {}
+
+    class _FakeArgs:
+        def model_dump(self) -> dict:
+            return {"imagery_id": "d722c20e1234"}
+
+    class _FakeTool:
+        name = "detect_objects"
+
+        async def runner(self, args) -> ToolRunResult:
+            seen["runner_user"] = get_current_user_id()
+            return ToolRunResult(tool_context="ok", result_count=1)
+
+    async def fake_prepare(tool_name, arguments, *, user_id):  # noqa: ANN001
+        seen["prepare_user_id"] = user_id
+        seen["prepare_context_user"] = get_current_user_id()
+        return PreparedTool(tool=_FakeTool(), arguments=_FakeArgs(), user_id=user_id)
+
+    monkeypatch.setattr("app.agent.tool_execution.prepare_tool_call", fake_prepare)
+
+    job = {
+        "id": "00000000-0000-4000-8000-000000000001",
+        "tool_name": "detect_objects",
+        "arguments": {"imagery_id": "d722c20e1234"},
+        "imagery_id": "d722c20e1234",
+        "user_id": "user-abc",
+        "conversation_id": "conv-xyz",
+        "attempts": 1,
+        "max_attempts": 3,
+    }
+    result = await tool_jobs._rerun_job(job)
+
+    assert seen["prepare_user_id"] == "user-abc"                # 用 job 的 user_id 复验归属
+    assert seen["prepare_context_user"] == "user-abc"           # user_scope 已在 prepare 前生效
+    assert seen["runner_user"] == "user-abc"                    # runner 内身份正确（非 default）
+    assert result.error is None
+
+
+# ───────────────────────── P2-8：stale_after 下界 ─────────────────────────
+async def test_stale_after_clamped_protects_inflight_running_job(
+    pg_conn, pg_pool, monkeypatch
+) -> None:
+    # P2-8：TOOL_JOBS_STALE_AFTER_SECONDS=0 会被钳到 15，使 claim 谓词不再恒真——
+    # recover 读钳制后的值，心跳新鲜的在途 running job 不会被误领双跑 docker。
+    monkeypatch.setattr(tool_jobs, "fetch_optional_pool", lambda: _wrap(pg_pool))
+    monkeypatch.setenv("TOOL_JOBS_STALE_AFTER_SECONDS", "0")
+    monkeypatch.setattr(
+        "app.agent.tool_registry.get_tool", lambda name: _FakeTool(_ok_runner_factory({}))
+    )
+    get_settings.cache_clear()
+    assert get_settings().tool_jobs_stale_after_seconds == 15  # 钳制生效
+
+    job_id = await repo.create_tool_job(
+        pg_conn, tool_name="calculate_ndvi", arguments={"imagery_id": "f"}, imagery_id="f", user_id="u1"
+    )
+    await pg_conn.execute(
+        "UPDATE public.tool_jobs SET status='running', heartbeat_at=now() WHERE id=$1::uuid", job_id
+    )
+    # stale 钳到 15 → 心跳新鲜的活跃任务不被判孤儿（修复前 stale=0 会立即误领）。
+    assert await tool_jobs.recover_one_stale_job() is None
+
+
+# ───────────────────────── P2-9：requeue 退避 ─────────────────────────
+async def test_requeued_job_respects_backoff_window(pg_conn, pg_pool, monkeypatch) -> None:
+    # P2-9：失败 requeue 把 heartbeat_at 置到 now()+backoff；窗口内不可被立即重领，
+    # 避免必失败 job 在一个 poll cycle 内连跑 max_attempts 次 docker。窗口过后可再领。
+    monkeypatch.setattr(tool_jobs, "fetch_optional_pool", lambda: _wrap(pg_pool))
+    monkeypatch.setenv("TOOL_JOBS_REQUEUE_BACKOFF_SECONDS", "30")
+
+    async def _fail(args):
+        return ToolRunResult(
+            tool_context="", error="always", metadata={"error_code": "tool_runner_exception"}
+        )
+
+    monkeypatch.setattr("app.agent.tool_registry.get_tool", lambda name: _FakeTool(_fail))
+    get_settings.cache_clear()
+
+    job_id = await repo.create_tool_job(
+        pg_conn, tool_name="detect_objects", arguments={"imagery_id": "f"}, imagery_id="f", user_id="u1"
+    )
+    first = await tool_jobs.recover_one_stale_job()
+    assert first == job_id  # 领取并失败 → requeue，heartbeat_at 置到未来
+
+    # 退避窗口内：立即再领应返回 None（不连跑）。
+    assert await tool_jobs.recover_one_stale_job() is None
+
+    # 模拟退避流逝：老化 heartbeat_at → 又可被重领。
+    await pg_conn.execute(
+        "UPDATE public.tool_jobs SET heartbeat_at = now() - interval '1000 seconds' WHERE id=$1::uuid",
+        job_id,
+    )
+    second = await tool_jobs.recover_one_stale_job()
+    assert second == job_id

@@ -118,3 +118,73 @@ async def test_geocode_cache_evicts_oldest_entry(monkeypatch: pytest.MonkeyPatch
     await geocode.reverse_geocode(30, 30)
 
     assert list(geocode._GEOCODE_CACHE) == ["20.00,20.00", "30.00,30.00"]
+
+
+@pytest.mark.asyncio
+async def test_prefetch_location_caps_concurrency(monkeypatch: pytest.MonkeyPatch) -> None:
+    # O5：去重外的并发 prefetch 有上限，避免突发请求把 Nominatim 打到限流/封禁。
+    release = asyncio.Event()
+
+    async def slow_reverse_geocode(*_args, **_kwargs):
+        await release.wait()
+
+    monkeypatch.setattr(geocode, "reverse_geocode", slow_reverse_geocode)
+    monkeypatch.setattr(geocode, "PREFETCH_MAX_CONCURRENT", 2)
+
+    for i in range(5):  # 5 个不同坐标单元，都未命中缓存
+        geocode.prefetch_location(22.0 + i, 114.0)
+    await asyncio.sleep(0)
+
+    assert len(geocode._PREFETCH_TASKS) <= 2  # 受并发上限约束（5 里只起 2 个）
+
+    release.set()
+    await asyncio.gather(*tuple(geocode._PREFETCH_TASKS.values()), return_exceptions=True)
+    await asyncio.sleep(0)
+
+
+@pytest.mark.asyncio
+async def test_aclose_geocode_client_closes_and_clears(monkeypatch: pytest.MonkeyPatch) -> None:
+    # O5：aclose 关闭模块全局 httpx 客户端并置 None（lifespan 收尾释放连接池）。
+    closed = {"flag": False}
+
+    class ClosableClient:
+        async def aclose(self) -> None:
+            closed["flag"] = True
+
+    monkeypatch.setattr(geocode, "_client", ClosableClient())
+    await geocode.aclose_geocode_client()
+    assert closed["flag"] is True
+    assert geocode._client is None
+
+
+@pytest.mark.asyncio
+async def test_forward_geocode_returns_center_and_bbox(monkeypatch: pytest.MonkeyPatch) -> None:
+    # 对话控图：forward_geocode 把地名解析成 center[bbox?] 供地图跳转。
+    class FakeResp:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> list[dict]:
+            return [
+                {
+                    "lat": "39.9042",
+                    "lon": "116.4074",
+                    "display_name": "北京, 中国",
+                    "boundingbox": ["39.4", "41.1", "115.4", "117.5"],
+                }
+            ]
+
+    class FakeClient:
+        async def get(self, *_args, **_kwargs) -> FakeResp:
+            return FakeResp()
+
+    monkeypatch.setattr(geocode, "_client", FakeClient())
+    geocode._FORWARD_CACHE.clear()
+
+    res = await geocode.forward_geocode("北京")
+    assert res is not None
+    assert res["center"] == [116.4074, 39.9042]  # [lng, lat]
+    assert res["bbox"] == [[115.4, 39.4], [117.5, 41.1]]  # [[west,south],[east,north]]
+    assert res["display_name"]
+
+    assert await geocode.forward_geocode("") is None  # 空查询安全回落

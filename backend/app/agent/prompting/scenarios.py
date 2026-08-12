@@ -17,6 +17,7 @@ TOOL_FINAL_PROMPTS: dict[str, str] = {
     "parse_document": "正在基于文档解析结果生成回答",
     "ocr_recognize": "正在基于影像文字识别结果生成回答",
     "generate_report": "正在基于分析报告生成回答",
+    "look_at_location": "正在确认地图定位结果",
 }
 
 
@@ -34,6 +35,7 @@ TOOL_REQUEST_LABELS: dict[str, str] = {
     "parse_document": "请求调用文档解析",
     "ocr_recognize": "请求调用影像文字识别",
     "generate_report": "请求生成分析报告",
+    "look_at_location": "请求定位地图",
 }
 
 
@@ -51,11 +53,12 @@ TOOL_READY_LABELS: dict[str, str] = {
     "parse_document": "文档解析结果已整理",
     "ocr_recognize": "影像文字识别结果已整理",
     "generate_report": "分析报告已生成",
+    "look_at_location": "地图定位已完成",
 }
 
 
 # 执行阶段（child_agent_running）展示的"正在做什么"标签：用具体能力名替代统一的"正在执行工具"。
-# 覆盖 domain_agents.TOOL_DOMAIN 登记的全部工具 + web_search；未登记走兜底。
+# 覆盖 tool_registry 登记的全部工具 + web_search；未登记走兜底。
 TOOL_RUNNING_LABELS: dict[str, str] = {
     "web_search": "正在联网搜索",
     "calculate_ndvi": "正在计算 NDVI",
@@ -70,6 +73,7 @@ TOOL_RUNNING_LABELS: dict[str, str] = {
     "parse_document": "正在解析文档",
     "ocr_recognize": "正在识别影像文字",
     "generate_report": "正在生成分析报告",
+    "look_at_location": "正在定位地图",
 }
 
 

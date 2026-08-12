@@ -1,4 +1,6 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+from app.schemas.chat import ProviderConfig
 
 
 class ConfigResponse(BaseModel):
@@ -17,3 +19,22 @@ class ConfigResponse(BaseModel):
     auth_required: bool = False
     # 注册需邀请码：前端据此在注册表单显示邀请码输入框。
     invite_required: bool = True
+    agent_framework: str = "autogen"
+    available_flows: list[str] = Field(default_factory=list)
+    auto_flow_enabled: bool = True
+
+
+class ModelListRequest(BaseModel):
+    provider_config: ProviderConfig | None = None
+    model: str | None = None
+
+
+class AvailableModel(BaseModel):
+    id: str
+    created: int | None = None
+    owned_by: str | None = None
+
+
+class ModelListResponse(BaseModel):
+    models: list[AvailableModel] = Field(default_factory=list)
+    current_model: str

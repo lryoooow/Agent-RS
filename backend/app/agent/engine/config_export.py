@@ -10,8 +10,8 @@ Agent、团队、模型客户端都能序列化成 `ComponentModel`（一段 JSO
    注意：`describe_orchestration()` 目前**还没有接进任何 HTTP 路由**
    （`/api/config` 不返回它），只在测试与本地排查里直接调用。要对外暴露时，
    记得走这个脱敏视图而不是 `dump_team_component()`。
-2. **改配置不改代码**：将来要调专家的工具归属或 system message，可以走配置而不是发版。
-3. **可复现**：把一次线上编排的配置 dump 下来，本地原样还原复现问题。
+2. **变更审计**：工具归属或 system message 变化后，可以对比声明式导出来定位漂移。
+3. **可复现**：把一次线上编排的配置 dump 下来，用于本地复现问题。
 
 ## 为什么不直接暴露完整 dump
 
@@ -44,10 +44,19 @@ def describe_orchestration() -> dict[str, Any]:
     """脱敏的编排描述，可安全经 API 暴露。"""
     settings = get_settings()
     return {
-        "engine": settings.agent_engine,
+        "engine": "autogen",
+        "auto_flow_enabled": settings.agent_auto_flow_enabled,
         "max_tool_iterations": settings.agent_max_tool_iterations,
         "max_gpu_tool_calls": settings.agent_max_gpu_tool_calls,
         "agents": [
+            {
+                "name": "general_agent",
+                "label": "通用问答",
+                "tools": [],
+                "description": "无需工具的通用问答专家",
+            },
+        ]
+        + [
             {
                 "name": spec.name,
                 "label": spec.label,

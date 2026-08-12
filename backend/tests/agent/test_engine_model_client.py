@@ -66,8 +66,7 @@ def test_model_info_override_rejects_bad_json(monkeypatch: pytest.MonkeyPatch) -
         resolve_model_info("deepseek-v4-pro")
 
 
-def test_thinking_extra_body_matches_legacy_shapes() -> None:
-    """必须与 legacy 链路一字不差，否则迁移后模型行为会悄悄变化。"""
+def test_thinking_extra_body_shapes() -> None:
     assert thinking_extra_body(enable=False) == {"enable_thinking": False}
     enabled = thinking_extra_body(enable=True)
     assert enabled["enable_thinking"] is True
@@ -84,18 +83,18 @@ def test_build_model_client_wires_config() -> None:
     }
 
 
-def test_planning_client_disables_thinking_and_honours_planning_model(
+def test_router_client_disables_thinking_and_honours_router_model(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("AGENT_PLANNING_MODEL", "deepseek-v4-flash")
+    monkeypatch.setenv("AGENT_ROUTER_MODEL", "deepseek-v4-flash")
     get_settings.cache_clear()
-    client = build_model_client(_config(), for_planning=True, max_tokens=1024)
+    client = build_model_client(_config(), for_routing=True, max_tokens=1024)
     args = client._create_args  # noqa: SLF001
     assert args["model"] == "deepseek-v4-flash"
     assert args["extra_body"] == {"enable_thinking": False}
     assert args["max_tokens"] == 1024
 
 
-def test_planning_client_falls_back_to_main_model_when_unset() -> None:
-    client = build_model_client(_config(), for_planning=True)
+def test_routing_client_falls_back_to_main_model_when_unset() -> None:
+    client = build_model_client(_config(), for_routing=True)
     assert client._create_args["model"] == "deepseek-v4-pro"  # noqa: SLF001

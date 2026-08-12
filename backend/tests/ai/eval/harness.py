@@ -1,31 +1,124 @@
+"""AutoGen-native evaluation observations and multi-call recording schema.
+
+The former evaluator replayed one custom single-call decision.  A real AutoGen turn
+can contain a flow-router call, selector calls, multiple expert calls and multiple
+tool calls, so recordings are now an ordered list of framework observations.
+"""
+
 from __future__ import annotations
 
-import os
-from contextlib import contextmanager
-from dataclasses import dataclass, field
+import json
+from dataclasses import asdict, dataclass, field
+from hashlib import sha256
 from pathlib import Path
-from typing import Any, Callable, Iterator, Literal
+from typing import Any, Literal
 
-from app.agent.capability_registry import is_capability_enabled
-from app.agent.config import ResolvedAIConfig
-from app.agent.llm_planner import _planner_prompt, capability_snapshot
-from app.agent.request_builder import build_imagery_inventory
-from app.agent.search.cache import get_planner_decision_cache
-from app.agent.tool_selector import TaskSelector, _planner_cache_scope
-from app.agent.types import AgentTrace
-from app.core.settings import get_settings
-from app.schemas.chat import ChatRequest
+from tests.ai.eval.cases import AutogenEvalCase
 
-from tests.ai.eval.cases import PlannerEvalCase
-from tests.ai.eval.clients import (
-    RecordingContext,
-    RecordingError,
-    stable_hash,
-)
+Attribution = Literal["decision_mismatch", "validation_rejected", "recording_error"]
+CallKind = Literal["router", "selector", "agent"]
 
 
-Attribution = Literal["planner_mismatch", "validation_rejected", "recording_or_harness_error"]
-ClientFactory = Callable[[RecordingContext], Any]
+def stable_hash(value: Any) -> str:
+    payload = value if isinstance(value, str) else json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    )
+    return sha256(payload.encode("utf-8")).hexdigest()
+
+
+@dataclass(frozen=True)
+class ToolCallObservation:
+    name: str
+    arguments: dict[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ModelCallObservation:
+    kind: CallKind
+    agent: str
+    output: str = ""
+    tool_calls: tuple[ToolCallObservation, ...] = ()
+
+
+@dataclass(frozen=True)
+class AutogenRecording:
+    schema_version: int
+    case_id: str
+    query_hash: str
+    context_hash: str
+    model: str
+    strategy: Literal["selector", "graph"]
+    flow_name: str | None
+    calls: tuple[ModelCallObservation, ...]
+
+
+class RecordingError(RuntimeError):
+    pass
+
+
+def write_recording(path: Path, recording: AutogenRecording) -> Path:
+    if recording.schema_version != 2:
+        raise RecordingError("AutoGen recordings must use schema_version=2")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(asdict(recording), ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def load_recording(
+    path: Path,
+    *,
+    case_id: str,
+    query: str,
+    context_hash: str,
+    model: str,
+) -> AutogenRecording:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RecordingError(f"cannot read AutoGen recording: {path}") from exc
+    expected = {
+        "schema_version": 2,
+        "case_id": case_id,
+        "query_hash": stable_hash(query),
+        "context_hash": context_hash,
+        "model": model,
+    }
+    mismatches = {
+        key: {"expected": value, "actual": payload.get(key)}
+        for key, value in expected.items()
+        if payload.get(key) != value
+    }
+    if mismatches:
+        raise RecordingError(f"stale AutoGen recording: {mismatches}")
+    calls = tuple(
+        ModelCallObservation(
+            kind=call["kind"],
+            agent=call["agent"],
+            output=str(call.get("output") or ""),
+            tool_calls=tuple(
+                ToolCallObservation(
+                    name=item["name"], arguments=dict(item.get("arguments") or {})
+                )
+                for item in call.get("tool_calls", [])
+            ),
+        )
+        for call in payload.get("calls", [])
+    )
+    if not calls:
+        raise RecordingError("AutoGen recording contains no model calls")
+    return AutogenRecording(
+        schema_version=2,
+        case_id=case_id,
+        query_hash=expected["query_hash"],
+        context_hash=context_hash,
+        model=model,
+        strategy=payload["strategy"],
+        flow_name=payload.get("flow_name"),
+        calls=calls,
+    )
 
 
 @dataclass(frozen=True)
@@ -49,8 +142,11 @@ class CaseResult:
     error: str | None = None
     expected_arguments_subset: dict[str, object] = field(default_factory=dict)
     actual_arguments: dict[str, object] = field(default_factory=dict)
-    # planner 输出最终解析失败（planner_invalid 事件）；区分"模型答 none"与"输出炸了被当 none"。
-    planner_invalid: bool = False
+    strategy: str = "selector"
+    flow_name: str | None = None
+    agent_sequence: tuple[str, ...] = ()
+    tool_sequence: tuple[str, ...] = ()
+    calls: tuple[ModelCallObservation, ...] = ()
 
     @property
     def expected_label(self) -> str:
@@ -59,6 +155,64 @@ class CaseResult:
     @property
     def actual_label(self) -> str:
         return self.actual_capability or "none"
+
+
+def result_from_recording(
+    case: AutogenEvalCase,
+    recording: AutogenRecording,
+    *,
+    validation_error: str | None = None,
+) -> CaseResult:
+    tool_calls = [tool for call in recording.calls for tool in call.tool_calls]
+    primary = tool_calls[0] if tool_calls else None
+    actual_action = "call" if primary else "none"
+    actual_capability = primary.name if primary else None
+    actual_arguments = dict(primary.arguments) if primary else {}
+    correct = _is_correct(case, actual_action, actual_capability, actual_arguments)
+    return CaseResult(
+        case_id=case.case_id,
+        query=case.query,
+        category=case.category,
+        source=case.source,
+        scoring=case.scoring,
+        prompt_near=case.prompt_near,
+        expected_action=case.expected_action,
+        expected_capability=case.expected_capability,
+        actual_action=actual_action,
+        actual_capability=actual_capability,
+        raw_action=actual_action,
+        raw_capability=actual_capability,
+        correct=correct,
+        attribution=None if correct else (
+            "validation_rejected" if validation_error else "decision_mismatch"
+        ),
+        mismatch_reason=None if correct else "autogen_decision_mismatch",
+        validation_error=validation_error,
+        expected_arguments_subset=dict(case.expected_arguments_subset),
+        actual_arguments=actual_arguments,
+        strategy=recording.strategy,
+        flow_name=recording.flow_name,
+        agent_sequence=tuple(call.agent for call in recording.calls if call.kind == "agent"),
+        tool_sequence=tuple(tool.name for tool in tool_calls),
+        calls=recording.calls,
+    )
+
+
+def _is_correct(
+    case: AutogenEvalCase,
+    action: str,
+    capability: str | None,
+    arguments: dict[str, object],
+) -> bool:
+    if action != case.expected_action or capability != case.expected_capability:
+        return False
+    if any(arguments.get(key) != value for key, value in case.expected_arguments_subset.items()):
+        return False
+    if case.min_query_count:
+        queries = arguments.get("queries")
+        if not isinstance(queries, list) or len([q for q in queries if str(q).strip()]) < case.min_query_count:
+            return False
+    return True
 
 
 @dataclass(frozen=True)
@@ -74,494 +228,62 @@ class EvalMetrics:
     attribution_counts: dict[str, int]
 
 
-def default_eval_config(model: str = "planner-eval-model") -> ResolvedAIConfig:
-    return ResolvedAIConfig(
-        provider="openai-compatible",
-        base_url="https://example.test/v1",
-        api_key="test-key",
-        model=model,
-        timeout_seconds=60,
-        max_retries=0,
-        trust_env_proxy=False,
-    )
-
-
-async def run_cases(
-    cases: tuple[PlannerEvalCase, ...],
-    *,
-    tmp_root: Path,
-    client_factory: ClientFactory,
-    config: ResolvedAIConfig | None = None,
-    fail_on_harness_error: bool = True,
-) -> tuple[CaseResult, ...]:
-    results: list[CaseResult] = []
-    for case in cases:
-        try:
-            results.append(
-                await run_case(
-                    case,
-                    tmp_root=tmp_root / case.case_id,
-                    client_factory=client_factory,
-                    config=config or default_eval_config(),
-                )
-            )
-        except RecordingError:
-            if fail_on_harness_error:
-                raise
-            results.append(_harness_error(case, "recording_or_harness_error"))
-        except Exception as exc:
-            if fail_on_harness_error:
-                raise
-            results.append(_harness_error(case, f"{type(exc).__name__}: {exc}"))
-    return tuple(results)
-
-
-async def run_case(
-    case: PlannerEvalCase,
-    *,
-    tmp_root: Path,
-    client_factory: ClientFactory,
-    config: ResolvedAIConfig,
-) -> CaseResult:
-    tmp_root.mkdir(parents=True, exist_ok=True)
-    imagery_root = tmp_root / "imagery"
-    imagery_root.mkdir(parents=True, exist_ok=True)
-    _write_imagery_fixtures(imagery_root, case)
-
-    env = {
-        "DATABASE_ENABLED": "false",
-        "IMAGERY_UPLOAD_DIR": str(imagery_root),
-        "TAVILY_API_KEY": os.environ.get("TAVILY_API_KEY") or "planner-eval-tavily-key",
-        "AGENT_WEB_SEARCH_MAX_CALLS": "3",
-    }
-    with _patched_env(env):
-        get_settings.cache_clear()
-        get_planner_decision_cache().clear()
-        if not is_capability_enabled("web_search"):
-            raise RuntimeError("web_search capability is disabled in planner eval")
-
-        request = _request_for_case(case)
-        context = await build_recording_context(case, request=request, config=config)
-        trace = AgentTrace(enabled=True)
-        selection = await TaskSelector().select(
-            client=client_factory(context),
-            config=config,
-            request=request,
-            query=case.query,
-            user_id=case.user_id,
-            trace=trace,
-            on_event=None,
-            add_event=_add_event,
-            route=case.route,
-        )
-
-        raw_action, raw_capability, planner_invalid = _raw_decision_from_trace(trace)
-        validation_error = _validation_error_from_trace(trace)
-        actual_action, actual_capability, actual_arguments = _actual_selection(selection)
-        correct = _is_correct(
-            case,
-            actual_action=actual_action,
-            actual_capability=actual_capability,
-            actual_arguments=actual_arguments,
-        )
-        mismatch_reason = _mismatch_reason(
-            case,
-            correct=correct,
-            raw_action=raw_action,
-            raw_capability=raw_capability,
-            actual_action=actual_action,
-            actual_capability=actual_capability,
-            actual_arguments=actual_arguments,
-            validation_error=validation_error,
-        )
-        return CaseResult(
-            case_id=case.case_id,
-            query=case.query,
-            category=case.category,
-            source=case.source,
-            scoring=case.scoring,
-            prompt_near=case.prompt_near,
-            expected_action=case.expected_action,
-            expected_capability=case.expected_capability,
-            actual_action=actual_action,
-            actual_capability=actual_capability,
-            raw_action=raw_action,
-            raw_capability=raw_capability,
-            correct=correct,
-            attribution=_attribution(
-                case,
-                correct=correct,
-                validation_error=validation_error,
-            ),
-            mismatch_reason=mismatch_reason,
-            validation_error=validation_error,
-            expected_arguments_subset=dict(case.expected_arguments_subset),
-            actual_arguments=actual_arguments,
-            planner_invalid=planner_invalid,
-        )
-
-
-async def build_recording_context(
-    case: PlannerEvalCase,
-    *,
-    request: ChatRequest,
-    config: ResolvedAIConfig,
-) -> RecordingContext:
-    capabilities = capability_snapshot()
-    capability_names = sorted(capability.name for capability in capabilities)
-    scope = await _planner_cache_scope(
-        config=config,
-        route=case.route,
-        capabilities=capabilities,
-        user_id=case.user_id,
-        request=request,
-    )
-    # build_imagery_inventory 改为 async（DB 优先 + 磁盘兜底）。eval 录制固定
-    # DATABASE_ENABLED=false，故走纯磁盘扫描分支，输出与迁移前同步版逐字节一致——
-    # context_hash 不变、历史录制无需重录。本函数随之改 async，各调用点 await。
-    inventory = await build_imagery_inventory(case.user_id)
-    context_hash = stable_hash(
-        {
-            "imagery_inventory": inventory,
-            "imagery_fixtures": [
-                {
-                    "imagery_id": item.imagery_id,
-                    "owner_user_id": item.owner_user_id,
-                    "band_count": item.band_count,
-                    "width": item.width,
-                    "height": item.height,
-                    "crs": item.crs,
-                }
-                for item in case.imagery_inventory
-            ],
-            "document_context": case.document_context,
-            "route": {
-                "mode": case.route.mode,
-                "reason": case.route.reason,
-                "candidate_tools": list(case.route.candidate_tools),
-                "candidate_agents": list(case.route.candidate_agents),
-            },
-            "user_id": case.user_id,
-            "available_capabilities": capability_names,
-        }
-    )
-    prompt_hash = stable_hash(_planner_prompt(capabilities))
-    query_hash = stable_hash(case.query)
-    key = stable_hash(
-        {
-            "scope": scope,
-            "query_hash": query_hash,
-            "context_hash": context_hash,
-            "prompt_hash": prompt_hash,
-        }
-    )
-    return RecordingContext(
-        case_id=case.case_id,
-        key=key,
-        scope=scope,
-        query_hash=query_hash,
-        context_hash=context_hash,
-        prompt_hash=prompt_hash,
-        model=config.model,
-    )
-
-
-def write_observations_jsonl(
-    path: Path,
-    results: tuple[CaseResult, ...],
-    *,
-    dataset: str = "",
-    dataset_hash: str = "",
-    prompt_hash: str = "",
-    model: str = "",
-    seed: int | None = None,
-) -> Path:
-    """逐 CaseResult 写一行 JSON 的本地观测（替代 langfuse 的行级记录）。
-
-    run 级字段（dataset/dataset_hash/prompt_hash/model/seed）由调用方从 manifest/config 传入，
-    保证与同次 score 报告同源；result 级字段从 CaseResult 取。
-    latency_ms 恒为 null——replay 秒回不是真实延迟，按规划「禁止当真实延迟上报」。
-    """
-
-    import json
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    lines: list[str] = []
-    for result in results:
-        row = {
-            "case_id": result.case_id,
-            "query_hash": stable_hash(result.query),
-            "dataset": dataset,
-            "dataset_hash": dataset_hash,
-            "prompt_hash": prompt_hash,
-            "model": model,
-            "seed": seed,
-            "category": result.category,
-            "scoring": result.scoring,
-            "expected": result.expected_label,
-            "actual": result.actual_label,
-            "raw_action": result.raw_action,
-            "raw_capability": result.raw_capability,
-            "correct": result.correct,
-            "attribution": result.attribution,
-            "validation_error": result.validation_error,
-            "mismatch_reason": result.mismatch_reason,
-            "planner_invalid": result.planner_invalid,
-            "error": result.error,
-            "latency_ms": None,
-        }
-        lines.append(json.dumps(row, ensure_ascii=False, sort_keys=True))
-    path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
-    return path
-
-
 def compute_metrics(results: tuple[CaseResult, ...]) -> EvalMetrics:
-    valid = [result for result in results if result.attribution != "recording_or_harness_error"]
-    correct = sum(1 for result in valid if result.correct)
-    valid_total = len(valid)
+    valid = [result for result in results if result.attribution != "recording_error"]
+    correct = sum(result.correct for result in valid)
     confusion: dict[str, dict[str, int]] = {}
     for result in valid:
-        confusion.setdefault(result.expected_label, {})
-        confusion[result.expected_label][result.actual_label] = (
-            confusion[result.expected_label].get(result.actual_label, 0) + 1
-        )
-    fp = sum(1 for result in valid if result.expected_action == "none" and result.actual_action == "call")
-    fn = sum(1 for result in valid if result.expected_action == "call" and result.actual_action == "none")
-    mismatches = tuple(result for result in valid if not result.correct)
-    attribution_counts: dict[str, int] = {}
+        row = confusion.setdefault(result.expected_label, {})
+        row[result.actual_label] = row.get(result.actual_label, 0) + 1
+    attributions: dict[str, int] = {}
     for result in valid:
-        if result.attribution is None:
-            continue
-        attribution_counts[result.attribution] = attribution_counts.get(result.attribution, 0) + 1
+        if result.attribution:
+            attributions[result.attribution] = attributions.get(result.attribution, 0) + 1
     return EvalMetrics(
         total=len(results),
-        valid_total=valid_total,
+        valid_total=len(valid),
         correct=correct,
-        accuracy=(correct / valid_total) if valid_total else 0.0,
-        fp=fp,
-        fn=fn,
+        accuracy=correct / len(valid) if valid else 0.0,
+        fp=sum(r.expected_action == "none" and r.actual_action == "call" for r in valid),
+        fn=sum(r.expected_action == "call" and r.actual_action == "none" for r in valid),
         confusion=confusion,
-        mismatches=mismatches,
-        attribution_counts=attribution_counts,
+        mismatches=tuple(r for r in valid if not r.correct),
+        attribution_counts=attributions,
     )
 
 
 def compute_grouped_metrics(results: tuple[CaseResult, ...]) -> dict[str, EvalMetrics]:
     groups = {
-        "main": tuple(
-            result
-            for result in results
-            if result.scoring == "main" and not result.prompt_near
-        ),
-        "golden": tuple(result for result in results if result.source == "golden"),
-        "generated_positive": tuple(
-            result
-            for result in results
-            if result.source == "generated"
-            and result.scoring == "main"
-            and result.expected_action == "call"
-            and not result.prompt_near
-        ),
-        "hard_negative": tuple(
-            result
-            for result in results
-            if result.source == "generated"
-            and result.scoring == "main"
-            and result.expected_action == "none"
-            and not result.prompt_near
-        ),
-        "prompt_near": tuple(result for result in results if result.prompt_near),
-        "diagnostic_unsupported": tuple(
-            result for result in results if result.scoring == "diagnostic_unsupported"
-        ),
+        "main": tuple(r for r in results if r.scoring == "main" and not r.prompt_near),
+        "golden": tuple(r for r in results if r.source == "golden"),
+        "generated": tuple(r for r in results if r.source == "generated"),
+        "graph": tuple(r for r in results if r.strategy == "graph"),
+        "selector": tuple(r for r in results if r.strategy == "selector"),
     }
     return {name: compute_metrics(group) for name, group in groups.items()}
 
 
-def _request_for_case(case: PlannerEvalCase) -> ChatRequest:
-    messages = []
-    if case.document_context:
-        messages.append({"role": "system", "content": case.document_context})
-    # 历史干扰轮次（random-stress 用；heldout/dev-set 的 history 为空 → messages 逐字节不变）。
-    for msg in case.history:
-        messages.append({"role": msg["role"], "content": msg["content"]})
-    messages.append({"role": "user", "content": case.query})
-    return ChatRequest(
-        messages=messages,
-        conversation_id=case.conversation_id,
-        use_memory=case.use_memory,
-        use_rag=case.use_rag,
+def write_observations_jsonl(path: Path, results: tuple[CaseResult, ...]) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    rows = [
+        {
+            "case_id": result.case_id,
+            "query_hash": stable_hash(result.query),
+            "strategy": result.strategy,
+            "flow_name": result.flow_name,
+            "agents": result.agent_sequence,
+            "tools": result.tool_sequence,
+            "expected": result.expected_label,
+            "actual": result.actual_label,
+            "correct": result.correct,
+            "validation_error": result.validation_error,
+            "error": result.error,
+        }
+        for result in results
+    ]
+    path.write_text(
+        "\n".join(json.dumps(row, ensure_ascii=False, sort_keys=True) for row in rows)
+        + ("\n" if rows else ""),
+        encoding="utf-8",
     )
-
-
-async def _add_event(trace, _on_event, stage, label, **metadata):
-    return trace.add(stage, label, **metadata)
-
-
-def _write_imagery_fixtures(root: Path, case: PlannerEvalCase) -> None:
-    for item in case.imagery_inventory:
-        imagery_dir = root / item.imagery_id
-        imagery_dir.mkdir(parents=True, exist_ok=True)
-        (imagery_dir / "metadata.json").write_text(
-            stable_json(
-                {
-                    "filename": f"{item.imagery_id}.tif",
-                    "owner_user_id": item.owner_user_id,
-                    "band_count": item.band_count,
-                    "width": item.width,
-                    "height": item.height,
-                    "crs": item.crs,
-                }
-            ),
-            encoding="utf-8",
-        )
-
-
-def stable_json(value: Any) -> str:
-    import json
-
-    return json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
-
-
-def _raw_decision_from_trace(trace: AgentTrace) -> tuple[str, str | None, bool]:
-    for event in reversed(trace.events):
-        if event.stage == "planner_completed":
-            action = str(event.metadata.get("action") or "none")
-            capability = event.metadata.get("capability")
-            return action, str(capability) if capability else None, False
-        if event.stage == "planner_invalid":
-            return "none", None, True
-    return "none", None, False
-
-
-def _validation_error_from_trace(trace: AgentTrace) -> str | None:
-    for event in reversed(trace.events):
-        if event.stage in {"plan_validation_failed", "capability_guard_rejected"}:
-            error = event.metadata.get("error")
-            return str(error) if error else event.stage
-    return None
-
-
-def _actual_selection(selection) -> tuple[str, str | None, dict[str, object]]:
-    if selection.tool_call is not None:
-        return "call", selection.tool_call.name, dict(selection.tool_call.arguments)
-    if selection.agent_call is not None:
-        return "call", selection.agent_call.name, dict(selection.agent_call.arguments)
-    return "none", None, {}
-
-
-def _is_correct(
-    case: PlannerEvalCase,
-    *,
-    actual_action: str,
-    actual_capability: str | None,
-    actual_arguments: dict[str, object],
-) -> bool:
-    if actual_action != case.expected_action:
-        return False
-    if actual_capability != case.expected_capability:
-        return False
-    for key, expected_value in case.expected_arguments_subset.items():
-        if actual_arguments.get(key) != expected_value:
-            return False
-    if case.min_query_count and not _queries_have_min_count(actual_arguments, case.min_query_count):
-        return False
-    return True
-
-
-def _attribution(
-    case: PlannerEvalCase,
-    *,
-    correct: bool,
-    validation_error: str | None,
-) -> Attribution | None:
-    if correct:
-        return None
-    if validation_error:
-        return "validation_rejected"
-    return "planner_mismatch"
-
-
-def _mismatch_reason(
-    case: PlannerEvalCase,
-    *,
-    correct: bool,
-    raw_action: str,
-    raw_capability: str | None,
-    actual_action: str,
-    actual_capability: str | None,
-    actual_arguments: dict[str, object],
-    validation_error: str | None,
-) -> str | None:
-    if correct:
-        return None
-    if validation_error:
-        return f"validation_rejected:{validation_error}"
-    if raw_action != case.expected_action:
-        return "planner_action_mismatch"
-    if raw_capability != case.expected_capability:
-        return "planner_capability_mismatch"
-    if actual_action != case.expected_action:
-        return "selection_action_mismatch"
-    if actual_capability != case.expected_capability:
-        return "selection_capability_mismatch"
-    if _argument_mismatches(case, actual_arguments):
-        return "planner_argument_mismatch"
-    if case.min_query_count and not _queries_have_min_count(actual_arguments, case.min_query_count):
-        return "planner_query_count_mismatch"
-    return "planner_mismatch"
-
-
-def _argument_mismatches(
-    case: PlannerEvalCase,
-    actual_arguments: dict[str, object],
-) -> dict[str, dict[str, object | None]]:
-    return {
-        key: {"expected": expected, "actual": actual_arguments.get(key)}
-        for key, expected in case.expected_arguments_subset.items()
-        if actual_arguments.get(key) != expected
-    }
-
-
-def _harness_error(case: PlannerEvalCase, error: str) -> CaseResult:
-    return CaseResult(
-        case_id=case.case_id,
-        query=case.query,
-        category=case.category,
-        source=case.source,
-        scoring=case.scoring,
-        prompt_near=case.prompt_near,
-        expected_action=case.expected_action,
-        expected_capability=case.expected_capability,
-        actual_action="none",
-        actual_capability=None,
-        raw_action="none",
-        raw_capability=None,
-        correct=False,
-        attribution="recording_or_harness_error",
-        mismatch_reason="recording_or_harness_error",
-        error=error,
-    )
-
-
-def _queries_have_min_count(actual_arguments: dict[str, object], min_query_count: int) -> bool:
-    queries = actual_arguments.get("queries")
-    if not isinstance(queries, list):
-        return False
-    query_texts = [item for item in queries if isinstance(item, str) and item.strip()]
-    return len(query_texts) >= min_query_count
-
-
-@contextmanager
-def _patched_env(values: dict[str, str]) -> Iterator[None]:
-    original = {key: os.environ.get(key) for key in values}
-    os.environ.update(values)
-    try:
-        yield
-    finally:
-        for key, value in original.items():
-            if value is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = value
-        get_settings.cache_clear()
+    return path

@@ -145,6 +145,51 @@ async def test_segment_runner_can_run_when_rs_tools_switch_is_disabled(monkeypat
 
 
 @pytest.mark.asyncio
+async def test_segment_runner_crops_pixel_roi_and_uses_unique_result(monkeypatch, tmp_path: Path) -> None:
+    imagery_id = "94e758f38ede"
+    _prepare_imagery(tmp_path, imagery_id)
+    monkeypatch.setenv("IMAGERY_UPLOAD_DIR", str(tmp_path))
+    monkeypatch.setenv("RS_SEGMENT_MCP_USE_DOCKER", "true")
+    get_settings.cache_clear()
+
+    seen: dict[str, object] = {}
+
+    async def roi_client(self, tool_name, *, source_path, output_dir, arguments=None):
+        with rasterio.open(source_path) as src:
+            seen["shape"] = (src.width, src.height)
+            seen["bounds"] = tuple(src.bounds)
+        seen["output_dir"] = output_dir
+        output_dir.mkdir(parents=True, exist_ok=True)
+        (output_dir / "segmentation_overlay.png").write_bytes(b"png")
+        return {
+            "output_png": "segmentation_overlay.png",
+            "total_pixels": 2,
+            "classes": [],
+        }
+
+    monkeypatch.setattr("app.mcp.rs_tools_client.RSToolsMCPClient.call_tool", roi_client)
+
+    result = await run_segment(
+        SegmentArguments(
+            imagery_id=imagery_id,
+            pixel_bbox=(0.0, 0.0, 0.5, 1.0),
+        )
+    )
+
+    assert result.error is None
+    assert seen["shape"] == (1, 2)
+    geo = result.geospatial_result
+    assert geo is not None
+    assert geo["bounds"] == pytest.approx((100.0, 19.98, 100.01, 20.0))
+    filename = geo["result_url"].rsplit("/", 1)[-1]
+    assert filename.startswith("segmentation_roi_")
+    assert (tmp_path / imagery_id / "results" / filename).is_file()
+    assert not list((tmp_path / imagery_id).glob(".segment_roi_*.tif"))
+    assert not list((tmp_path / imagery_id / "results").glob(".segment_roi_*"))
+    get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "exc",
     [

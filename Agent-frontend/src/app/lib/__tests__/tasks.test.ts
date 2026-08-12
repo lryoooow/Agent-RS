@@ -60,7 +60,7 @@ describe("tasksFromTurns", () => {
   it("边界：non-terminal events alone produce no task", () => {
     const turns: ChatTurn[] = [
       assistantTurn("t1", [
-        { stage: "planner_started", label: "规划", metadata: {} },
+        { stage: "routing_selected", label: "路由", metadata: {} },
         { stage: "context_assembled", label: "装配", metadata: {} },
       ]),
     ];

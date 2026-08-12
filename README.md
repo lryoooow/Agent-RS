@@ -4,192 +4,189 @@
 
 # Agent-RS
 
-**面向遥感影像分析的 AI 助手 — 用自然语言完成专业遥感处理**
+**基于 AutoGen 的遥感智能分析平台**
 
 </div>
 
-Agent-RS 是一个面向遥感影像分析的 AI 助手。你可以像聊天一样上传卫星或航拍影像，用自然语言让它完成植被分析、水体提取、地物分类、目标检测等遥感任务，结果以可交互的地图图层直接呈现。
+Agent-RS 把大模型、多 Agent 编排与容器化遥感算法连接起来。用户可上传 GeoTIFF，使用自然语言完成影像质检、光谱指数、目标检测、地物分类、裁剪重投影、报告生成等任务，并在 MapLibre 地图上查看结果图层。
 
-它把"会聊天的大模型"和"专业的遥感算法"接在一起：模型负责理解意图、规划该用哪个工具；真正的影像计算交给容器化的遥感算法去跑。你不需要写代码、配参数，也不需要懂 GDAL，一句话就能得到结果。
+> **使用限制：本项目不是开源软件。仅允许个人、非商业、本地学习与评估。未经项目权利人事先书面许可，禁止商业使用、对外提供服务、二次分发，以及使用本项目的代码、设计、数据、结果或衍生成果发表论文、预印本、学位论文、专利、项目申报或竞赛作品。发现违规使用，权利人将保留停止授权并依法追究责任的权利。完整条款见 [LICENSE](LICENSE)。**
 
-## 功能特性
+## 本次更新（2026-08-12）
 
-**智能对话**
-- 普通问答、长文本整理、资料总结，流式回复 + Markdown 渲染（标题、列表、表格、代码块）
-- 按需联网查询实时资料（独立搜索子代理）
-- 知识库文档检索与长期记忆（向量召回 + 全文检索 + RRF 融合 + 重排 + MMR 去冗）
+- **全面接入 AutoGen 0.7.5**：AutoGen 成为唯一 Agent 编排框架。标准作业走 `GraphFlow`，开放任务走 `SelectorGroupChat`，遥感、搜索、通用回答和记忆判断均由独立 `AssistantAgent` 协作。
+- **原生工具接入**：现有遥感能力封装为 AutoGen `BaseTool`，MCP Docker 算法层保持隔离；RAG 与长期记忆通过 AutoGen Memory 协议注入。
+- **推理泄漏防护**：后端在模型、AutoGen 事件、SSE、日志和持久化边界过滤原始 reasoning/`<think>` 内容。前端不显示“思考摘要”标题，只滚动展示“正在思考”“正在调用工具”“正在回复”等固定安全阶段词，光晕仅裁剪在文字内部。
+- **终止与去重修复**：为 Agent 回合、工具次数、GPU 重工具和流式结束设置硬边界，拦截重复回复、无止境对话以及正文结束后 SSE 长时间不关闭的问题。
+- **Tavily 联网搜索**：可使用服务端密钥，也可在前端设置中填写；密钥按请求传递，不进入提示词、日志、消息元数据或数据库。
+- **ROI 地物分类**：地图框选区域后可直接执行“分类选区”；可信 ROI 由请求上下文传入，后端先裁剪栅格，再调用地物分割工具。
+- **动态模型选择**：右上角模型名可下拉选择供应商 `/models` 返回的已拉取模型，并按创建时间优先展示较新模型。
+- **30 天登录保持**：账号会话默认有效期调整为 30 天，本机浏览器在 Cookie 有效且未主动退出时可持续登录。
+- **稳定性与安全加固**：增加模型结构化输出兼容回退、搜索输入脱敏、embedding 失败熔断、消息顺序修复、输出文件名隔离和前端地图包拆分。
 
-**影像管理**
-- 上传 GeoTIFF，自动压缩并在地图上预览原图；结果图层可叠加、单独开关、查看图例
-- 框选 ROI 聚焦感兴趣区域；分析报告一键生成
+## 架构
 
-**遥感分析工具**（全部由 AI 按需自动调用）
-
-| 工具 | 能力 | 说明 |
-|------|------|------|
-| 影像质检 | 读取影像元信息 | 尺寸、波段、坐标系、像素统计 |
-| NDVI | 归一化植被指数 | 植被长势与覆盖度分析 |
-| 光谱指数 | 10 种指数 | NDWI/MNDWI（水体）、NDBI/BSI（建成区/裸土）、EVI/SAVI/MSAVI/GNDVI（植被）、NDMI（水分）、NBR（火烧迹地） |
-| 波段组合 | 真彩色 / 假彩色 | 自定义波段渲染合成图 |
-| 目标检测 | PP-YOLOE-R / DOTA 15 类 | 飞机、舰船、车辆、储油罐、港口、桥梁等，输出旋转框图层 |
-| 地物分割 | U-Net / LandCover.ai | 建筑、林地、水体、背景的像素级分类掩膜 |
-| 云/阴影掩膜 | 阈值法粗筛 | 标记云与阴影区域，用于质量控制 |
-| 水体掩膜 | 阈值法提取 | 基于光谱特征提取水体范围 |
-| 裁剪 / 重投影 | 范围裁剪与坐标系转换 | 产出可下载的派生栅格 |
-| 文档解析 | 提取已入库文档全文 | 配合知识库回答文档相关问题 |
-| 影像 OCR | 识别影像 / 扫描件文字 | 对栅格影像、扫描地图做光学字符识别 |
-
-**准入与多用户**
-- 开放注册 + 登录认证，按用户隔离数据
-- 登录加密：PBKDF2-SHA256（600k 迭代）
-
-## 更新日志
-
-### 2026-06-24 · RAG 全链路优化 + 简化认证
-
-**RAG 检索增强**
-- **中文全文检索修复**：PostgreSQL bigram 切分，解决中文查询命中率问题
-- **文档切块语义连贯**：章节面包屑写入块正文，每个块带归属信息，提高召回准确性
-- **上下文扩展**：检索锚点块自动补充相邻块（±1），修复跨块论述被切断问题
-- **文档解析增强**：DOCX/PPTX 标题层级恢复，元信息保留
-
-**认证简化**
-- 移除邀请码准入机制，改为开放注册
-- 移除登录限流和管理员体系
-- 保留基础认证功能（注册/登录/会话管理）
-
-### 2026-06-22 · 对象存储 + 持久化工具队列
-
-- **影像对象存储**：影像二进制可落 MinIO（`STORAGE_BACKEND=minio`），owner 鉴权统一走 DB，支持多实例/可迁移；默认仍落本地盘（单机够用）。
-- **durable 工具任务队列**：工具执行记录持久化，进程重启后恢复被打断的孤儿任务；并发上限保护宿主机内存。正常流量仍同步实时推送 SSE。
-
-### 2026-06-18 · 统一 PostgreSQL 持久化
-
-- 存储后端统一为 **PostgreSQL（pgvector）**：登录、长期记忆、历史会话、知识库全部落库，检索管线（向量 + 全文 + RRF + 重排 + MMR）不变。
-
-### 2026-06-17 · 回答呈现与对话准确性
-
-- **Markdown 渲染**：助手回复正确渲染标题、列表、加粗、表格、代码块；多类别遥感结果以表格呈现。
-- **修复上下文串扰**：分离联网搜索的引用规范，加入「只回答当前问题、不复述历史」硬约束。
-- **回答更专业**：重写遥感结果回答范式（核心结论 → 指标解读 → 建议与局限），简单问题保持简洁。
-- **地图地名搜索**：右上角搜索框输入地名即可定位飞行（公开地理编码服务）。
-
-### 2026-06-07 · 检测 / 分割工具 + 领域子 Agent
-
-- 新增**目标检测**（PP-YOLOE-R / DOTA 15 类）与**地物语义分割**（U-Net / LandCover.ai），独立 GPU 容器经 MCP 调用，无 GPU 自动回退 CPU。
-- 光谱指数 5 → 10 种；前端新增对应图层与图例。
-- **架构升级**：「单一管线」重构为「顶层统一规划 → 三个领域子 Agent 执行」（指数分析 / 地物分类 / 目标检测）。新增能力只需登记到领域归属表。详见 [`docs/agent-tool-architecture.md`](docs/agent-tool-architecture.md)。
-
-## 工作原理
-
-```
-用户提问  ─►  AI 模型（理解意图 + 规划）
-                   │
-                   ├─ 直接回答 / 联网搜索
-                   │
-                   └─ 需要影像计算 ─►  选择遥感工具 ─►  MCP Docker 容器执行算法
-                                                              │
-                                          结果图层  ◄──────────┘
-                                          （叠加到地图）
+```text
+用户请求
+   │
+   ▼
+AutoGen 结构化路由 Agent
+   ├── 完整标准作业 ──► GraphFlow
+   └── 开放/不确定任务 ► SelectorGroupChat
+                              │
+             ┌────────────────┼────────────────┐
+             ▼                ▼                ▼
+       遥感领域 Agent      搜索 Agent       通用 Agent
+             │                │
+       AutoGen BaseTool     Tavily
+             │
+       MCP stdio / Docker
+             │
+       遥感算法与结果图层
 ```
 
-模型本身不碰像素。每个遥感工具都是独立的容器化算法（经 MCP 协议以 stdio 通信），由 AI 按意图自动选择调用。算法环境彼此隔离、可独立升级，模型只负责"理解和编排"，计算结果可信且可复现。新增一个能力只需注册工具 + 封装算法容器，无需改动编排逻辑。
+业务代码通过 `backend/app/agent/engine/` 适配 AutoGen，避免在 API、存储和领域代码中散落框架调用。旧的自研 planner、单工具 runtime、JSON 规划解析器与 decision cache 已移除，不再存在双运行时。
+
+## 主要能力
+
+| 类别 | 能力 |
+| --- | --- |
+| 智能对话 | 流式 Markdown、多 Agent 协作、上下文压缩、长期记忆、文档 RAG |
+| 联网搜索 | Tavily 查询改写、多轮检索、来源整理与调用次数限制 |
+| 影像管理 | GeoTIFF 上传、压缩预览、图层开关、图例、ROI 框选 |
+| 影像质检 | 尺寸、波段、坐标系、范围与像素统计 |
+| 光谱分析 | NDVI、NDWI、MNDWI、NDBI、BSI、EVI、SAVI、MSAVI、GNDVI、NDMI、NBR |
+| 栅格处理 | 真/假彩色合成、云影掩膜、水体掩膜、裁剪、重投影 |
+| 深度学习 | PP-YOLOE-R 旋转框目标检测、U-Net/LandCover.ai 地物分割、ROI 地物分类 |
+| 文档能力 | PDF、Word、PPT、Excel 解析，影像与扫描件 OCR，分析报告生成 |
+| 多用户 | 开放注册、用户数据隔离、PBKDF2-SHA256 密码哈希、30 天会话 |
 
 ## 技术栈
 
-- **后端**：Python + FastAPI，异步 Agent 运行时，MCP（stdio）调用 Docker 工具容器
-- **前端**：React + Vite + TypeScript + Tailwind CSS + shadcn/ui，MapLibre GL 地图渲染
-- **遥感算法容器**：rasterio / NumPy（指数）、PaddleDetection PP-YOLOE-R（检测）、PyTorch + segmentation-models-pytorch（分割）
-- **存储**：PostgreSQL + pgvector（知识库 / 记忆 / 会话 / 登录）；影像二进制落本地盘或 MinIO（可选）
-- **鉴权**：PBKDF2-SHA256（600k）+ HMAC 会话令牌
-- **文档解析**：pypdf / python-docx / python-pptx / openpyxl（PDF / Word / PPT / Excel），PDF 支持 OCR
+- 后端：Python 3.11+、FastAPI、AutoGen AgentChat/Core/Ext 0.7.5、MCP
+- 前端：React 18、TypeScript、Vite、Tailwind CSS、MapLibre GL
+- 存储：PostgreSQL 16 + pgvector；本地文件或 MinIO 对象存储
+- 算法：rasterio、NumPy、PaddleDetection、PyTorch、segmentation-models-pytorch
+- 检索：向量召回 + 全文检索 + RRF + rerank + MMR
 
 ## 快速开始
 
 ### 环境要求
 
-- Python 3.11+、Node.js 18+
-- Docker Desktop（运行遥感工具容器与本地 PostgreSQL；检测/分割需 NVIDIA GPU + nvidia-container-toolkit 以获最佳性能，无 GPU 自动回退 CPU）
+- Python 3.11+
+- Node.js 18+
+- [uv](https://docs.astral.sh/uv/)
+- Docker Desktop（本地 PostgreSQL 和遥感 MCP 工具需要；使用外部数据库并关闭 Docker 工具时可不启用）
 
-### 1. 起本地基础设施（PostgreSQL，可选 MinIO）
+### 1. 安装依赖
 
 ```bash
-docker compose up -d db          # 只起 PostgreSQL（影像落本地盘，单机够用）
-docker compose up -d db minio    # 起库 + 对象存储（STORAGE_BACKEND=minio 时）
+cp backend/.env.example backend/.env
+uv sync --project backend
+npm --prefix Agent-frontend ci
 ```
 
-### 2. 配置后端
+随后编辑 `backend/.env`，至少配置 `AUTH_SECRET_KEY`，并在后端环境变量或前端设置页提供可用的模型端点、API Key 与模型名。
 
-复制 `backend/.env.example` 为 `backend/.env` 并填写。最少需要：
+### 2. 单终端启动
+
+```bash
+npm run dev
+```
+
+该命令会在 Docker 可用时启动并等待本地 PostgreSQL，然后在同一个终端启动 FastAPI 与 Vite；按 `Ctrl+C` 会同时停止前后端。数据库迁移由后端启动过程幂等执行。前端地址为 <http://localhost:5173>，后端地址为 <http://localhost:3000>。
+
+如果 Docker 不可用，启动脚本会跳过本地数据库；此时需要让 `DATABASE_URL` 指向可访问的 PostgreSQL，或仅在无存储算子调试时设置 `DATABASE_ENABLED=false`。
+
+## 必要配置
+
+所有服务端配置均放在不入库的 `backend/.env`。仓库只提供无真实密钥的 `backend/.env.example`。
+
+| 配置 | 是否必需 | 说明 |
+| --- | --- | --- |
+| `AI_BASE_URL` | 是 | OpenAI 兼容 API 根地址，例如 `https://api.openai.com/v1` |
+| `AI_API_KEY` | 二选一 | 服务端模型密钥；留空时本地模式可从前端设置按请求提供 |
+| `AI_DEFAULT_MODEL` | 是 | 默认模型；兼容 function calling 的模型才能完整使用 Agent 工具 |
+| `AUTH_SECRET_KEY` | DB 模式必需 | 长随机串，公网部署前必须更换；可用 `openssl rand -hex 32` 生成 |
+| `AUTH_SESSION_DAYS` | 否 | 默认 `30`，控制登录 Cookie 与服务端会话有效期 |
+| `DATABASE_URL` | DB 模式必需 | PostgreSQL 连接串；示例值与 `docker-compose.yml` 对齐 |
+| `TAVILY_API_KEY` | 搜索可选 | 服务端搜索密钥；也可在前端设置中填写，仅随当前请求传递 |
+| `EMBEDDING_API_KEY` | RAG 可选 | 文档向量化和长期记忆；不可用时有熔断保护，不影响基础对话 |
+| `RERANK_API_KEY` | rerank 可选 | 检索重排服务密钥 |
+| `STORAGE_BACKEND` | 否 | `local` 或 `minio`；多实例部署建议 MinIO |
+| `ALLOW_CLIENT_PROVIDER_CONFIG` | 否 | 本地默认 `true`；公网多用户部署建议设为 `false` 并锁定服务端模型配置 |
+| `AUTH_COOKIE_SECURE` | 公网必需 | HTTPS 部署设为 `true` |
+
+AutoGen 关键配置：
 
 ```env
-AI_API_KEY=your_api_key          # 必填，否则无法调用模型
-AI_BASE_URL=https://api.openai.com/v1   # OpenAI 兼容端点；阿里云百炼填 https://dashscope.aliyuncs.com/compatible-mode/v1
-AI_DEFAULT_MODEL=gpt-4.1-mini           # 按所用服务商填，如 qwen-max
-
-DATABASE_ENABLED=true
-DATABASE_URL=postgresql://agent_rs:agent_rs_local@127.0.0.1:15432/agent_rs
-
-# 【公网部署必改】会话令牌的 HMAC 密钥，改成长随机串（openssl rand -hex 32）
-AUTH_SECRET_KEY=change-this-to-a-long-random-string
-
-TAVILY_API_KEY=                  # 联网搜索，可选
-STORAGE_BACKEND=local            # 影像落本地盘；多实例改 minio
+AGENT_AUTO_FLOW_ENABLED=true
+AGENT_ROUTER_MODEL=
+AGENT_ROUTER_MAX_TOKENS=256
+AGENT_MODEL_INFO=
+AGENT_MAX_TOOL_ITERATIONS=5
+AGENT_MAX_GPU_TOOL_CALLS=1
+AGENT_WEB_SEARCH_MAX_CALLS=1
 ```
 
-初始化表结构：
+`AGENT_MODEL_INFO` 仅用于兼容端点无法被 AutoGen 正确识别时覆盖模型能力，例如：
+
+```env
+AGENT_MODEL_INFO={"vision":false,"function_calling":true,"json_output":true,"structured_output":true,"family":"unknown"}
+```
+
+## Tavily 联网搜索
+
+有两种配置方式：
+
+1. 单用户/服务端：在 `backend/.env` 设置 `TAVILY_API_KEY`。
+2. 本地多配置：在前端设置页填写 Tavily Key。前端只在本机浏览器保存，并随对话请求传给后端；后端使用请求级上下文，不写入数据库。
+
+设置 `AGENT_WEB_SEARCH_MAX_CALLS=0` 可完全关闭搜索 Agent；设为 `2` 或 `3` 可允许查询改写与交叉验证，但会增加 Tavily 调用次数。
+
+## 模型选择
+
+右上角模型区域会读取当前供应商的 `/models` 接口。选择结果保存在本机设置并随请求传入 AutoGen 模型客户端。若供应商未实现 `/models`、返回鉴权错误或模型不支持 function calling，界面会保留手动填写的默认模型，但相关 Agent 工具可能不可用。
+
+## 遥感工具容器
+
+首次使用对应能力前构建镜像：
 
 ```bash
-cd backend && python sql/apply.py
+docker build -t rs-tools-mcp:0.1.0 docker/rs_tools
+docker build -t rs-detect-mcp:0.1.0 docker/rs_detect
+docker build -t rs-segment-mcp:0.1.0 docker/rs_segment
 ```
 
-### 3. 构建遥感工具镜像（按需，首次使用对应能力前）
+默认通过 `RS_*_MCP_USE_DOCKER=true` 使用容器。检测和分割镜像体积较大；NVIDIA GPU 可显著加速，未配置 GPU 时按镜像能力回退 CPU。
+
+## 思考信息安全边界
+
+平台只向用户展示后端白名单生成的阶段状态，不展示、存储或转发模型的原始思维链。防护覆盖：
+
+- provider 流增量和最终文本中的常见 reasoning 字段与 `<think>` 标签；
+- AutoGen 内部事件、路由理由、工具异常和模型异常；
+- SSE 事件、trace、应用日志、消息元数据和会话持久化；
+- 前端事件解析与正文渲染。
+
+阶段状态是运行状态提示，不代表模型原始推理内容。安全相关改动配有后端、前端和日志回归测试。
+
+## 测试
 
 ```bash
-docker build -t rs-tools-mcp:0.1.0 docker/rs_tools       # 质检 / NDVI / 光谱指数 / 波段组合
-docker build -t rs-detect-mcp:0.1.0 docker/rs_detect     # 目标检测（较大，含模型权重）
-docker build -t rs-segment-mcp:0.1.0 docker/rs_segment   # 地物分割
+uv run --project backend pytest backend/tests -q
+npm --prefix Agent-frontend test && npm --prefix Agent-frontend run type-check && npm --prefix Agent-frontend run build
 ```
 
-### 4. 启动后端与前端
+## 部署注意事项
 
-```bash
-python -m uvicorn app.main:app --app-dir backend --host 0.0.0.0 --port 3000 --reload --reload-exclude "storage/*"
-npm --prefix Agent-frontend install
-npm --prefix Agent-frontend run dev
-```
+- 公网部署必须使用 HTTPS，设置强 `AUTH_SECRET_KEY`、`AUTH_COOKIE_SECURE=true`，并关闭客户端模型配置覆盖。
+- 不要提交 `.env`、API Key、数据库、影像、模型权重、日志、`.claude`、`.codex` 或其他本地 Agent/编辑器状态。
+- `DATABASE_ENABLED=false` 仅用于无库算子调试，会关闭登录、会话、知识库、记忆和持久化能力。
+- MinIO 模式需同时配置 `MINIO_*` 并启动 `docker compose up -d db minio`。
 
-前端默认 http://localhost:5173 ，通过 Vite proxy 把 `/api` 转发到后端 http://localhost:3000 。首次打开会因强制登录显示登录页，用上一步的邀请码注册即可。
+## 许可与权利保留
 
-## 使用示例
+本仓库采用限制性、源码可见许可，不授予开源许可，也不授予任何商业或学术发表权利。除 [LICENSE](LICENSE) 明确允许的个人非商业本地评估外，其他使用均须取得项目权利人的事先书面许可。第三方依赖仍分别受其原始许可证约束。
 
-上传一张 GeoTIFF 后地图自动显示原图预览，再用自然语言描述需求：
-
-- "帮我算一下这张影像的 NDVI" → 生成植被指数图层
-- "提取图里的水体" → 自动选用 NDWI 光谱指数
-- "检测图中的飞机和船只" → 输出旋转框检测图层与各类别计数
-- "把这张图做地物分类" → 输出建筑/林地/水体的彩色分割掩膜与占比
-- "用真彩色显示这张影像" → 生成波段组合图层
-
-每个结果都是地图上的独立图层，可单独开关、查看图例。
-
-## 访问控制（邀请码 / 管理）
-
-面向定向内测的准入层（`AUTH_ENABLED=true` 且 `DATABASE_ENABLED=true` 时生效）：
-
-- **注册**：`INVITE_REQUIRED=true` 时必须持有效邀请码（高熵单次/限时，DB 仅存 HMAC）。
-- **管理员**：邮箱 ∈ `ADMIN_EMAILS` 即管理员，登录后界面出现管理入口，可签发/撤销邀请码、停用用户。
-- **首个管理员**：`python -m scripts.admin_bootstrap mint-invite` 铸码，再用 `ADMIN_EMAILS` 内邮箱 + 该码注册。
-- **公网部署务必**：改 `AUTH_SECRET_KEY` 为长随机串、走 HTTPS 时设 `AUTH_COOKIE_SECURE=true`。
-
-`DATABASE_ENABLED=false` 时存储能力整体关闭（仅用于无库的纯算子调试），不强制登录。
-
-## 开发与测试
-
-```bash
-docker compose up -d db                        # PG 集成测试需要本地库
-python -m pytest backend/tests -q              # 后端测试
-npm --prefix Agent-frontend run type-check     # 前端类型检查
-npm --prefix Agent-frontend test               # 前端单测（vitest）
-npm --prefix Agent-frontend run build          # 前端构建检查
-```
+架构细节见 [docs/agent-tool-architecture.md](docs/agent-tool-architecture.md)。

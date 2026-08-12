@@ -1,22 +1,15 @@
 """AutoGen 消息流 → 现有 SSE 事件的翻译层。
 
-## 硬要求：前端零改动
-
-前端已经围绕现有的 21 个 `AgentStage`（`app/agent/types.py:8-31`）建好了展示逻辑
-（`Agent-frontend/src/app/lib/agent-status.ts` 把 stage 分成 RUNNING/DONE/ERROR/HIDDEN 四类），
-`agent_trace` 的结构与 `execution_kind` / `dispatch_kind` / `agent_name` /
-`parent_run_id` / `child_run_id` 五个字段的语义也是契约的一部分
-（`docs/agent-tool-architecture.md:53-63`）。
-
-所以这一层的职责很明确：**AutoGen 怎么变都不影响前端**。新概念（selector 选人、
-多步工具循环、跨领域交棒）必须映射到既有 stage 上，而不是发明新 stage 让前端去适配。
+本层定义后端到前端的稳定 AutoGen 事件契约。`agent_trace` 的结构与
+`execution_kind` / `dispatch_kind` / `agent_name` / `parent_run_id` / `child_run_id`
+五个字段保持稳定；Selector 选人、多步工具循环和跨领域交棒都映射为明确的框架事件。
 
 ## 映射表
 
 | AutoGen 消息                     | 现有 stage                                   | 前端表现 |
 | -------------------------------- | -------------------------------------------- | -------- |
 | 开始                             | `context_assembled`                          | 隐藏 |
-| `SelectSpeakerEvent`             | `planner_selected`                           | 隐藏（规划噪声） |
+| `SelectSpeakerEvent`             | `agent_selected`                             | 隐藏（调度噪声） |
 | `ToolCallRequestEvent`           | `tool_requested` → `child_agent_running` → `tool_execution_started` | 转圈 |
 | `ToolCallExecutionEvent`（成功） | `tool_execution_completed` → `tool_context_ready` | 打勾 |
 | `ToolCallExecutionEvent`（失败） | `tool_execution_failed`                      | 红叉 |
@@ -28,8 +21,7 @@
 
 前端的气泡是按 `child_run_id` 区分的。多步链路里每个工具调用分配一个新的
 `child_run_id`，`parent_run_id` 用发起它的领域 Agent 的 run id——正好形成
-「顶层 → 领域 Agent → 工具执行」的三层链，与 legacy 的
-`DomainToolAgent → ToolChildAgent` 结构一致。前端不需要知道这次有几步。
+「顶层 → 领域 Agent → 工具执行」的三层链。前端不需要知道这次有几步。
 """
 
 from __future__ import annotations
@@ -47,7 +39,7 @@ from autogen_agentchat.messages import (
     ToolCallRequestEvent,
 )
 
-from app.agent.domain_agents import DOMAIN_LABELS
+from app.agent.engine.agents import agent_label
 from app.agent.engine.search import SEARCH_AGENT_LABEL, SEARCH_AGENT_NAME
 from app.agent.prompting.scenarios import (
     tool_ready_label,
@@ -77,7 +69,7 @@ class BridgeState:
 def _agent_label(agent_name: str) -> str:
     if agent_name == SEARCH_AGENT_NAME:
         return SEARCH_AGENT_LABEL
-    return DOMAIN_LABELS.get(agent_name, agent_name)
+    return agent_label(agent_name)
 
 
 def translate(
@@ -97,7 +89,7 @@ def translate(
     if isinstance(message, SelectSpeakerEvent):
         return [
             trace.add(
-                "planner_selected",
+                "agent_selected",
                 f"由{_agent_label(_first(message.content))}处理",
                 agent_name=_first(message.content),
                 dispatch_kind="agent",
@@ -135,7 +127,7 @@ def _on_tool_request(
             "execution_kind": "tool",
             "dispatch_kind": "tool",
         }
-        # 三连发与 legacy 的 ToolChildAgent 一致，前端据此把气泡从"请求"推进到"执行中"
+        # 前端据此把工具气泡从“请求”推进到“执行中”。
         events.append(trace.add("tool_requested", tool_request_label(call.name), **common))
         events.append(trace.add("child_agent_running", tool_running_label(call.name), **common))
         events.append(

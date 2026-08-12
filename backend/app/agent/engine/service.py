@@ -1,14 +1,6 @@
-"""AutoGen 链路的服务层入口：把编排结果整形成 `AIService` 需要的形状。
+"""AutoGen 服务层入口：把团队事件与结果整形成 `AIService` 的稳定契约。
 
-`ai_service.py` 按 `AGENT_ENGINE` 分流到这里，两条链路对外产出**完全同构**的结果，
-所以上层的持久化、SSE 组装、错误映射都不用改。
-
-## 为什么单独一层而不是直接改 ai_service
-
-`ai_service.chat` / `stream_chat` 已经处理了持久化、断连取消、错误映射、
-usage 统计等一堆正交的事。把 AutoGen 的逻辑塞进去会让那个函数变成两套流程交织，
-迁移完成后想删 legacy 分支也难拆。这里把「跑一个回合并产出标准结果」独立出来，
-`ai_service` 只做一次分流。
+编排逻辑留在本层；`AIService` 只负责持久化、SSE 组装、错误映射和 usage 记录。
 """
 
 from __future__ import annotations
@@ -29,19 +21,24 @@ from app.agent.engine.event_bridge import (
 )
 from app.agent.engine.orchestrator import (
     AnswerStreamSanitizer,
+    OrchestrationMetadata,
     OrchestrationResult,
     run_turn,
     stream_turn,
 )
+from app.agent.engine.input import build_turn_input
+from app.agent.engine.turn_context import current_turn_state
 from app.agent.config import ResolvedAIConfig
+from app.agent.search.credentials import tavily_key_scope
 from app.agent.types import AgentEvent, AgentTrace
+from app.schemas.chat import ChatRequest
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
 class AutogenTurnOutput:
-    """一个回合的完整产出，字段与 legacy 的 AgentPlanResult + 正文合并后对齐。"""
+    """一个 AutoGen 回合的完整产出。"""
 
     content: str
     trace: AgentTrace
@@ -51,14 +48,18 @@ class AutogenTurnOutput:
     tool_result: Any = None
     used_tool: bool = False
     stop_reason: str | None = None
+    usage: dict | None = None
+    map_target: dict | None = None
+    framework: str = "autogen"
+    strategy: str = "selector"
+    flow_name: str | None = None
+    route_reason: str = ""
 
 
 async def complete_turn(
     *,
-    query: str,
+    request: ChatRequest,
     user_id: str | None,
-    use_rag: bool,
-    use_memory: bool,
     cancellation_token: CancellationToken | None = None,
     config: ResolvedAIConfig | None = None,
 ) -> AutogenTurnOutput:
@@ -66,25 +67,26 @@ async def complete_turn(
     trace = AgentTrace(enabled=True)
     state = BridgeState()
     emit_context_assembled(trace=trace, state=state)
+    turn_input = await build_turn_input(request, user_id=user_id)
 
-    result = await run_turn(
-        query,
-        user_id=user_id,
-        use_rag=use_rag,
-        use_memory=use_memory,
-        cancellation_token=cancellation_token,
-        config=config,
-    )
+    with tavily_key_scope(request.tavily_api_key()):
+        result = await run_turn(
+            turn_input,
+            user_id=user_id,
+            use_rag=request.use_rag,
+            use_memory=request.use_memory,
+            cancellation_token=cancellation_token,
+            config=config,
+        )
+    _emit_strategy(result, trace=trace, state=state)
     _replay_messages_into_trace(result, trace=trace, state=state)
     return _to_output(result, trace=trace, state=state)
 
 
 async def stream_turn_events(
     *,
-    query: str,
+    request: ChatRequest,
     user_id: str | None,
-    use_rag: bool,
-    use_memory: bool,
     cancellation_token: CancellationToken | None = None,
     config: ResolvedAIConfig | None = None,
 ) -> AsyncIterator[tuple[str, Any]]:
@@ -106,7 +108,7 @@ async def stream_turn_events(
     调用方没跑完就把这个生成器丢掉（前端断连时 FastAPI 就是这么做的），
     GeneratorExit 会打到当前 yield 点。此时必须**显式**关闭底层的编排流，
     触发 `orchestrator._abandon` 去喊停团队；否则那条链路会继续一步一步往下跑，
-    用户已经走了还在烧 GPU（legacy 分支的 H5 修复防的就是这个）。
+    用户已经走了还在烧 GPU。
 
     这里显式 `aclose()` 而不是靠 asyncio 的异步生成器终结器，是为了让收尾**确定性地**
     立刻发生，而不是等下一次 GC。
@@ -115,6 +117,7 @@ async def stream_turn_events(
     state = BridgeState()
 
     yield "status", emit_context_assembled(trace=trace, state=state)
+    turn_input = await build_turn_input(request, user_id=user_id)
 
     seen_geospatial = False
     sanitizer = AnswerStreamSanitizer()
@@ -138,16 +141,34 @@ async def stream_turn_events(
         started_body = True
         return out
 
+    tavily_scope = tavily_key_scope(request.tavily_api_key())
+    tavily_scope.__enter__()
     turns = stream_turn(
-        query,
+        turn_input,
         user_id=user_id,
-        use_rag=use_rag,
-        use_memory=use_memory,
+        use_rag=request.use_rag,
+        use_memory=request.use_memory,
         cancellation_token=cancellation_token,
         config=config,
     )
+    _last_map: dict | None = None
     try:
         async for item in turns:
+            if isinstance(item, OrchestrationMetadata):
+                yield "status", trace.add(
+                    "routing_selected",
+                    "已选择 AutoGen 编排策略",
+                    framework=item.framework,
+                    strategy=item.strategy,
+                    flow_name=item.flow_name,
+                    parent_run_id=state.parent_run_id,
+                )
+                continue
+            # 对话控图：look_at_location 一解析完（turn_state.map_target 被写）就 mid-stream 发出。
+            _ts = current_turn_state()
+            if _ts is not None and _ts.map_target is not None and _ts.map_target is not _last_map:
+                _last_map = _ts.map_target
+                yield "map_control", dict(_ts.map_target)
             if isinstance(item, OrchestrationResult):
                 for piece in _body(sanitizer.flush()):
                     yield "delta", piece
@@ -181,7 +202,10 @@ async def stream_turn_events(
     finally:
         # 正常跑完时这是个 no-op（生成器已耗尽）；断连时它触发 orchestrator._abandon，
         # 让团队停在下一个消息边界，不再启动后续步骤。
-        await turns.aclose()
+        try:
+            await turns.aclose()
+        finally:
+            tavily_scope.__exit__(None, None, None)
 
 
 def _replay_messages_into_trace(
@@ -212,6 +236,25 @@ def _to_output(
         tool_result=result.tool_result,
         used_tool=result.used_tool,
         stop_reason=result.stop_reason,
+        usage=result.usage,
+        map_target=result.map_target,
+        framework=result.framework,
+        strategy=result.strategy,
+        flow_name=result.flow_name,
+        route_reason=result.route_reason,
+    )
+
+
+def _emit_strategy(
+    result: OrchestrationResult, *, trace: AgentTrace, state: BridgeState
+) -> AgentEvent:
+    return trace.add(
+        "routing_selected",
+        "已选择 AutoGen 编排策略",
+        framework=result.framework,
+        strategy=result.strategy,
+        flow_name=result.flow_name,
+        parent_run_id=state.parent_run_id,
     )
 
 

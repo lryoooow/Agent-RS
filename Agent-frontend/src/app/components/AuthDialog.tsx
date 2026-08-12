@@ -149,6 +149,7 @@ function RegisterForm({
       </Field>
       <Field label="密码">
         <Input value={password} onChange={(e) => setPassword(e.target.value)} type="password" autoComplete="new-password" className="bg-input-background text-[13px]" />
+        <PasswordRules email={email} password={password} />
       </Field>
       {auth.error && <p className="font-mono text-[11px] text-destructive">{auth.error}</p>}
       <Button type="submit" disabled={auth.loading} className="gap-1.5 bg-primary text-primary-foreground hover:bg-primary/90">
@@ -156,6 +157,40 @@ function RegisterForm({
         注册并登录
       </Button>
     </form>
+  );
+}
+
+// 后端 _validate_password（api/routes/auth.py）的规则，注册前先在界面上讲清楚：
+// 以前这两条只在 422 的英文报错里出现，用户先撞墙才知道，撞完账号也没建成。
+// 这里只做提示，真正的把关仍在后端。
+const PASSWORD_MIN_LENGTH = 10;
+
+function PasswordRules({ email, password }: { email: string; password: string }) {
+  const localPart = email.split("@", 1)[0].toLowerCase();
+  const rules = [
+    {
+      text: `至少 ${PASSWORD_MIN_LENGTH} 位`,
+      ok: password.length >= PASSWORD_MIN_LENGTH,
+    },
+    {
+      text: "不能包含邮箱 @ 前的名字",
+      ok: localPart.length < 3 || !password.toLowerCase().includes(localPart),
+    },
+  ];
+  return (
+    <ul className="flex flex-col gap-0.5 font-mono text-[11px]">
+      {rules.map((rule) => (
+        <li
+          key={rule.text}
+          className={
+            // 没开始输入时保持中性，别一上来就满屏红
+            !password ? "text-muted-foreground" : rule.ok ? "text-muted-foreground" : "text-destructive"
+          }
+        >
+          {password && rule.ok ? "✓" : "·"} {rule.text}
+        </li>
+      ))}
+    </ul>
   );
 }
 

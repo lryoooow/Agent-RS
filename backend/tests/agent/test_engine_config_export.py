@@ -12,7 +12,6 @@ from app.agent.engine.config_export import (
     dump_team_component,
     redact,
 )
-from app.agent.engine.orchestrator import build_team
 
 
 def test_description_lists_every_domain_agent() -> None:
@@ -53,15 +52,17 @@ def test_redact_removes_secrets_at_any_depth() -> None:
 
 
 def test_dump_team_component_is_redacted() -> None:
-    team = build_team(user_id="00000000-0000-4000-8000-000000000001")
-    dumped = dump_team_component(team)
-    serialized = json.dumps(dumped, ensure_ascii=False, default=str)
-    # .env 里的真实 key 绝不能出现在 dump 里
-    from app.core.settings import get_settings
+    class Component:
+        def model_dump(self):
+            return {"config": {"api_key": "secret", "model": "test"}}
 
-    api_key = get_settings().ai_api_key
-    if api_key:
-        assert api_key not in serialized
+    class Team:
+        def dump_component(self):
+            return Component()
+
+    dumped = dump_team_component(Team())
+    serialized = json.dumps(dumped, ensure_ascii=False, default=str)
+    assert "secret" not in serialized
 
 
 def test_dump_failure_returns_placeholder_not_exception() -> None:

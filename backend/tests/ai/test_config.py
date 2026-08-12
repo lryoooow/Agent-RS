@@ -45,13 +45,14 @@ def test_missing_model_raises_config_error(monkeypatch: pytest.MonkeyPatch) -> N
         resolve_ai_config()
 
 
-# ---------- 常规：前端填了就用（覆盖 env）----------
+# ---------- 常规：允许且合规时，前端值覆盖 env ----------
 
-def test_client_provider_config_always_applied_when_provided(monkeypatch: pytest.MonkeyPatch) -> None:
-    # 新契约（用户明确要求）：前端配置页填的 provider_config 始终生效，不再由任何
-    # 服务端开关门控。历史上的 allow_client_provider_config "false 时丢弃 client" 行为
-    # 已从 resolve_ai_config 移除，故这里断言 client 三项均覆盖 env（填了就用）。
+def test_client_provider_config_applied_when_allowed_and_valid(monkeypatch: pytest.MonkeyPatch) -> None:
+    # 契约：allow_client_provider_config=True（默认）且客户端 base_url 通过 SSRF 校验、
+    # 覆盖 base_url 时自带 api_key → 客户端三项覆盖 env。白名单内主机跳过 DNS（测试免联网）。
     _set_env(monkeypatch)
+    monkeypatch.setenv("AI_PROVIDER_ALLOWED_HOSTS", "client.example")
+    reset_settings()
     config = resolve_ai_config(
         request_model="request-model",
         provider_config=ProviderConfig(
@@ -63,6 +64,93 @@ def test_client_provider_config_always_applied_when_provided(monkeypatch: pytest
     assert config.base_url == "https://client.example/v1"
     assert config.api_key == "client-key"
     assert config.model == "client-model"
+
+
+# ---------- 安全：门控 / SSRF / 密钥外泄（P0-1 回归） ----------
+
+def test_allow_client_provider_config_false_ignores_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    # 公网部署设 false：客户端 provider_config 被整块忽略，回落 env。
+    _set_env(monkeypatch)
+    monkeypatch.setenv("ALLOW_CLIENT_PROVIDER_CONFIG", "false")
+    reset_settings()
+    config = resolve_ai_config(
+        provider_config=ProviderConfig(
+            base_url="https://client.example/v1",
+            api_key="client-key",
+            model="client-model",
+        ),
+    )
+    assert config.base_url == "https://env.example/v1"
+    assert config.api_key == "env-key"
+    assert config.model == "env-model"
+
+
+def test_client_base_url_override_requires_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    # 覆盖 base_url 但不带 api_key → 拒绝（绝不把服务端 key 发往客户端 URL）。
+    _set_env(monkeypatch)
+    monkeypatch.setenv("AI_PROVIDER_ALLOWED_HOSTS", "client.example")
+    reset_settings()
+    with pytest.raises(ConfigError, match="必须同时提供 api_key"):
+        resolve_ai_config(
+            provider_config=ProviderConfig(base_url="https://client.example/v1", api_key=None),
+        )
+
+
+def test_client_base_url_rejects_private_ip(monkeypatch: pytest.MonkeyPatch) -> None:
+    _set_env(monkeypatch)
+    reset_settings()
+    with pytest.raises(ConfigError, match="内网/保留地址"):
+        resolve_ai_config(
+            provider_config=ProviderConfig(base_url="https://10.0.0.1/v1", api_key="k"),
+        )
+
+
+def test_client_base_url_rejects_http_metadata_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
+    # 云元数据端点 http 且非回环 → 拒（SSRF 防护）。
+    _set_env(monkeypatch)
+    reset_settings()
+    with pytest.raises(ConfigError, match="仅回环允许 http"):
+        resolve_ai_config(
+            provider_config=ProviderConfig(
+                base_url="http://169.254.169.254/latest/meta-data/", api_key="k",
+            ),
+        )
+
+
+def test_client_base_url_allows_loopback_http(monkeypatch: pytest.MonkeyPatch) -> None:
+    # 本地开发：回环 http 放行（Ollama 等）。
+    _set_env(monkeypatch)
+    reset_settings()
+    config = resolve_ai_config(
+        provider_config=ProviderConfig(base_url="http://127.0.0.1:11434/v1", api_key="local-key"),
+    )
+    assert config.base_url == "http://127.0.0.1:11434/v1"
+    assert config.api_key == "local-key"
+
+
+def test_provider_config_schema_rejects_non_http_scheme() -> None:
+    # API 边界即拒 file:///ftp:// 等（pydantic 层）。
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        ProviderConfig(base_url="file:///etc/passwd")
+
+
+# ---------- 思考强度分档：strength → budget ----------
+
+def test_resolve_thinking_budget_tiers(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.agent.config import resolve_thinking_budget
+
+    monkeypatch.setenv("AI_THINKING_BUDGET", "128")
+    monkeypatch.setenv("AI_THINKING_BUDGET_LOW", "100")
+    monkeypatch.setenv("AI_THINKING_BUDGET_MEDIUM", "1000")
+    monkeypatch.setenv("AI_THINKING_BUDGET_MAX", "9000")
+    reset_settings()
+    assert resolve_thinking_budget("low") == 100
+    assert resolve_thinking_budget("medium") == 1000
+    assert resolve_thinking_budget("max") == 9000
+    assert resolve_thinking_budget(None) == 128  # 旧客户端 / None 回落服务端默认
+    assert resolve_thinking_budget("bogus") == 128  # 未知值安全回落
 
 
 # ---------- 常规：前端留空则回落 env（降级方向）----------
