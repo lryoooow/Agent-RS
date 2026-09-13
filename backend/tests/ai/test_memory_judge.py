@@ -18,7 +18,10 @@ from app.core.settings import get_settings
 
 
 @pytest.fixture(autouse=True)
-def _settings() -> None:
+def _settings(monkeypatch) -> None:
+    # 记忆判官构造模型客户端前会 resolve_ai_config；不依赖 .env 的服务端密钥
+    #（为空是合法运行状态），测试自带占位凭据。
+    monkeypatch.setenv("AI_API_KEY", "test-key-for-memory-judge")
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()

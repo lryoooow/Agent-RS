@@ -115,6 +115,16 @@ def _route_main(monkeypatch, client) -> None:
     monkeypatch.setattr(orchestrator, "choose_route", _main)
 
 
+@pytest.fixture(autouse=True)
+def _ai_credentials(monkeypatch) -> None:
+    """编排链路构造时会先 resolve_ai_config（哪怕模型客户端已被替掉）。
+
+    本组用例不该依赖 backend/.env 里恰好配了 AI_API_KEY——服务端密钥为空是
+    合法运行状态（本地模式由前端设置页提供凭据），测试必须自带。
+    """
+    monkeypatch.setenv("AI_API_KEY", "test-key-for-contract-tests")
+
+
 async def _run(monkeypatch, replies, *, query: str = "这张图的影像质量怎么样"):
     client = _ScriptedClient(replies)
     _route_main(monkeypatch, client)
