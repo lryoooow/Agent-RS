@@ -26,6 +26,8 @@ EXPECTED_TOOLS = {
     "generate_report",
     "look_at_location",
     "web_search",
+    "search_imagery",
+    "fetch_scene",
 }
 
 VALID_ARGS = {
@@ -43,6 +45,8 @@ VALID_ARGS = {
     "generate_report": {"reason": "用户请求生成报告"},
     "look_at_location": {"query": "北京"},
     "web_search": {"query": "Sentinel-2 最新数据", "reason": "需要最新信息"},
+    "search_imagery": {"bbox": [113.9, 22.4, 114.3, 22.7], "reason": "找影像"},
+    "fetch_scene": {"scene_key": "ab12cd34ef56", "reason": "导入分析"},
 }
 
 
@@ -68,7 +72,7 @@ def test_domain_tools_each_have_exactly_one_agent_owner() -> None:
 def test_shared_scope_is_exactly_the_platform_capabilities() -> None:
     """共享工具 = 联网检索 + 地图定位 + 报告生成，其余都是领域工具。"""
     shared = {tool.name for tool in TOOLS.values() if tool.scope == "shared"}
-    assert shared == {"web_search", "look_at_location", "generate_report"}
+    assert shared == {"web_search", "look_at_location", "generate_report", "search_imagery", "fetch_scene"}
 
 
 def test_resource_guards_are_derived_from_registry() -> None:

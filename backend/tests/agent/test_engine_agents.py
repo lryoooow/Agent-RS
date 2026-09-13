@@ -91,7 +91,13 @@ def test_domain_specs_are_derived_from_tool_registry() -> None:
 def test_shared_tools_do_not_spawn_agents() -> None:
     """共享工具（检索/定位/报告）不催生任何领域 Agent。"""
     shared = {tool.name for tool in TOOLS.values() if tool.scope == "shared"}
-    assert shared == {"web_search", "look_at_location", "generate_report"}
+    assert shared == {
+        "web_search",
+        "look_at_location",
+        "generate_report",
+        "search_imagery",
+        "fetch_scene",
+    }
     spec_names = {spec.name for spec in domain_specs()}
     assert spec_names.isdisjoint({"report_agent", "navigation_agent", "search_agent"})
 
