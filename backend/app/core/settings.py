@@ -96,6 +96,19 @@ class Settings(BaseSettings):
     agent_web_search_rerank_enabled: bool = True
     agent_web_search_rerank_top_n: int = 5
 
+    # ---- 免账号卫星影像检索（Phase 7：EarthSearch + Planetary Computer）----
+    # 单轮对话内 search_imagery 工具的调用上限（外部 API，防刷）。
+    agent_imagery_search_max_calls: int = 2
+    # 场景合成（下载/导入）的窗口像素封顶：超出按比例降采样，防流量失控。
+    agent_scene_window_max_pixels: int = 4000
+    # 预览 PNG 最长边像素。
+    agent_scene_preview_size: int = 1024
+    # STAC 搜索与远程 COG 读取的超时（秒）。
+    stac_timeout_seconds: float = 20.0
+    # GDAL 读取远程 COG 的出网代理（如 http://127.0.0.1:7890）。留空走系统默认；
+    # STAC 搜索走 HTTP(S)_PROXY 环境变量。本机 TUN 模式代理下两者都可留空。
+    stac_http_proxy: str = ""
+
     # ---- AutoGen 唯一编排引擎 ----
     # 标准作业先由结构化路由 Agent 判断是否走 GraphFlow；其余请求由主 Agent 直跑。
     agent_router_model: str = ""
