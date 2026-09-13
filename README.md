@@ -14,7 +14,7 @@ Agent-RS 把大模型、多 Agent 编排与容器化遥感算法连接起来。�
 
 ## 本次更新（2026-08-12）
 
-- **全面接入 AutoGen 0.7.5**：AutoGen 成为唯一 Agent 编排框架。标准作业走 `GraphFlow`，开放任务走 `SelectorGroupChat`，遥感、搜索、通用回答和记忆判断均由独立 `AssistantAgent` 协作。
+- **两层编排（AutoGen 0.7.5）**：标准作业走 `GraphFlow` 固定流水线，其余请求由持有全部工具的单主 Agent 直完成；联网搜索、地图定位、报告生成是所有 Agent 共有的共享工具，不再经过专家交棒。
 - **原生工具接入**：现有遥感能力封装为 AutoGen `BaseTool`，MCP Docker 算法层保持隔离；RAG 与长期记忆通过 AutoGen Memory 协议注入。
 - **推理泄漏防护**：后端在模型、AutoGen 事件、SSE、日志和持久化边界过滤原始 reasoning/`<think>` 内容。前端不显示“思考摘要”标题，只滚动展示“正在思考”“正在调用工具”“正在回复”等固定安全阶段词，光晕仅裁剪在文字内部。
 - **终止与去重修复**：为 Agent 回合、工具次数、GPU 重工具和流式结束设置硬边界，拦截重复回复、无止境对话以及正文结束后 SSE 长时间不关闭的问题。
@@ -32,7 +32,7 @@ Agent-RS 把大模型、多 Agent 编排与容器化遥感算法连接起来。�
    ▼
 AutoGen 结构化路由 Agent
    ├── 完整标准作业 ──► GraphFlow
-   └── 开放/不确定任务 ► SelectorGroupChat
+   └── 开放/不确定任务 ► main_agent（单主 Agent，全部工具）
                               │
              ┌────────────────┼────────────────┐
              ▼                ▼                ▼

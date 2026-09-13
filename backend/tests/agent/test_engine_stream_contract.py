@@ -1,18 +1,25 @@
-"""engine/service.py：流式正文的对外契约。
+"""engine/service.py：流式正文的对外契约（Phase 4 单主 Agent 架构）。
 
-跑的是**真** SelectorGroupChat（只把模型客户端换成脚本），因为这里要验的几件事
-都只在真实消息流里才会暴露：分片怎么切、跨专家的消息边界在哪、编排脚手架
-在什么位置出现。用手搓的假消息序列测不出来。
+跑的是**真** AssistantAgent（只把模型客户端换成脚本），因为这里要验的几件事
+都只在真实消息流里才会暴露：分片怎么切、工具循环的事件顺序、断连后的收尾。
+用手搓的假消息序列测不出来。
 
-三条不变量：
+不变量：
 
-1. 用户看不到 `[DONE]` 与「进度自检」——它们是给终止判据和 selector 用的；
-2. 跨领域链路里**每一步**的结论都要留在落库正文里；
-3. 流式看到的正文与落库正文一致（否则刷新页面内容会变）。
+1. `<think>` 推理与叙述式旁白不进流式正文与落库正文；
+2. 普通回答一字不改地流出去，流式看到的与落库一致（否则刷新页面内容会变）；
+3. 工具循环里，工具 trace 事件按序发出、最终答复正确、used_tool 为真；
+4. 前端断连后收尾不泄漏任务，模型客户端每回合关闭。
+
+（此前 SelectorGroupChat 的 [DONE]/[HANDOFF] 脚手架剥离用例随交棒协议一起
+删除——单主 Agent 不再输出任何控制行，没有可剥离的脚手架。）
 """
 from __future__ import annotations
 
+import json
+
 import pytest
+from autogen_core import FunctionCall
 from autogen_core.models import (
     ChatCompletionClient,
     CreateResult,
@@ -23,37 +30,25 @@ from autogen_core.models import (
 import app.agent.engine.orchestrator as orchestrator
 from app.agent.engine.router import RouteResult
 from app.agent.engine.service import stream_turn_events
+from app.agent.types import ToolRunResult
 from app.schemas.chat import ChatMessage, ChatRequest
-
-STEP_ONE = """已完成 NDVI 计算，均值 0.42。
-
-进度自检：
-- 计算 NDVI：已完成
-- 地物分类：未完成（需 segmentation_agent 来做）
-
-[HANDOFF: segmentation_agent]"""
-
-STEP_TWO = """地物分类已完成：建筑 32%、林地 45%、水体 12%。
-
-进度自检：
-- 计算 NDVI：已完成
-- 地物分类：已完成
-
-[DONE]"""
 
 
 class _ScriptedClient(ChatCompletionClient):
-    """selector 走 create()，领域 Agent 走 create_stream()。
+    """主 Agent 路径全部走 create_stream；每个元素是一次模型调用的完整回复。
 
-    分片大小刻意取 8，好让 `进度自检` 与 `[DONE]` 被切断在分片中间——
-    这正是标记漏进用户正文的真实成因。
+    回复要么是纯文本（最终答复），要么是 FunctionCall 列表（触发工具循环）。
+    分片大小刻意取 8，好让 `<think>` 标签被切断在分片中间——这正是
+    推理内容漏进用户正文的真实成因。
+
+    create() 在这条路径上不该被调用（路由已被 monkeypatch、无 selector），
+    一旦调用立即失败，防止悄悄引入隐藏的模型往返。
     """
 
-    def __init__(self, picks: list[str], replies: list[str], chunk: int = 8) -> None:
-        self._picks = list(picks)
+    def __init__(self, replies: list, chunk: int = 8) -> None:
         self._replies = list(replies)
         self._chunk = chunk
-        self.selector_calls = 0
+        self.stream_calls = 0
 
     @property
     def model_info(self):
@@ -70,23 +65,27 @@ class _ScriptedClient(ChatCompletionClient):
     def capabilities(self):
         return self.model_info
 
-    async def create(self, messages, **kwargs):
-        self.selector_calls += 1
-        pick = self._picks.pop(0) if self._picks else "spectral_agent"
-        return CreateResult(
-            finish_reason="stop",
-            content=pick,
-            usage=RequestUsage(prompt_tokens=0, completion_tokens=0),
-            cached=False,
-        )
+    async def create(self, messages, **kwargs):  # pragma: no cover - 契约：不该走到
+        raise AssertionError("主 Agent 路径不应出现非流式模型调用")
 
     async def create_stream(self, messages, **kwargs):
-        text = self._replies.pop(0) if self._replies else "好的。\n[DONE]"
-        for i in range(0, len(text), self._chunk):
-            yield text[i : i + self._chunk]
+        self.stream_calls += 1
+        reply = self._replies.pop(0) if self._replies else "好的。"
+        if isinstance(reply, list):
+            # AutoGen 契约：FunctionCall 列表放在 content 里（content 为 str 时
+            # 会被当作最终文本直接返回，工具调用被忽略）。
+            yield CreateResult(
+                finish_reason="function_calls",
+                content=reply,
+                usage=RequestUsage(prompt_tokens=0, completion_tokens=0),
+                cached=False,
+            )
+            return
+        for i in range(0, len(reply), self._chunk):
+            yield reply[i : i + self._chunk]
         yield CreateResult(
             finish_reason="stop",
-            content=text,
+            content=reply,
             usage=RequestUsage(prompt_tokens=0, completion_tokens=0),
             cached=False,
         )
@@ -107,22 +106,21 @@ class _ScriptedClient(ChatCompletionClient):
         return 10_000
 
 
-async def _run(
-    monkeypatch,
-    picks: list[str],
-    replies: list[str],
-    *,
-    query: str = "先算 NDVI，再出报告",
-):
-    client = _ScriptedClient(picks, replies)
+def _route_main(monkeypatch, client) -> None:
     monkeypatch.setattr(orchestrator, "build_model_client", lambda *a, **k: client)
 
-    async def _selector(*_args, **_kwargs):
-        return RouteResult(strategy="selector", flow_name=None, reason="test")
+    async def _main(*_args, **_kwargs):
+        return RouteResult(strategy="main", flow_name=None, reason="test")
 
-    monkeypatch.setattr(orchestrator, "choose_route", _selector)
+    monkeypatch.setattr(orchestrator, "choose_route", _main)
+
+
+async def _run(monkeypatch, replies, *, query: str = "这张图的影像质量怎么样"):
+    client = _ScriptedClient(replies)
+    _route_main(monkeypatch, client)
 
     deltas: list[str] = []
+    statuses: list[str] = []
     final = None
     async for kind, payload in stream_turn_events(
         request=ChatRequest(
@@ -134,38 +132,26 @@ async def _run(
     ):
         if kind == "delta":
             deltas.append(payload)
+        elif kind == "status":
+            statuses.append(payload.stage)
         elif kind == "thinking":
             pytest.fail("engine 不得再产生原始 thinking 事件")
         elif kind == "final":
             final = payload
     assert final is not None, "编排必须产出最终结果"
-    return "".join(deltas), final, client
+    return "".join(deltas), final, statuses, client
 
 
-@pytest.mark.asyncio
-async def test_scaffolding_never_reaches_the_user(monkeypatch) -> None:
-    """实测踩到的坑：`[DONE]` 出现在用户看到的答复里。
-
-    落库正文剥过标记，流式分片却是原样透传的，而前端默认走流式——
-    于是用户亲眼看到 `[DONE]` 和整段「进度自检」。
-    """
-    streamed, final, _ = await _run(
-        monkeypatch, ["spectral_agent", "segmentation_agent"], [STEP_ONE, STEP_TWO]
-    )
-
-    for text, where in ((streamed, "流式正文"), (final.content, "落库正文")):
-        assert "[DONE]" not in text, f"{where}里不该出现终止标记"
-        assert "[HANDOFF:" not in text, f"{where}里不该出现交接控制行"
-        assert "进度自检" not in text, f"{where}里不该出现完成度自检清单"
+# --------------------------------------------------------------- 正文契约
 
 
 @pytest.mark.asyncio
 async def test_raw_reasoning_never_reaches_stream_or_saved_answer(monkeypatch) -> None:
     """供应商 reasoning_content 经 AutoGen 包成标签后必须在 engine 边界永久丢弃。"""
     secret = "SYSTEM_PROMPT_AND_PRIVATE_CHAIN_SECRET"
-    reply = f"<think>{secret}</think>公开答案。\n[DONE]"
+    reply = f"<think>{secret}</think>公开答案。"
 
-    streamed, final, _ = await _run(monkeypatch, ["general_agent"], [reply], query="你好")
+    streamed, final, _, _ = await _run(monkeypatch, [reply], query="你好")
 
     assert streamed == "公开答案。"
     assert final.content == "公开答案。"
@@ -174,100 +160,79 @@ async def test_raw_reasoning_never_reaches_stream_or_saved_answer(monkeypatch) -
 
 
 @pytest.mark.asyncio
-async def test_every_step_survives_in_the_saved_answer(monkeypatch) -> None:
-    """跨领域链路里每位专家各产出一段真实结论，落库正文不能只留最后一条。
+async def test_single_agent_answer_is_unchanged_and_streamed_equals_saved(monkeypatch) -> None:
+    """最常见的情况：主 Agent 直接作答，正文原样流出去，且流式与落库一致。"""
+    plain = "NDVI 全称是归一化植被指数，取值范围 -1 到 1。"
+    streamed, final, _, _ = await _run(monkeypatch, [plain], query="NDVI 是什么")
 
-    只留最后一条时，用户在流式过程中看到了"NDVI 均值 0.42"，刷新页面却没了。
+    assert streamed == plain
+    assert final.content == plain
+    assert final.used_tool is False
+
+
+# --------------------------------------------------------------- 工具循环
+
+
+@pytest.mark.asyncio
+async def test_tool_loop_emits_trace_events_and_final_answer(monkeypatch) -> None:
+    """工具循环：先要工具、执行、再给最终答复；trace 事件按序、正文正确。
+
+    工具执行被 monkeypatch 成罐头结果——这里测的是**编排契约**（事件顺序、
+    流式/落库一致、used_tool），不是 raster_inspect 本身。
     """
-    streamed, final, _ = await _run(
-        monkeypatch, ["spectral_agent", "segmentation_agent"], [STEP_ONE, STEP_TWO]
-    )
+    tool_call = [
+        FunctionCall(
+            id="call_1",
+            name="raster_inspect",
+            arguments=json.dumps(
+                {"imagery_id": "94e758f38ede", "reason": "用户要求检查影像"},
+                ensure_ascii=False,
+            ),
+        )
+    ]
+    answer = "影像共 4 个波段，质量良好。"
 
-    assert "均值 0.42" in final.content, "第一步的结论不能从落库正文里消失"
-    assert "地物分类已完成" in final.content
-    assert "均值 0.42" in streamed
+    async def fake_prepare(tool_name, arguments, *, user_id):
+        return object()  # 非 PrepareRejected 即视为通过（真实校验另有专测）
 
+    async def fake_run(_prepared) -> ToolRunResult:
+        return ToolRunResult(tool_context="影像质检：4 波段，CRS EPSG:32650，无 nodata。")
 
-@pytest.mark.asyncio
-async def test_streamed_body_matches_saved_body(monkeypatch) -> None:
-    """流式看到的和落库的必须一致，否则刷新页面内容会变。"""
-    streamed, final, _ = await _run(
-        monkeypatch, ["spectral_agent", "segmentation_agent"], [STEP_ONE, STEP_TWO]
-    )
-    assert streamed == final.content
+    monkeypatch.setattr("app.agent.engine.tools.prepare_tool_call", fake_prepare)
+    monkeypatch.setattr("app.agent.engine.tools.run_prepared_tool", fake_run)
 
+    streamed, final, statuses, client = await _run(monkeypatch, [tool_call, answer])
 
-@pytest.mark.asyncio
-async def test_single_expert_answer_is_unchanged(monkeypatch) -> None:
-    """最常见的情况：一个专家直接作答，正文要原样流出去，不能被净化器动到。"""
-    plain = "NDVI 全称是归一化植被指数，取值范围 -1 到 1。\n\n[DONE]"
-    streamed, final, _ = await _run(monkeypatch, ["spectral_agent"], [plain])
-
-    expected = "NDVI 全称是归一化植被指数，取值范围 -1 到 1。"
-    assert streamed == expected
-    assert final.content == expected
-
-
-@pytest.mark.asyncio
-async def test_missing_control_marker_stops_after_first_complete_reply(monkeypatch) -> None:
-    """供应商漏写 [DONE] 时，不能继续选人并生成不同版本的重复答复。"""
-    streamed, final, client = await _run(
-        monkeypatch,
-        ["general_agent", "spectral_agent"],
-        ["你好，很高兴见到你。", "这是本不该出现的第二份答复。"],
-        query="你好",
-    )
-
-    assert streamed == "你好，很高兴见到你。"
-    assert final.content == streamed
-    assert client.selector_calls == 1, "完整答复后不应再次调用 selector"
-    assert client._replies == ["这是本不该出现的第二份答复。"]
-
-
-@pytest.mark.asyncio
-async def test_explicit_handoff_skips_another_selector_model_call(monkeypatch) -> None:
-    """跨专家接力由机器控制行直达，答复结束后不再空等一次调度模型。"""
-    streamed, final, client = await _run(
-        monkeypatch,
-        ["spectral_agent"],
-        [STEP_ONE, STEP_TWO],
-    )
-
-    assert "均值 0.42" in streamed
-    assert "地物分类已完成" in final.content
-    assert client.selector_calls == 1, "第二位专家应由 HANDOFF 直接选择"
+    assert streamed == answer
+    assert final.content == answer
+    assert final.used_tool is True
+    assert client.stream_calls == 2, "工具调用后必须再有一次模型调用产出答复"
+    # trace 契约：工具请求 → 执行开始 → 执行完成（事件桥翻译顺序）。
+    assert "tool_requested" in statuses
+    assert "tool_execution_started" in statuses
+    assert "tool_execution_completed" in statuses
 
 
 # ------------------------------------------------------------------ 断连收尾
 
 
 @pytest.mark.asyncio
-async def test_disconnect_stops_the_rest_of_the_chain(monkeypatch) -> None:
-    """前端断连后，跨领域链路不能继续一步一步往下跑。
+async def test_disconnect_drains_without_leaking_tasks(monkeypatch) -> None:
+    """前端断连后收尾必须干净：不留永不结束的任务。
 
-    用户已经走了还在烧 GPU。AutoGen 链路靠 `orchestrator._abandon` 里的外部终止
-    阻止后续步骤启动。
-
-    刻意**不**用 `cancellation_token.cancel()`：AutoGen 0.7.5 的
-    `ChatAgentContainer.handle_request` 用的是 `except Exception`，接不住继承自
-    BaseException 的 CancelledError，取消会让 runtime 的处理任务永久挂起
-    （实测每次断连泄漏 2~5 个任务）。详见 `_abandon` 的说明。
+    主 Agent 路径没有"后续步骤"可停；断连后由 `_abandon` 在后台排空在飞
+    调用并关闭模型客户端。
     """
     import asyncio
 
-    client = _ScriptedClient(["spectral_agent", "segmentation_agent"], [STEP_ONE, STEP_TWO])
-    monkeypatch.setattr(orchestrator, "build_model_client", lambda *a, **k: client)
-
-    async def _selector(*_args, **_kwargs):
-        return RouteResult(strategy="selector", flow_name=None, reason="test")
-
-    monkeypatch.setattr(orchestrator, "choose_route", _selector)
+    client = _ScriptedClient(["答复第一部分。\n答复第二部分。"])
+    _route_main(monkeypatch, client)
 
     before = {id(t) for t in asyncio.all_tasks()}
 
     gen = stream_turn_events(
         request=ChatRequest(
-            messages=[ChatMessage(role="user", content="先算 NDVI，再出报告")],
+            messages=[ChatMessage(role="user", content="随便聊聊")],
             use_rag=False,
             use_memory=False,
         ),
@@ -298,19 +263,14 @@ async def test_disconnect_stops_the_rest_of_the_chain(monkeypatch) -> None:
 async def test_model_client_is_closed_after_a_normal_turn(monkeypatch) -> None:
     """模型客户端每回合新建，就必须每回合关闭——它自带一个 httpx 连接池，
     不关的话每个聊天请求泄漏一个，最后耗尽文件描述符。"""
-    client = _ScriptedClient(["spectral_agent"], ["答复。\n[DONE]"])
+    client = _ScriptedClient(["答复。"])
     closed: list[bool] = []
 
     async def _close():
         closed.append(True)
 
     client.close = _close  # type: ignore[method-assign]
-    monkeypatch.setattr(orchestrator, "build_model_client", lambda *a, **k: client)
-
-    async def _selector(*_args, **_kwargs):
-        return RouteResult(strategy="selector", flow_name=None, reason="test")
-
-    monkeypatch.setattr(orchestrator, "choose_route", _selector)
+    _route_main(monkeypatch, client)
 
     async for _kind, _payload in stream_turn_events(
         request=ChatRequest(
@@ -325,25 +285,7 @@ async def test_model_client_is_closed_after_a_normal_turn(monkeypatch) -> None:
     assert closed, "回合结束必须关闭模型客户端"
 
 
-@pytest.mark.asyncio
-async def test_expert_with_only_scaffolding_leaves_no_blank_tail(monkeypatch) -> None:
-    """有的专家整条消息都是脚手架（净化后为空）。
-
-    这时不能因为"换了发言人"就先把分隔空行发出去——正文末尾会多一个空行，
-    与落库正文对不上。分隔符必须等真的有下文才发。
-    """
-    only_scaffolding = "进度自检：\n- 计算 NDVI：已完成\n\n[DONE]"
-    streamed, final, _ = await _run(
-        monkeypatch,
-        ["spectral_agent", "segmentation_agent"],
-        ["已完成 NDVI 计算，均值 0.42。\n[HANDOFF: segmentation_agent]", only_scaffolding],
-    )
-
-    assert streamed == final.content
-    assert streamed == "已完成 NDVI 计算，均值 0.42。"
-
-
-# ================================================================ 非流式路径（GAP-5）
+# ================================================================ 非流式路径
 
 
 @pytest.mark.asyncio
@@ -351,20 +293,12 @@ async def test_complete_turn_returns_correct_output_shape(monkeypatch) -> None:
     """非流式 complete_turn 产出的 AutogenTurnOutput 字段形状正确。
 
     此前只有流式路径通过 stream_turn_events 间接被测，
-    非流式路径（run_turn → team.run）完全裸奔。
+    非流式路径（run_turn → agent.run）完全裸奔。
     """
     from app.agent.engine.service import complete_turn
 
-    client = _ScriptedClient(
-        ["spectral_agent"],
-        ["NDVI 是归一化植被指数，范围 -1 到 1。\n[DONE]"],
-    )
-    monkeypatch.setattr(orchestrator, "build_model_client", lambda *a, **k: client)
-
-    async def _selector(*_args, **_kwargs):
-        return RouteResult(strategy="selector", flow_name=None, reason="test")
-
-    monkeypatch.setattr(orchestrator, "choose_route", _selector)
+    client = _ScriptedClient(["NDVI 是归一化植被指数，范围 -1 到 1。"])
+    _route_main(monkeypatch, client)
 
     output = await complete_turn(
         request=ChatRequest(
@@ -376,8 +310,9 @@ async def test_complete_turn_returns_correct_output_shape(monkeypatch) -> None:
     )
 
     assert "NDVI 是归一化植被指数" in output.content
-    assert "[DONE]" not in output.content  # 脚手架必须被剥掉
-    assert output.stop_reason is not None
+    # 单 Agent 的 TaskResult 没有 stop_reason（那是 Team 的概念），
+    # ai_service._finish_reason_from_stop 对 None 兜底为 "stop"。
+    assert output.stop_reason is None
     assert output.trace is not None
 
 
@@ -386,19 +321,14 @@ async def test_model_client_is_closed_after_non_streaming_turn(monkeypatch) -> N
     """非流式路径也必须关闭 model_client（与流式路径对称）。"""
     from app.agent.engine.service import complete_turn
 
-    client = _ScriptedClient(["spectral_agent"], ["答复。\n[DONE]"])
+    client = _ScriptedClient(["答复。"])
     closed: list[bool] = []
 
     async def _close():
         closed.append(True)
 
     client.close = _close  # type: ignore[method-assign]
-    monkeypatch.setattr(orchestrator, "build_model_client", lambda *a, **k: client)
-
-    async def _selector(*_args, **_kwargs):
-        return RouteResult(strategy="selector", flow_name=None, reason="test")
-
-    monkeypatch.setattr(orchestrator, "choose_route", _selector)
+    _route_main(monkeypatch, client)
 
     await complete_turn(
         request=ChatRequest(
