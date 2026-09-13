@@ -214,6 +214,22 @@ GOLDEN_CASES: tuple[AutogenEvalCase, ...] = (
         notes="明确地图定位请求应交给 navigation_agent。",
     ),
     AutogenEvalCase(
+        case_id="tool_search_imagery",
+        query="帮我找一下深圳湾今年 7 月以来云量低于 20% 的卫星影像",
+        expected_action="call",
+        expected_capability="search_imagery",
+        category="tool_positive",
+        notes="区域+时间+云量的取图请求 → 影像检索共享工具。",
+    ),
+    AutogenEvalCase(
+        case_id="tool_fetch_scene",
+        query="把刚才检索到的第一景影像导入平台，我要算 NDVI",
+        expected_action="call",
+        expected_capability="fetch_scene",
+        category="tool_positive",
+        notes="检索后明确要求把场景拿来做分析 → fetch_scene 导入。",
+    ),
+    AutogenEvalCase(
         case_id="search_weather",
         query="明天杭州会下中雨吗？",
         expected_action="call",

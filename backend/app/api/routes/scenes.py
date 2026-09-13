@@ -37,6 +37,7 @@ from app.agent.geocode import forward_geocode
 from app.agent.stac_search import search_scenes
 from app.agent.stac_search.cache import get_scene, put_scenes
 from app.agent.stac_search.raster import SceneRasterError, compose_scene_tif, render_scene_preview
+from app.agent.stac_search.importer import SceneImportError, import_scene_as_imagery
 from app.agent.stac_search.sources import StacSearchError
 from app.api.deps import require_authenticated_user
 from app.api.routes.imagery import _extract_metadata, _file_sha256, _persist_imagery_record
@@ -242,71 +243,8 @@ async def scene_import(
     """把场景合成为多波段 GeoTIFF 并注册进影像库（现有分析工具即可使用）。"""
     record = _get_record_or_404(user_id, key)
     _require_heavy_quota(user_id)
-
-    # 先在场景缓存目录合成，再整体登记为影像（复用上传的目录约定与归属管线）。
-    staged = _user_scene_dir(user_id, key) / "scene.tif"
-    compose_meta: dict = {}
     try:
-        compose_meta = await asyncio.to_thread(compose_scene_tif, record, staged)
-    except SceneRasterError as exc:
+        result = await import_scene_as_imagery(record, user_id)
+    except SceneImportError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-    except FileExistsError:
-        # 复用之前的合成产物：波段语义直接从场景记录重建（权威来源相同）。
-        compose_meta = {
-            "band_roles": record.band_roles,
-            "band_roles_source": "stac_assets",
-            "sensor": record.satellite,
-            "acquired_at": record.datetime,
-        }
-
-    imagery_id = secrets.token_hex(6)
-    dest = imagery_root(create=True) / imagery_id
-    try:
-        (dest / "results").mkdir(parents=True, exist_ok=True)
-        shutil.copy2(staged, dest / "source.tif")
-        shutil.copy2(staged, dest / "working.tif")
-        preview = _user_scene_dir(user_id, key) / "preview.png"
-        try:
-            await asyncio.to_thread(render_scene_preview, record, preview)
-            shutil.copy2(preview, dest / "results" / "preview.png")
-        except SceneRasterError:
-            logger.warning("场景预览生成失败，仅导入影像：%s", record.item_id)
-
-        # 元数据复用上传管线同一份提取逻辑，波段语义来自 STAC asset key（权威）。
-        meta = await asyncio.to_thread(_extract_metadata, dest / "working.tif")
-        meta.update(
-            # 波段语义以 STAC asset key 为准（合成时写进了波段描述，
-            # 这里把来源标注成权威渠道，而不是"文件描述"兜底）。
-            band_roles=compose_meta.get("band_roles") or meta.get("band_roles"),
-            band_roles_source="stac_assets",
-            sensor=compose_meta.get("sensor") or meta.get("sensor"),
-            acquired_at=compose_meta.get("acquired_at") or meta.get("acquired_at"),
-            filename=f"{record.item_id}.tif",
-            sha256=_file_sha256(dest / "source.tif"),
-            created_at=datetime.now(timezone.utc).isoformat(),
-            owner_user_id=user_id,
-            preview_url=f"/api/imagery/{imagery_id}/results/preview.png",
-            working_width=meta["width"],
-            working_height=meta["height"],
-            compressed=False,
-            compression_ratio=1.0,
-            source_size_bytes=(dest / "source.tif").stat().st_size,
-            working_size_bytes=(dest / "working.tif").stat().st_size,
-        )
-        (dest / "metadata.json").write_text(
-            json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
-        await _persist_imagery_record(imagery_id, dest, meta, user_id)
-    except HTTPException:
-        raise
-    except Exception as exc:
-        shutil.rmtree(dest, ignore_errors=True)
-        logger.exception("场景导入失败：%s", record.item_id)
-        raise HTTPException(status_code=502, detail="场景导入失败，请稍后重试。") from exc
-
-    return {
-        "imagery_id": imagery_id,
-        "item_id": record.item_id,
-        "satellite": record.satellite,
-        "band_roles": meta["band_roles"],
-    }
+    return result

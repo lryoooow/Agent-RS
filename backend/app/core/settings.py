@@ -99,6 +99,8 @@ class Settings(BaseSettings):
     # ---- 免账号卫星影像检索（Phase 7：EarthSearch + Planetary Computer）----
     # 单轮对话内 search_imagery 工具的调用上限（外部 API，防刷）。
     agent_imagery_search_max_calls: int = 2
+    # 单轮对话内 fetch_scene（远程合成并导入影像库）的调用上限，重活默认 1 次。
+    agent_scene_fetch_max_calls: int = 1
     # 场景合成（下载/导入）的窗口像素封顶：超出按比例降采样，防流量失控。
     agent_scene_window_max_pixels: int = 4000
     # 预览 PNG 最长边像素。

@@ -74,7 +74,19 @@ from app.agent.tools.water_mask.schema import (
     WATER_MASK_TOOL_NAME,
     WaterMaskArguments,
 )
+from app.agent.tools.imagery_search.runner import run_imagery_search
+from app.agent.tools.scene_fetch.runner import run_scene_fetch
 from app.agent.tools.web_search.runner import run_web_search_tool, web_search_tool_available
+from app.agent.tools.imagery_search.schema import (
+    IMAGERY_SEARCH_TOOL_DESCRIPTION,
+    IMAGERY_SEARCH_TOOL_NAME,
+    ImagerySearchArguments,
+)
+from app.agent.tools.scene_fetch.schema import (
+    SCENE_FETCH_TOOL_DESCRIPTION,
+    SCENE_FETCH_TOOL_NAME,
+    SceneFetchArguments,
+)
 from app.agent.tools.web_search.schema import (
     WEB_SEARCH_TOOL_DESCRIPTION,
     WEB_SEARCH_TOOL_NAME,
@@ -160,6 +172,14 @@ async def _run_look_at_location(args: LookAtLocationArguments) -> ToolRunResult:
 
 async def _run_web_search(args: WebSearchArguments) -> ToolRunResult:
     return await run_web_search_tool(args)
+
+
+async def _run_imagery_search(args: ImagerySearchArguments) -> ToolRunResult:
+    return await run_imagery_search(args)
+
+
+async def _run_scene_fetch(args: SceneFetchArguments) -> ToolRunResult:
+    return await run_scene_fetch(args)
 
 
 TOOLS: dict[str, RegisteredTool] = {
@@ -312,6 +332,33 @@ TOOLS: dict[str, RegisteredTool] = {
         resource_kind="none",
         scope="shared",
         tags=("map", "location"),
+    ),
+    "search_imagery": RegisteredTool(
+        name="search_imagery",
+        definition=build_function_definition(
+            IMAGERY_SEARCH_TOOL_NAME, IMAGERY_SEARCH_TOOL_DESCRIPTION, ImagerySearchArguments
+        ),
+        argument_model=ImagerySearchArguments,
+        runner=_run_imagery_search,
+        # 共享工具：免账号公共卫星档案（EarthSearch/Planetary Computer），
+        # 无用户资源依赖，配额走 imagery_search 桶。
+        agent_name="shared",
+        resource_kind="none",
+        scope="shared",
+        tags=("imagery", "stac", "search"),
+    ),
+    "fetch_scene": RegisteredTool(
+        name="fetch_scene",
+        definition=build_function_definition(
+            SCENE_FETCH_TOOL_NAME, SCENE_FETCH_TOOL_DESCRIPTION, SceneFetchArguments
+        ),
+        argument_model=SceneFetchArguments,
+        runner=_run_scene_fetch,
+        # 共享工具：远程合成 + 导入影像库的重活，配额走 scene_fetch 桶（默认 1 次/轮）。
+        agent_name="shared",
+        resource_kind="none",
+        scope="shared",
+        tags=("imagery", "stac", "import"),
     ),
     "web_search": RegisteredTool(
         name="web_search",
