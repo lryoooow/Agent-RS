@@ -193,6 +193,8 @@ class Settings(BaseSettings):
     document_ocr_min_chars_per_page: int = 50
     document_ocr_languages: str = "chi_sim+eng"
 
+    # 免账号影像检索的场景产物（预览 PNG / 合成 TIF）目录，per-user 隔离。
+    scene_cache_dir: str = "backend/storage/scenes"
     imagery_upload_dir: str = "storage/imagery"
     imagery_max_file_bytes: int = 500_000_000
     imagery_working_max_dimension: int = 4096

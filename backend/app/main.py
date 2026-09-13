@@ -184,7 +184,14 @@ def create_app() -> FastAPI:
                 "error": {
                     "code": "VALIDATION_ERROR",
                     "message": "Invalid request payload.",
-                    "details": exc.errors(),
+                    # ctx 里可能带 ValueError 等异常对象（model_validator 抛出），
+                # 直接 json 序列化会 500；统一字符串化。
+                "details": [
+                    {**error, "ctx": {k: str(v) for k, v in error.get("ctx", {}).items()}}
+                    if error.get("ctx")
+                    else error
+                    for error in exc.errors()
+                ],
                 }
             },
         )
