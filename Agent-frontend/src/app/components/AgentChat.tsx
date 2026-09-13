@@ -66,11 +66,15 @@ function AssistantTurn({
   streaming,
   onGenerateReport,
   reportPending,
+  onScenePreview,
+  onSceneImport,
 }: {
   turn: ChatTurn;
   streaming: boolean;
   onGenerateReport?: (imageryId: string) => void;
   reportPending?: boolean;
+  onScenePreview?: (bbox: number[]) => void;
+  onSceneImport?: (sceneKey: string) => Promise<string | null>;
 }) {
   const bubble = toolBubbleForTurn(turn);
   const showAnalysis = turn.analysisStatus != null && !turn.content && turn.analysisStatus !== "complete";
@@ -135,6 +139,8 @@ function AssistantTurn({
             result={turn.geospatialResult}
             onGenerateReport={onGenerateReport}
             reportPending={reportPending}
+            onScenePreview={onScenePreview}
+            onSceneImport={onSceneImport}
           />
         )}
         {turn.usage && !streaming && (turn.usage.total_tokens || turn.usage.input_tokens || turn.usage.output_tokens) && (
@@ -163,6 +169,8 @@ export function AgentChat({
   reportPending,
   thinkingStrength,
   onThinkingChange,
+  onScenePreview,
+  onSceneImport,
 }: {
   turns: ChatTurn[];
   loading: boolean;
@@ -176,6 +184,8 @@ export function AgentChat({
   reportPending?: boolean;
   thinkingStrength: ThinkingStrength;
   onThinkingChange: (s: ThinkingStrength) => void;
+  onScenePreview?: (bbox: number[]) => void;
+  onSceneImport?: (sceneKey: string) => Promise<string | null>;
 }) {
   const [text, setText] = useState("");
   const endRef = useRef<HTMLDivElement>(null);
@@ -257,6 +267,8 @@ export function AgentChat({
                   streaming={activeStream && turn.id === lastId}
                   onGenerateReport={onGenerateReport}
                   reportPending={reportPending}
+                  onScenePreview={onScenePreview}
+                  onSceneImport={onSceneImport}
                 />
               );
             }

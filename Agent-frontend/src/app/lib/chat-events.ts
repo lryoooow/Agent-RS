@@ -195,6 +195,38 @@ export function parseGeospatialResult(value: unknown): GeospatialResult | undefi
       download_url: candidate.download_url,
     };
   }
+  // 影像检索结果形态独立：场景卡片数组（无 result_url/bounds，带 preview/download_url）。
+  if (candidate.type === "scene_search") {
+    if (!Array.isArray(candidate.scenes)) return undefined;
+    const scenes = candidate.scenes
+      .map((raw) => (raw && typeof raw === "object" ? (raw as Record<string, unknown>) : null))
+      .filter((item): item is Record<string, unknown> => item !== null)
+      .map((item) => {
+        if (typeof item.key !== "string" || typeof item.preview_url !== "string") return null;
+        if (typeof item.download_url !== "string") return null;
+        if (!Array.isArray(item.bbox) || item.bbox.length !== 4) return null;
+        return {
+          key: item.key,
+          satellite: typeof item.satellite === "string" ? item.satellite : "",
+          item_id: typeof item.item_id === "string" ? item.item_id : item.key,
+          datetime: typeof item.datetime === "string" ? item.datetime : "",
+          cloud_cover: typeof item.cloud_cover === "number" ? item.cloud_cover : null,
+          bbox: item.bbox as number[],
+          resolution_m: typeof item.resolution_m === "number" ? item.resolution_m : null,
+          display_name: typeof item.display_name === "string" ? item.display_name : "",
+          preview_url: item.preview_url,
+          download_url: item.download_url,
+        };
+      })
+      .filter((item): item is NonNullable<typeof item> => item !== null);
+    return {
+      type: "scene_search",
+      scenes,
+      notes: Array.isArray(candidate.notes)
+        ? candidate.notes.filter((n) => typeof n === "string")
+        : undefined,
+    };
+  }
   if (
     candidate.type !== "preview" &&
     candidate.type !== "ndvi" &&

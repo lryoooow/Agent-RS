@@ -22,6 +22,7 @@ import { layersFromTurns } from "./lib/layers";
 import { tasksFromTurns } from "./lib/tasks";
 import { reportsFromTurns } from "./lib/reports";
 import { resolveAppGate } from "./lib/app-gate";
+import { importScene } from "./lib/imagery-search-api";
 import type { GeospatialResult, MapAnnotation } from "./types";
 import type { Roi } from "./lib/roi";
 
@@ -270,6 +271,32 @@ export default function App() {
             reportPending={chat.reportPending}
             thinkingStrength={settings.thinkingStrength}
             onThinkingChange={settings.setThinkingStrength}
+            onScenePreview={(bbox) => {
+              const map = mapRef.current;
+              if (!map || bbox.length !== 4) return;
+              map.fitBounds(
+                [
+                  [bbox[0], bbox[1]],
+                  [bbox[2], bbox[3]],
+                ],
+                { padding: 96, duration: 900 },
+              );
+            }}
+            onSceneImport={async (sceneKey) => {
+              try {
+                const result = await importScene(settings.endpoint, sceneKey);
+                chat.addSystemNote(
+                  `卫星影像已导入平台（${result.satellite}，影像 ID ${result.imagery_id}）。` +
+                    '可直接说“对这张影像算 NDVI / 做地物分类”开始分析。',
+                );
+                return result.imagery_id;
+              } catch (exc) {
+                chat.addSystemNote(
+                  `场景导入失败：${exc instanceof Error ? exc.message : "未知错误"}`,
+                );
+                return null;
+              }
+            }}
           />
         )}
       </AnimatePresence>

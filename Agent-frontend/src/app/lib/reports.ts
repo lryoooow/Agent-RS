@@ -28,6 +28,8 @@ function fmt(value: number | null | undefined): string {
 }
 
 function entryFromGeospatial(turn: ChatTurn, r: GeospatialResult): ReportEntry | null {
+  // 检索卡片不是分析结果（无 imagery_id），与 preview/report 一样不进报告项。
+  if (r.type === "scene_search") return null;
   const base = { id: `${turn.id}-geo`, turnId: turn.id, imageryId: r.imagery_id };
   switch (r.type) {
     case "preview":

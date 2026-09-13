@@ -16,6 +16,7 @@ import type {
   ChatResponse,
   ChatTurn,
   GeospatialResult,
+  GeospatialSceneSearchResult,
   ProviderConfig,
   MapContext,
   ThinkingStrength,
@@ -274,8 +275,13 @@ export function useChatController({
 }
 
 function latestGeospatialContext(turns: ChatTurn[]) {
-  const turn = [...turns].reverse().find((item) => item.geospatialResult);
-  if (!turn?.geospatialResult) return [];
+  // 影像检索卡片（scene_search）没有 imagery_id，不能当"当前影像"注入。
+  const turn = [...turns].reverse().find(
+    (item): item is ChatTurn & {
+      geospatialResult: Exclude<GeospatialResult, GeospatialSceneSearchResult>;
+    } => !!item.geospatialResult && item.geospatialResult.type !== "scene_search",
+  );
+  if (!turn) return [];
   const result = turn.geospatialResult;
   return [
     {
