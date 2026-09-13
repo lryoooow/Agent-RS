@@ -32,6 +32,11 @@ ChatRequest
 - `resource_kind`：`imagery`、`document`、`conversation` 或 `none`
 - 可用性判据、模型可见描述和 tags
 
+发给模型的 function 定义**不再手写**：`app/agent/tools/schema_gen.py` 在注册时从
+Pydantic 参数模型生成（default/ge/pattern/description 全部来自 `Field`，归一化规则见
+该模块文档），约束与描述只有参数模型这一份来源。`tests/agent/test_tool_schema_gen.py`
+锁定生成形状，改字段约束必须过这组快照。
+
 Agent 清单和资源 guard 都从注册表派生，不再维护并行的 routing、capability 或 domain 映射表。
 新增工具时必须登记所有权与资源类型，并为执行阶段文案增加标签。
 

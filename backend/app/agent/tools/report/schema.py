@@ -13,26 +13,9 @@ class ReportArguments(BaseModel):
     reason: str = Field(default="用户请求生成分析报告", description="生成报告的原因")
 
 
-REPORT_TOOL = {
-    "type": "function",
-    "function": {
-        "name": "generate_report",
-        "description": (
-            "把本对话中已经真实执行过的遥感分析结果（地物分类、目标检测、光谱指数、影像质检等）"
-            "汇总成一份可下载的 Word 报告。仅在本对话此前已产出分析结果、且用户要求生成报告/导出/"
-            "出文档时调用；没有任何已执行的分析结果时不要调用。"
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "imagery_id": {
-                    "type": "string",
-                    "description": "可选，指定要出报告的影像 ID；省略则用本对话最近一次分析的影像",
-                },
-                "reason": {"type": "string", "description": "生成报告的原因说明"},
-            },
-            "required": [],
-            "additionalProperties": False,
-        },
-    },
-}
+REPORT_TOOL_NAME = "generate_report"
+REPORT_TOOL_DESCRIPTION = (
+    "把本对话中已经真实执行过的遥感分析结果（地物分类、目标检测、光谱指数、影像质检等）"
+    "汇总成一份可下载的 Word 报告。仅在本对话此前已产出分析结果、且用户要求生成报告/导出/"
+    "出文档时调用；没有任何已执行的分析结果时不要调用。"
+)

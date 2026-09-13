@@ -5,9 +5,12 @@
 #   docker compose down             # 停服务（保留数据卷）
 #   docker compose down -v          # 停服务并清空数据卷
 #
-# 连接串（已对齐 backend/.env.example 的默认，端口避开本机常装服务）：
-#   PG:    postgresql://agent_rs:agent_rs_local@127.0.0.1:15432/agent_rs
+# 连接串（已对齐 backend/.env.example 的默认）：
+#   PG:    postgresql://agent_rs:agent_rs_local@127.0.0.1:5432/agent_rs
 #   MinIO: endpoint 127.0.0.1:9000，控制台 http://127.0.0.1:9001（agent_rs / agent_rs_local）
+#
+# 注意：5432 是本机 PostgreSQL 标准端口；若宿主机已装有本地 PG 占用 5432，
+# 请改回非冲突端口（如 15432:5432）并同步调整 backend/.env 的 DATABASE_URL。
 #
 # 注意：MCP 遥感工具镜像（docker/ 下）走 `docker run` 独立启动，与本 compose 互不影响。
 
@@ -20,7 +23,7 @@ services:
       POSTGRES_PASSWORD: agent_rs_local
       POSTGRES_DB: agent_rs
     ports:
-      - "15432:5432"
+      - "5432:5432"
     volumes:
       - agent_rs_pgdata:/var/lib/postgresql/data
     healthcheck:

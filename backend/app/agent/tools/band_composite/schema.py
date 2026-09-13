@@ -36,21 +36,5 @@ class BandCompositeArguments(BaseModel):
         return self
 
 
-BAND_COMPOSITE_TOOL = {
-    "type": "function",
-    "function": {
-        "name": "render_band_composite",
-        "description": "生成遥感影像真彩色、假彩色或自定义 RGB 波段组合预览。",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "imagery_id": {"type": "string", "description": "已上传影像的 ID"},
-                "mode": {"type": "string", "enum": ["true_color", "false_color", "custom"]},
-                "bands": {"type": "array", "items": {"type": "integer"}, "description": "custom 模式 RGB 波段"},
-                "reason": {"type": "string", "description": "生成原因说明"},
-            },
-            "required": ["imagery_id", "mode"],
-            "additionalProperties": False,
-        },
-    },
-}
+BAND_COMPOSITE_TOOL_NAME = "render_band_composite"
+BAND_COMPOSITE_TOOL_DESCRIPTION = "生成遥感影像真彩色、假彩色或自定义 RGB 波段组合预览。"
