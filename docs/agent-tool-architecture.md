@@ -1,6 +1,6 @@
 # Agent-RS Agent and Tool Architecture
 
-Agent-RS 只使用 AutoGen 作为生成式 Agent 编排框架。聊天回答、标准流程路由、领域协作、
+Agent-RS 只使用 AutoGen 作为生成式 Agent 编排框架。聊天回答、标准流程路由、
 联网搜索和长期记忆判断都经过 AutoGen；embedding、rerank、资源鉴权和遥感计算保持确定性。
 
 ## 请求路径
@@ -9,15 +9,16 @@ Agent-RS 只使用 AutoGen 作为生成式 Agent 编排框架。聊天回答、�
 ChatRequest
   → build_turn_input：历史 + 安全 system prompt + 地图 + 影像/文档清单 + 既有结果
   → flow_router（AutoGen structured output）
-      ├─ 完整命中标准作业 → GraphFlow
-      └─ 不完整 / 不确定 / 自由任务 → SelectorGroupChat
-  → general / navigation-capable / spectral / preprocess / segmentation / detection /
-    document AssistantAgent（全部持有 web_search / look_at_location / generate_report 共享工具）
+      ├─ 完整命中标准作业 → GraphFlow（流内领域专家 + report 收尾节点）
+      └─ 不完整 / 不确定 / 自由任务 → main_agent（持有全部工具的单主 Agent）
   → 统一工具执行管线
   → AutoGen event bridge → 既有 SSE 与 ChatResponse
 ```
 
-路由失败必须回退到 SelectorGroupChat，不得根据不完整请求猜测一个固定流程。当前标准流程：
+两层编排（Phase 4 起）：**main_agent** 处理一切自由请求——闲聊、单步分析、
+跨领域多步任务都在它自己的工具循环里完成，没有专家接力，也没有 `[DONE]`/`[HANDOFF]`
+控制行；**GraphFlow** 只保留给顺序确定的固定流水线。路由失败回退 main_agent，
+不得根据不完整请求猜测一个固定流程。当前标准流程：
 
 - `inspect_index_report`：影像质检与指数计算 → 报告
 - `mask_segment_report`：云阴影掩膜 → 地物分类 → 报告
@@ -84,10 +85,10 @@ structured output；embedding 与写库仍走确定性服务。
 | 模块 | 职责 |
 | --- | --- |
 | `engine/input.py` | 完整请求上下文转 AutoGen 消息 |
-| `engine/router.py` | 结构化 GraphFlow/Selector 路由 |
-| `engine/agents.py` | 通用、导航和领域 AssistantAgent |
+| `engine/router.py` | 结构化 GraphFlow/main 路由 |
+| `engine/agents.py` | 主 Agent、流内领域专家与 report 收尾节点 |
 | `engine/flows.py` | 固定标准作业 GraphFlow |
-| `engine/orchestrator.py` | 团队构造、执行、终止与收尾 |
+| `engine/orchestrator.py` | main/GraphFlow 装配、执行与收尾 |
 | `engine/tools.py` | 注册工具的 AutoGen 包装（含共享工具装配） |
 | `engine/memory/` | RAG 与长期记忆协议适配 |
 | `engine/memory_judge.py` | 结构化记忆判断 |
@@ -96,22 +97,24 @@ structured output；embedding 与写库仍走确定性服务。
 
 ## 运行约束
 
-- `[DONE]` 只在 Agent 消息末尾触发终止，避免规则复述误杀流程。
-- `[DONE]`、进度自检、推理标签和显式过程旁白不进入用户正文；流式路径用有状态 sanitizer
-  处理跨分片标记，并在推理块未闭合时 fail closed。
+- 推理标签（`<think>` 等）和显式过程旁白不进入用户正文；流式路径用有状态 sanitizer
+  跨分片剥离（标签可能被切成 `<th` + `ink>`），推理块未闭合时 fail closed。
+  交棒协议（`[DONE]`/`[HANDOFF]`/进度自检）已随 SelectorGroupChat 一起移除，
+  Agent 不再输出任何控制行。
 - 原始 reasoning/thought 不建立 SSE 契约、不进入 `agent_trace`、不持久化。前端只接受
   `thinking_summary`，阶段和文案均来自固定枚举；服务端事件中的任意 label 不会被渲染。
 - AutoGen 的 core/agentchat event 与 trace logger 固定为 WARNING，避免其 INFO 事件记录完整
   system prompt、历史消息、工具结果和模型 thought。
 - 路由模型自由文本 reason 仅在内存中用于诊断分类，不进入 SSE trace 或日志；失败元数据只保存
   error code/type，不保存可能携带供应商请求或响应正文的异常字符串。
-- 落库正文合并所有专家的可见结论，不能只保留最后一条。
-- 前端断连使用 `ExternalTermination` 停止后续步骤，并后台排空在飞调用后关闭模型客户端。
+- 落库正文合并 GraphFlow 各节点的可见结论（main 路径只有一条最终消息），不能只保留最后一条。
+- 前端断连：GraphFlow 用 `ExternalTermination` 停止后续节点；main 路径在后台排空在飞
+  调用。两者都在排空后关闭模型客户端。
 - `AGENT_MAX_TOOL_ITERATIONS` 限制工具循环；GPU 工具和联网搜索另有按回合硬配额。
 - `mcp` 依赖固定在 `<2`，与当前 AutoGen 版本保持兼容。
 
 ## 测试与评测
 
-评测录制格式为 schema v2：按顺序保存 router、selector、Agent 以及每次工具调用，附带
+评测录制格式为 schema v2：按顺序保存 router、main/graph 决策以及每次工具调用，附带
 `strategy` 与 `flow_name`。旧单次规划 JSON 录制已经移除。红队仍独立检查越权资源、
 幻觉 ID、文档注入和过度代理；所有执行层安全结论以统一工具 guard 为准。

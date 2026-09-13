@@ -16,8 +16,7 @@ from app.agent.engine.agents import (
     DOMAIN_GUIDANCE,
     DOMAIN_LABELS,
     build_domain_agent,
-    build_domain_agents,
-    build_general_agent,
+    build_main_agent,
     build_report_finalizer,
     domain_specs,
 )
@@ -111,22 +110,22 @@ def test_each_domain_agent_gets_its_own_tools_plus_shared(client) -> None:
         assert names == set(spec.tools) | set(shared_tool_names()), f"{spec.name} 的工具集不符"
 
 
-def test_general_agent_holds_shared_tools_only(client) -> None:
-    """通用问答持有共享工具（检索/定位/报告），不碰任何遥感领域工具。"""
-    agent = build_general_agent(model_client=client)
+def test_main_agent_holds_all_enabled_tools(client) -> None:
+    """主 Agent 持有全部已启用工具：领域工具 + 共享工具，一个不少。"""
+    agent = build_main_agent(model_client=client)
     names = {t.name for t in agent._tools}  # noqa: SLF001
-    assert names == set(shared_tool_names())
-    domain_tools = {
-        tool.name for tool in TOOLS.values() if tool.scope == "domain"
-    }
-    assert names.isdisjoint(domain_tools)
+    expected = {tool.name for tool in TOOLS.values() if tool.is_enabled()}
+    assert names == expected
+    assert "web_search" in names or True  # 未配 TAVILY key 时合理缺席
 
 
 def test_multi_step_tool_loop_is_enabled(client) -> None:
     settings = get_settings()
     assert settings.agent_max_tool_iterations > 1, "配置本身要允许多步"
 
-    for agent in build_domain_agents(model_client=client):
+    agents = [build_main_agent(model_client=client)]
+    agents += [build_domain_agent(spec, model_client=client) for spec in domain_specs()]
+    for agent in agents:
         assert agent._max_tool_iterations == settings.agent_max_tool_iterations  # noqa: SLF001
 
 

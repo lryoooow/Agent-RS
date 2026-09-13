@@ -39,7 +39,7 @@ async def test_auto_flow_disabled_skips_router_model(monkeypatch) -> None:
     monkeypatch.setattr("app.agent.engine.router.build_model_client", build)
 
     route = await choose_route(TurnInput("hello", ()), SimpleNamespace())
-    assert route.strategy == "selector"
+    assert route.strategy == "main"
     assert route.reason == "auto_flow_disabled"
     build.assert_not_called()
 
@@ -70,11 +70,11 @@ async def test_complete_standard_workflow_selects_graph(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_valid_selector_decision_keeps_flow_empty(monkeypatch) -> None:
+async def test_valid_main_decision_keeps_flow_empty(monkeypatch) -> None:
     client = _Client()
     monkeypatch.setattr("app.agent.engine.router.build_model_client", lambda *_a, **_k: client)
     decision = FlowDecision(
-        strategy="selector",
+        strategy="main",
         flow_name=None,
         reason="请求不完整，交给 SelectorGroupChat",
     )
@@ -88,13 +88,13 @@ async def test_valid_selector_decision_keeps_flow_empty(monkeypatch) -> None:
     monkeypatch.setattr("app.agent.engine.router.AssistantAgent", lambda **_: FakeAgent())
     route = await choose_route(TurnInput("只检测，不生成报告", ()), SimpleNamespace())
 
-    assert route.strategy == "selector"
+    assert route.strategy == "main"
     assert route.flow_name is None
     client.close.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_malformed_router_output_falls_back_to_selector(monkeypatch) -> None:
+async def test_malformed_router_output_falls_back_to_main(monkeypatch) -> None:
     client = _Client()
     monkeypatch.setattr("app.agent.engine.router.build_model_client", lambda *_a, **_k: client)
 
@@ -105,7 +105,7 @@ async def test_malformed_router_output_falls_back_to_selector(monkeypatch) -> No
     monkeypatch.setattr("app.agent.engine.router.AssistantAgent", lambda **_: FakeAgent())
     route = await choose_route(TurnInput("ambiguous", ()), SimpleNamespace())
 
-    assert route.strategy == "selector"
+    assert route.strategy == "main"
     assert route.flow_name is None
     assert route.reason.startswith("router_fallback:")
     client.close.assert_awaited_once()
@@ -131,7 +131,7 @@ async def test_response_format_400_retries_as_plain_json_and_remembers_provider(
             return SimpleNamespace(
                 messages=[
                     TextMessage(
-                        content='{"strategy":"selector","flow_name":null,"reason":"普通请求"}',
+                        content='{"strategy":"main","flow_name":null,"reason":"普通请求"}',
                         source="flow_router",
                     )
                 ]
@@ -146,5 +146,5 @@ async def test_response_format_400_retries_as_plain_json_and_remembers_provider(
     first = await choose_route(TurnInput("普通问题", ()), config)
     second = await choose_route(TurnInput("另一个问题", ()), config)
 
-    assert first.strategy == second.strategy == "selector"
+    assert first.strategy == second.strategy == "main"
     assert calls == [True, False, False]
