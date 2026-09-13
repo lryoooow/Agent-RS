@@ -357,19 +357,73 @@ async def _load_rag_context(
     return result.context, result.retrieved_chunks
 
 
-async def build_imagery_inventory(user_id: str | None) -> str | None:
-    """Build a brief inventory of uploaded imagery for LLM context."""
-    items: list[str] = []
-    for imagery_id, meta in await iter_user_imagery_metadata(user_id):
-        items.append(
-            f"- ID: {imagery_id} | {meta.get('band_count', '?')}波段 "
-            f"| {meta.get('width', '?')}x{meta.get('height', '?')}px "
-            f"| CRS: {meta.get('crs') or '未知'}"
-        )
+_BAND_ROLE_LABELS: dict[str, str] = {
+    "blue": "蓝",
+    "green": "绿",
+    "red": "红",
+    "nir": "近红外",
+    "swir": "短波红外",
+}
 
-    if not items:
+_BAND_ROLES_SOURCE_LABELS: dict[str, str] = {
+    "descriptions": "来自波段描述",
+    "positional_gf2": "GF-2位置约定",
+    "positional_rgb": "自然RGB序",
+    "positional_gray": "单波段",
+}
+
+
+def _format_imagery_line(imagery_id: str, meta: dict) -> str:
+    """把一条影像元数据编成模型可解析的紧凑行。
+
+    波段角色表（B1蓝,B3红,…）是关键字段：模型选 red_band/nir_band 等参数时
+    以它为准，而不是猜 GF-2 默认波序。角色来源一并标注，让模型知道这份映射
+    是文件自述（可信）还是位置约定（需向用户确认非 GF-2 时显式指定）。
+    """
+    roles = meta.get("band_roles") or {}
+    if roles:
+        ordered = ["blue", "green", "red", "nir", "swir"]
+        table = ",".join(
+            f"B{roles[role]}{_BAND_ROLE_LABELS[role]}" for role in ordered if role in roles
+        )
+        source = _BAND_ROLES_SOURCE_LABELS.get(str(meta.get("band_roles_source") or ""), "")
+        bands = f"{meta.get('band_count', '?')}波段({table}{';' + source if source else ''})"
+    else:
+        bands = f"{meta.get('band_count', '?')}波段(角色未知)"
+
+    parts = [
+        f"- ID: {imagery_id}",
+        bands,
+        f"{meta.get('width', '?')}x{meta.get('height', '?')}px",
+    ]
+    pixel_size = meta.get("pixel_size") or []
+    if pixel_size:
+        parts.append(f"像元{pixel_size[0]:g}")
+    parts.append(f"CRS: {meta.get('crs') or '未知'}")
+    if meta.get("sensor"):
+        parts.append(f"传感器: {meta['sensor']}")
+    if meta.get("acquired_at"):
+        parts.append(f"拍摄: {meta['acquired_at']}")
+    return " | ".join(str(part) for part in parts)
+
+
+async def build_imagery_inventory(user_id: str | None) -> str | None:
+    """结构化影像清单：含波段角色表，最新优先，条数有上限。
+
+    上限（agent_imagery_inventory_limit）在此处而不是 SQL 里截：磁盘兜底路径
+    没有数据库排序可用，统一在合并结果上按上传时间排序后再截。
+    """
+    entries = await iter_user_imagery_metadata(user_id)
+    if not entries:
         return None
-    return "可用影像:\n" + "\n".join(items)
+    entries.sort(key=lambda item: str(item[1].get("created_at") or ""), reverse=True)
+    limit = max(1, get_settings().agent_imagery_inventory_limit)
+    lines = [_format_imagery_line(imagery_id, meta) for imagery_id, meta in entries[:limit]]
+    hidden = len(entries) - len(lines)
+    header = "可用影像（调用波段相关工具时，波段号以各影像的波段角色表为准）:"
+    if hidden > 0:
+        header += f"\n（仅显示最新 {len(lines)} 张，另有 {hidden} 张未列出）"
+    return header + "\n" + "\n".join(lines)
 
 
 async def build_document_inventory(user_id: str | None) -> str | None:

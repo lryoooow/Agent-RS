@@ -40,11 +40,13 @@ DOMAIN_GUIDANCE: dict[str, str] = {
     ),
     "detection_agent": (
         "引用目标总数、类别计数和置信度阈值；说明 DOTA 15 类模型边界。"
-        "默认 GF-2 波序 red=3, green=2, blue=1，非 GF-2 应显式指定 RGB 波段。"
+        "RGB 波段号以影像清单的波段角色表为准；清单没有角色表时才用 GF-2 默认 "
+        "red=3, green=2, blue=1。"
     ),
     "segmentation_agent": (
         "引用各类别像素数与占比；说明 LandCover.ai 的建筑/林地/水体/背景模型边界。"
-        "默认 GF-2 波序 red=3, green=2, blue=1，非 GF-2 应显式指定 RGB 波段。"
+        "RGB 波段号以影像清单的波段角色表为准；清单没有角色表时才用 GF-2 默认 "
+        "red=3, green=2, blue=1。"
     ),
     "preprocess_agent": (
         "只陈述掩膜占比、坐标系和输出范围等真实结果。云阴影和水体掩膜是阈值粗筛。"
