@@ -43,6 +43,9 @@ class ProviderRequestContext:
     retrieved_chunks: int = 0
     rag_trace: dict | None = None
     retrieved_context: RetrievedContext | None = None
+    # 用户是否持有影像（清单非空）。路由快车道据此跳过 router LLM 调用：
+    # 三条标准流程全都要求对影像执行分析工具，没有影像就不可能命中。
+    has_imagery: bool = False
 
 
 async def build_provider_context(request: ChatRequest, *, user_id: str | None = None) -> ContextAssembly:
@@ -162,6 +165,7 @@ async def build_provider_request_context(
         retrieved_chunks=retrieved_chunks,
         rag_trace=rag_trace,
         retrieved_context=retrieved_context,
+        has_imagery=imagery_inventory is not None,
     )
 
 

@@ -60,6 +60,11 @@ async def choose_route(turn: TurnInput, config: ResolvedAIConfig) -> RouteResult
     settings = get_settings()
     if not settings.agent_auto_flow_enabled:
         return RouteResult(strategy="main", flow_name=None, reason="auto_flow_disabled")
+    # 快车道：三条标准流程都要求对影像执行分析工具，用户没有影像就绝无命中可能。
+    # 省掉的是每次自由对话（闲聊、概念提问）都要付的一次路由 LLM 调用。
+    # has_imagery 默认 True（保守），只有 build_turn_input 如实设置过才可能为 False。
+    if settings.agent_router_fast_path and not turn.has_imagery:
+        return RouteResult(strategy="main", flow_name=None, reason="fast_path_no_imagery")
 
     client = build_model_client(
         config,

@@ -31,6 +31,7 @@ from app.agent.engine.memory._common import (
     BLOCK_KEY_MEMORY,
     inject_system_block,
     latest_user_query,
+    run_query_once_per_turn,
 )
 from app.agent.memory_types import DEFAULT_IMPORTANCE, DEFAULT_MEMORY_TYPE, MEMORY_TYPES
 from app.agent.rag.formatter import format_retrieved_blocks
@@ -62,7 +63,10 @@ class PgVectorMemory(Memory):
         if not query:
             return UpdateContextResult(memories=MemoryQueryResult(results=[]))
 
-        result = await self.query(query)
+        # 回合级缓存：与 RagMemory 同理，工具循环里检索词不变，别重复检索。
+        result = await run_query_once_per_turn(
+            BLOCK_KEY_MEMORY, query, lambda: self.query(query)
+        )
         if not result.results:
             # 与 RagMemory 同理：这轮没召回就清掉上一轮的块，别把旧记忆当新证据。
             await inject_system_block(model_context, "", key=BLOCK_KEY_MEMORY)

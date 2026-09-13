@@ -1,5 +1,7 @@
 from contextlib import asynccontextmanager
 
+import logging
+
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -18,6 +20,8 @@ from app.documents.task_registry import recover_document_jobs, shutdown_tasks
 from app.core.logging import configure_logging
 from app.core.settings import get_settings
 
+logger = logging.getLogger(__name__)
+
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
@@ -27,6 +31,7 @@ async def lifespan(_: FastAPI):
     await recover_document_jobs()
     start_tool_job_worker()
     settings = get_settings()
+    _warn_missing_ai_credentials(settings)
     embedding_service = get_embedding_service()
     if settings.storage_active and embedding_service.available:
         await embedding_service.ping()
@@ -38,6 +43,23 @@ async def lifespan(_: FastAPI):
         await drain_persistence_tasks()  # O1: 排空 embedding/memory 后台任务（须在关池前）
         await aclose_geocode_client()  # O5: 关闭模块全局 httpx 客户端
         await close_db_pool()
+
+
+def _warn_missing_ai_credentials(settings) -> None:
+    """启动时提示凭据缺口，而不是等到第一次聊天请求才 500。
+
+    AI_API_KEY 为空且不允许前端覆盖时，任何 /api/chat 都会以 ConfigError 失败；
+    允许前端覆盖时降级为提示（用户可以在设置页填 key）。
+    """
+    if settings.ai_api_key:
+        return
+    if settings.allow_client_provider_config:
+        logger.warning("AI_API_KEY 未配置；请在浏览器设置页填写，否则聊天请求会失败")
+    else:
+        logger.warning(
+            "AI_API_KEY 未配置且 ALLOW_CLIENT_PROVIDER_CONFIG=false——"
+            "所有聊天请求都将失败，请配置 AI_API_KEY 后重启"
+        )
 
 
 async def _verify_database_connection() -> None:

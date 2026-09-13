@@ -111,6 +111,11 @@ structured output；embedding 与写库仍走确定性服务。
 - 前端断连：GraphFlow 用 `ExternalTermination` 停止后续节点；main 路径在后台排空在飞
   调用。两者都在排空后关闭模型客户端。
 - `AGENT_MAX_TOOL_ITERATIONS` 限制工具循环；GPU 工具和联网搜索另有按回合硬配额。
+- RAG 与长期记忆在回合内按（来源, 检索词）缓存：工具循环里每次模型调用前都会触发
+  `memory.update_context()`，检索词不变时不重复 embedding/检索/rerank；缓存随回合结束失效。
+- 路由快车道（`AGENT_ROUTER_FAST_PATH`，默认开）：用户无影像时跳过路由 LLM 调用直达
+  主 Agent——标准流程都需要影像，无影像绝无命中可能。`TurnInput.has_imagery` 默认 True
+  （未标注=可能有），保证任何直接构造路径都不会被快车道静默关掉 GraphFlow 通道。
 - `mcp` 依赖固定在 `<2`，与当前 AutoGen 版本保持兼容。
 
 ## 测试与评测
