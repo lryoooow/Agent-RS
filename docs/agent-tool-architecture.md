@@ -61,6 +61,12 @@ Agent 清单和资源 guard 都从注册表派生，不再维护并行的 routin
 每个 Agent 创建独立的 `BudgetedChatCompletionContext`。当前用户消息只作为 AutoGen task
 发送一次，避免重复。
 
+影像清单是结构化的：上传时 `_extract_metadata` 提取波段描述与标签，派生
+`band_roles`（角色→波段号，描述优先、位置约定兜底）与传感器/拍摄时间；清单按最新优先、
+`AGENT_IMAGERY_INVENTORY_LIMIT` 条数上限注入。模型选 `red_band`/`nir_band` 等参数以
+角色表为准，不再依赖「GF-2 默认波序」的硬编码假设。老影像元数据缺新字段时自动回退
+位置约定，零迁移。
+
 RAG 与长期记忆实现 AutoGen `Memory` 协议，在每次 Agent 模型调用前按当前问题更新。
 检索块按来源覆盖，纳入 token 预算，避免多步链路重复注入。记忆判官也使用 AutoGen
 structured output；embedding 与写库仍走确定性服务。
