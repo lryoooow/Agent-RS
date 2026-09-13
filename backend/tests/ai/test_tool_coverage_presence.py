@@ -100,7 +100,7 @@ def test_cross_cutting_contract_tests_remain_present() -> None:
     mcp_exposure = (TEST_ROOT / "test_mcp_exposure.py").read_text(encoding="utf-8")
     tool_guards = (TEST_ROOT / "test_tool_guards.py").read_text(encoding="utf-8")
 
-    assert "test_every_tool_has_exactly_one_known_agent_owner" in consistency
+    assert "test_domain_tools_each_have_exactly_one_agent_owner" in consistency
     assert "test_resource_guards_are_derived_from_registry" in consistency
     assert "test_actual_backend_mcp_payload_fields_are_accepted_by_container_schemas" in mcp_exposure
     assert "test_ocr_recognize_uses_imagery_owner_guard" in tool_guards

@@ -48,7 +48,6 @@ from app.agent.engine.input import TurnInput
 from app.agent.engine.memory import PgVectorMemory, RagMemory
 from app.agent.engine.model_client import build_model_client
 from app.agent.engine.router import RouteResult, choose_route
-from app.agent.engine.search import build_search_agent, search_agent_available
 from app.agent.engine.turn_context import TurnToolState, turn_scope
 from app.agent.config import ResolvedAIConfig, resolve_ai_config
 from app.agent.reasoning import (
@@ -96,9 +95,9 @@ _SELECTOR_PROMPT = """你是 Agent-RS 的调度器，负责决定下一步由哪
 
 判别要点：
 - 用户问概念、原理、翻译、代码、数学、写作等一般性问题：选 general_agent。
-- 需要实时、最新、外部可验证的信息（天气、价格、政策、官网、最新数据集）：选检索专家。
-- 用户要求查看、前往、定位或跳转到一个地名：选 navigation_agent。
 - 涉及影像计算：按任务类型选对应领域专家。
+- 联网检索、地图定位、报告生成是**所有专家共有的共享工具**，需要时当前专家
+  自己就会调用，不需要为它们换人。
 
 **跨领域接力（最容易出错的地方，务必读完）：**
 - 用户一句话要求多个步骤时（例如"重投影 → 算 NDVI → 出报告"），
@@ -462,16 +461,6 @@ def _build_selector_team(
         memory=memory,
         context_factory=context_factory,
     )
-    if search_agent_available():
-        participants.append(
-            build_search_agent(
-                model_client=model_client,
-                memory=memory,
-                context_factory=context_factory,
-            )
-        )
-    else:
-        logger.info("未配置 TAVILY_API_KEY，本次编排不含检索专家")
 
     participant_names = [participant.name for participant in participants]
     max_turns = _SELECTOR_MAX_TURNS
@@ -722,9 +711,4 @@ def _to_result(
 
 
 def participant_names() -> list[str]:
-    names = ["general_agent", *[spec.name for spec in domain_specs()]]
-    if search_agent_available():
-        from app.agent.engine.search import SEARCH_AGENT_NAME
-
-        names.append(SEARCH_AGENT_NAME)
-    return names
+    return ["general_agent", *[spec.name for spec in domain_specs()]]

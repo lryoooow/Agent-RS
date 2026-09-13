@@ -25,6 +25,7 @@ EXPECTED_TOOLS = {
     "ocr_recognize",
     "generate_report",
     "look_at_location",
+    "web_search",
 }
 
 VALID_ARGS = {
@@ -41,6 +42,7 @@ VALID_ARGS = {
     "ocr_recognize": {"imagery_id": "94e758f38ede"},
     "generate_report": {"reason": "用户请求生成报告"},
     "look_at_location": {"query": "北京"},
+    "web_search": {"query": "Sentinel-2 最新数据", "reason": "需要最新信息"},
 }
 
 
@@ -48,14 +50,25 @@ def test_registered_tool_inventory_is_complete() -> None:
     assert set(TOOLS) == EXPECTED_TOOLS
 
 
-def test_every_tool_has_exactly_one_known_agent_owner() -> None:
+def test_domain_tools_each_have_exactly_one_agent_owner() -> None:
+    """领域工具恰好归属一个领域 Agent；共享工具不参与归属（它们不催生 Agent）。"""
     specs = {spec.name: set(spec.tools) for spec in domain_specs()}
-    assert set(specs) == {tool.agent_name for tool in TOOLS.values()}
+    domain_tools = [tool for tool in TOOLS.values() if tool.scope == "domain"]
+    shared_tools = [tool for tool in TOOLS.values() if tool.scope == "shared"]
+
+    assert set(specs) == {tool.agent_name for tool in domain_tools}
     assert set(specs).issubset(DOMAIN_LABELS)
+    assert {tool.agent_name for tool in shared_tools} == {"shared"}
 
     owned = [tool for names in specs.values() for tool in names]
-    assert len(owned) == len(set(owned)) == len(TOOLS)
-    assert set(owned) == set(TOOLS)
+    assert len(owned) == len(set(owned)) == len(domain_tools)
+    assert set(owned) == {tool.name for tool in domain_tools}
+
+
+def test_shared_scope_is_exactly_the_platform_capabilities() -> None:
+    """共享工具 = 联网检索 + 地图定位 + 报告生成，其余都是领域工具。"""
+    shared = {tool.name for tool in TOOLS.values() if tool.scope == "shared"}
+    assert shared == {"web_search", "look_at_location", "generate_report"}
 
 
 def test_resource_guards_are_derived_from_registry() -> None:

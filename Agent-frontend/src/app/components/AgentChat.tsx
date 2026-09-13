@@ -217,7 +217,7 @@ export function AgentChat({
             RS Agent
           </div>
           <div className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-            两级规划 · 三域子智能体
+            领域专家 · 共享工具编排
           </div>
         </div>
         <span className="ml-auto flex items-center gap-1.5 font-mono text-[10px] text-primary">
