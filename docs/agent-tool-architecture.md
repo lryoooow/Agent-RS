@@ -30,8 +30,8 @@ ChatRequest
 
 - 唯一名称、Pydantic 参数模型和 async runner
 - `agent_name`：`scope="domain"` 时唯一持有它的 AutoGen Agent；`scope="shared"` 时为
-  平台级共享工具（web_search / look_at_location / generate_report），每个 Agent 都持有、
-  不催生任何领域专家
+  平台级共享工具（web_search / look_at_location / generate_report / search_imagery /
+  fetch_scene），每个 Agent 都持有、不催生任何领域专家
 - `resource_kind`：`imagery`、`document`、`conversation` 或 `none`
 - 可用性判据、模型可见描述和 tags
 
@@ -117,6 +117,20 @@ structured output；embedding 与写库仍走确定性服务。
   主 Agent——标准流程都需要影像，无影像绝无命中可能。`TurnInput.has_imagery` 默认 True
   （未标注=可能有），保证任何直接构造路径都不会被快车道静默关掉 GraphFlow 通道。
 - `mcp` 依赖固定在 `<2`，与当前 AutoGen 版本保持兼容。
+
+## 免账号卫星影像检索（Phase 7）
+
+`app/agent/stac_search/` 是独立数据层：EarthSearch（Sentinel-2）+ Planetary Computer
+（Landsat，匿名 SAS 签名）双源适配，出网端点硬编码白名单（无客户端可控 URL，无 SSRF 面）。
+`search_imagery` / `fetch_scene` 是共享工具，配额各走独立桶（默认 2 次 / 1 次每回合）。
+
+- 场景 key 只存于 user_id 隔离的服务端缓存（TTL 30 分钟）；资产 URL 与 SAS 令牌
+  **不进提示词/日志/落库**，模型的 tool_context 只有 key 与摘要，卡片 URL 是平台相对路径。
+- 预览 PNG 与多波段 GeoTIFF 由服务端从远程 COG 窗口读取生成（窗口像素封顶）；
+  混合分辨率波段按地理范围对齐窗口，Landsat SR 偏置量化转真反射率。
+- 导入复用上传目录约定与归属管线；波段语义以 STAC asset key 为权威
+  （`band_roles_source="stac_assets"`），导入后立即可被现有分析工具使用。
+- 下载/导入走 `/api/scenes/*`（强制登录 + 滑动窗口限流 + 产物文件数封顶）。
 
 ## 测试与评测
 

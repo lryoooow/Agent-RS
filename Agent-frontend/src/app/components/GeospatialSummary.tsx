@@ -1,14 +1,17 @@
-import { BarChart3, Crosshair, Download, FileText, Image as ImageIcon, Layers3, Loader2 } from "lucide-react";
-import type { ReactNode } from "react";
+import { BarChart3, CheckCircle2, Crosshair, Download, Eye, FileText, Image as ImageIcon, Layers3, Loader2, PlusCircle, Satellite } from "lucide-react";
+import { useState, type ReactNode } from "react";
 import type {
   GeospatialCompositeResult,
   GeospatialDetectionResult,
   GeospatialNdviResult,
   GeospatialReportResult,
   GeospatialResult,
+  GeospatialSceneSearchResult,
   GeospatialSegmentationResult,
   GeospatialSpectralIndexResult,
+  SceneCardInfo,
 } from "../types";
+import { absoluteUrl } from "../lib/imagery-search-api";
 
 // 聊天气泡内的遥感结果摘要卡（紧凑版）。覆盖后端各类 geospatial_result 类型。
 // 数据来自真实后端 done 事件解析（chat-events.ts），不再有任何 mock。
@@ -17,13 +20,21 @@ export function GeospatialSummary({
   result,
   onGenerateReport,
   reportPending,
+  onScenePreview,
+  onSceneImport,
 }: {
   result: GeospatialResult;
   onGenerateReport?: (imageryId: string) => void;
   reportPending?: boolean;
+  // 影像检索卡片：预览定位 / 导入平台的回调（由 App 注入，经 AgentChat 穿线）。
+  onScenePreview?: (bbox: number[]) => void;
+  onSceneImport?: (sceneKey: string) => Promise<string | null>;
 }) {
   if (result.type === "report") {
     return <ReportRow result={result} />;
+  }
+  if (result.type === "scene_search") {
+    return <SceneSearchRow result={result} onPreview={onScenePreview} onImport={onSceneImport} />;
   }
   // 报告按钮：仅对"有分析数据"的结果卡展示（preview 只是预览图层，无分析内容，不出按钮）。
   const reportButton =
@@ -201,4 +212,108 @@ function fmt(value: number | null | undefined) {
   if (value == null || !Number.isFinite(value)) return "N/A";
   if (Math.abs(value) >= 100) return value.toFixed(1);
   return value.toFixed(3).replace(/\.?0+$/, "");
+}
+
+
+function SceneSearchRow({
+  result,
+  onPreview,
+  onImport,
+}: {
+  result: GeospatialSceneSearchResult;
+  onPreview?: (bbox: number[]) => void;
+  onImport?: (sceneKey: string) => Promise<string | null>;
+}) {
+  const [importing, setImporting] = useState<string | null>(null);
+  const [imported, setImported] = useState<Record<string, string>>({});
+
+  const runImport = async (scene: SceneCardInfo) => {
+    if (!onImport) return;
+    setImporting(scene.key);
+    try {
+      const imageryId = await onImport(scene.key);
+      if (imageryId) setImported((prev) => ({ ...prev, [scene.key]: imageryId }));
+    } finally {
+      setImporting(null);
+    }
+  };
+
+  return (
+    <div className="mt-2 rounded-lg border border-primary/30 bg-primary/5 p-2.5 text-[12px]">
+      <div className="flex items-center gap-2">
+        <Satellite className="size-3.5 text-primary" />
+        <span className="text-foreground">
+          找到 {result.scenes.length} 景卫星影像（可预览 / 下载 TIF / 导入分析）
+        </span>
+      </div>
+      {result.notes && result.notes.length > 0 && (
+        <p className="mt-1 text-[10px] text-muted-foreground">{result.notes.join("；")}</p>
+      )}
+      <div className="mt-2 flex flex-col gap-1.5">
+        {result.scenes.map((scene) => {
+          const done = imported[scene.key];
+          return (
+            <div
+              key={scene.key}
+              className="flex items-center gap-2.5 rounded-lg border border-border bg-background/50 p-2"
+            >
+              <img
+                src={absoluteUrl(scene.preview_url)}
+                alt={scene.display_name || scene.item_id}
+                loading="lazy"
+                className="size-11 shrink-0 rounded-md border border-border object-cover"
+              />
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5">
+                  <span className="truncate text-[11.5px] font-medium">{scene.satellite}</span>
+                  <span className="font-mono text-[10px] text-muted-foreground">
+                    {scene.resolution_m ?? "?"}m
+                  </span>
+                </div>
+                <p className="truncate font-mono text-[10px] text-muted-foreground">
+                  {scene.datetime.slice(0, 10)} · 云量{" "}
+                  {scene.cloud_cover != null ? `${scene.cloud_cover}%` : "—"} · {scene.item_id}
+                </p>
+              </div>
+              <div className="flex shrink-0 items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => onPreview?.(scene.bbox)}
+                  className="flex items-center gap-1 rounded-md border border-border bg-card px-2 py-1 text-[10.5px] transition-colors hover:border-primary/50 hover:text-primary"
+                >
+                  <Eye className="size-3" /> 预览
+                </button>
+                <a
+                  href={absoluteUrl(scene.download_url)}
+                  download={`${scene.item_id}.tif`}
+                  className="flex items-center gap-1 rounded-md border border-border bg-card px-2 py-1 text-[10.5px] transition-colors hover:border-primary/50 hover:text-primary"
+                >
+                  <Download className="size-3" /> TIF
+                </a>
+                {done ? (
+                  <span className="flex items-center gap-1 rounded-md border border-primary/40 bg-primary/10 px-2 py-1 text-[10.5px] text-primary">
+                    <CheckCircle2 className="size-3" /> 已导入
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={!onImport || importing === scene.key}
+                    onClick={() => runImport(scene)}
+                    className="flex items-center gap-1 rounded-md border border-border bg-card px-2 py-1 text-[10.5px] transition-colors hover:border-primary/50 hover:text-primary disabled:opacity-50"
+                  >
+                    {importing === scene.key ? (
+                      <Loader2 className="size-3 animate-spin" />
+                    ) : (
+                      <PlusCircle className="size-3" />
+                    )}
+                    导入
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
