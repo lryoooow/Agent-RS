@@ -45,7 +45,7 @@ def test_marker_quoted_mid_text_does_not_terminate() -> None:
         "进度自检：\n"
         "- 质检：已完成\n"
         "- NDVI：已完成\n"
-        "- 生成报告：未完成（需 report_agent 来做）\n"
+        "- 生成报告：未完成（需 segmentation_agent 来做）\n"
         "（规则提醒：全部完成后才写 [DONE]）"
     )
     assert not _all_steps_done([message]), "复述规则不该被当成完成信号"
@@ -53,7 +53,7 @@ def test_marker_quoted_mid_text_does_not_terminate() -> None:
 
 def test_incomplete_selfcheck_does_not_terminate() -> None:
     message = _text(
-        "已完成 NDVI。\n\n进度自检：\n- NDVI：已完成\n- 报告：未完成（需 report_agent）"
+        "已完成 NDVI。\n\n进度自检：\n- NDVI：已完成\n- 报告：未完成（需 segmentation_agent）"
     )
     assert not _all_steps_done([message])
 
@@ -115,21 +115,30 @@ def test_strip_done_marker(raw: str, expected: str) -> None:
 
 
 def test_participant_catalog_has_one_agent_per_domain() -> None:
+    """参与者 = 通用问答 + 领域专家，仅此而已。
+
+    检索/定位/报告是共享工具不再是平级专家（Phase 3 降级），
+    report_agent 只作为 GraphFlow 的收尾节点存在，不进 selector 团队。
+    """
     from app.agent.engine.agents import domain_specs
 
-    names = set(participant_names())
-    assert names == {"general_agent", *[spec.name for spec in domain_specs()]} | (
-        set() if "search_agent" not in participant_names() else {"search_agent"}
-    )
+    assert set(participant_names()) == {"general_agent", *[spec.name for spec in domain_specs()]}
+    assert "search_agent" not in participant_names()
+    assert "report_agent" not in participant_names()
+    assert "navigation_agent" not in participant_names()
 
 
-def test_search_agent_absent_without_tavily_key(monkeypatch) -> None:
+def test_shared_web_search_tool_gated_by_tavily_key(monkeypatch) -> None:
+    """检索工具的注册门控：未配 TAVILY_API_KEY（或配额为零）时工具不可用。"""
+    from app.agent.tool_registry import get_tool
     from app.core.settings import get_settings
 
     monkeypatch.setenv("TAVILY_API_KEY", "")
     get_settings.cache_clear()
     try:
-        assert "search_agent" not in participant_names()
+        tool = get_tool("web_search")
+        assert tool is not None
+        assert not tool.is_enabled()
     finally:
         get_settings.cache_clear()
 
@@ -383,7 +392,7 @@ def test_result_content_keeps_every_expert_step() -> None:
         messages=[
             _text("先算 NDVI，再出报告", source="user"),
             _text("已完成 NDVI 计算，均值 0.42。\n\n进度自检：\n- 报告：未完成"),
-            _text(f"报告已生成。\n\n进度自检：\n- 报告：已完成\n\n{DONE_MARKER}", "report_agent"),
+            _text(f"报告已生成。\n\n进度自检：\n- 报告：已完成\n\n{DONE_MARKER}", "segmentation_agent"),
         ],
         stop_reason="done",
     )

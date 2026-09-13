@@ -238,7 +238,7 @@ export function TopBar({ settings, auth }: { settings: Settings; auth: Auth }) {
                 className="bg-input-background font-mono text-[12px]"
               />
               <p className="text-[10px] leading-relaxed text-muted-foreground">
-                保存于当前浏览器；需要实时信息时由 AutoGen 联网检索代理调用，不写入对话记录。
+                保存于当前浏览器；需要实时信息时由智能体的联网搜索工具调用，不写入对话记录。
               </p>
             </Field>
             <Field label="思考强度（思考预算：影响速度与精度）">

@@ -27,11 +27,7 @@ from typing import Any
 
 from app.agent.engine.agents import domain_specs
 from app.agent.engine.flows import PRESET_FLOWS
-from app.agent.engine.search import (
-    SEARCH_AGENT_LABEL,
-    SEARCH_AGENT_NAME,
-    search_agent_available,
-)
+from app.agent.engine.tools import shared_tool_names
 from app.core.settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -43,40 +39,31 @@ _SECRET_KEYS = frozenset({"api_key", "apikey", "token", "secret", "password"})
 def describe_orchestration() -> dict[str, Any]:
     """脱敏的编排描述，可安全经 API 暴露。"""
     settings = get_settings()
+    shared = list(shared_tool_names())
     return {
         "engine": "autogen",
         "auto_flow_enabled": settings.agent_auto_flow_enabled,
         "max_tool_iterations": settings.agent_max_tool_iterations,
         "max_gpu_tool_calls": settings.agent_max_gpu_tool_calls,
+        "shared_tools": shared,
         "agents": [
             {
                 "name": "general_agent",
                 "label": "通用问答",
-                "tools": [],
-                "description": "无需工具的通用问答专家",
+                "tools": shared,
+                "description": "无需遥感工具的一般问题；持有共享工具",
             },
         ]
         + [
             {
                 "name": spec.name,
                 "label": spec.label,
-                "tools": list(spec.tools),
+                # 领域工具 + 共享工具才是 Agent 实际持有的全集。
+                "tools": [*spec.tools, *shared],
                 "description": spec.description,
             }
             for spec in domain_specs()
-        ]
-        + (
-            [
-                {
-                    "name": SEARCH_AGENT_NAME,
-                    "label": SEARCH_AGENT_LABEL,
-                    "tools": ["web_search"],
-                    "description": "联网检索专家",
-                }
-            ]
-            if search_agent_available()
-            else []
-        ),
+        ],
         "preset_flows": {name: list(seq) for name, seq in PRESET_FLOWS.items()},
     }
 

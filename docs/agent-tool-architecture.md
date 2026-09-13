@@ -11,8 +11,8 @@ ChatRequest
   → flow_router（AutoGen structured output）
       ├─ 完整命中标准作业 → GraphFlow
       └─ 不完整 / 不确定 / 自由任务 → SelectorGroupChat
-  → general / navigation / spectral / preprocess / segmentation / detection /
-    document / report / search AssistantAgent
+  → general / navigation-capable / spectral / preprocess / segmentation / detection /
+    document AssistantAgent（全部持有 web_search / look_at_location / generate_report 共享工具）
   → 统一工具执行管线
   → AutoGen event bridge → 既有 SSE 与 ChatResponse
 ```
@@ -28,7 +28,9 @@ ChatRequest
 `backend/app/agent/tool_registry.py` 是工具契约与所有权的唯一数据源。每个工具声明：
 
 - 唯一名称、Pydantic 参数模型和 async runner
-- `agent_name`：唯一持有它的 AutoGen Agent
+- `agent_name`：`scope="domain"` 时唯一持有它的 AutoGen Agent；`scope="shared"` 时为
+  平台级共享工具（web_search / look_at_location / generate_report），每个 Agent 都持有、
+  不催生任何领域专家
 - `resource_kind`：`imagery`、`document`、`conversation` 或 `none`
 - 可用性判据、模型可见描述和 tags
 
@@ -86,8 +88,7 @@ structured output；embedding 与写库仍走确定性服务。
 | `engine/agents.py` | 通用、导航和领域 AssistantAgent |
 | `engine/flows.py` | 固定标准作业 GraphFlow |
 | `engine/orchestrator.py` | 团队构造、执行、终止与收尾 |
-| `engine/tools.py` | 注册工具的 AutoGen 包装 |
-| `engine/search.py` | 可多轮检索的搜索 Agent |
+| `engine/tools.py` | 注册工具的 AutoGen 包装（含共享工具装配） |
 | `engine/memory/` | RAG 与长期记忆协议适配 |
 | `engine/memory_judge.py` | 结构化记忆判断 |
 | `engine/event_bridge.py` | AutoGen 消息映射为现有 SSE trace |

@@ -29,16 +29,24 @@ from autogen_agentchat.teams import DiGraphBuilder, GraphFlow
 from autogen_core.memory import Memory
 from autogen_core.models import ChatCompletionClient
 
-from app.agent.engine.agents import ContextFactory, build_domain_agent, domain_specs
+from app.agent.engine.agents import (
+    ContextFactory,
+    build_domain_agent,
+    build_report_finalizer,
+    domain_specs,
+)
 
 logger = logging.getLogger(__name__)
 
-# 预设链路：名字 -> 领域 Agent 的执行顺序。
+# 预设链路：名字 -> 节点执行顺序。
 #
 # 只收录「顺序确定且各步作用于同一影像」的链路。刻意**不**收录
 # 「裁剪 → 分析」——preprocess 的领域指引明说派生栅格不注册为新影像 ID
 # （见 agents.DOMAIN_GUIDANCE["preprocess_agent"]），
 # 所以那条链路在产品上就不成立，固化它只会让模型撞墙。
+#
+# "report_agent" 不是领域专家（generate_report 已是共享工具），它是
+# `build_report_finalizer` 构造的收尾节点：固定链路的报告步骤保持确定性。
 PRESET_FLOWS: dict[str, tuple[str, ...]] = {
     # 质检 → 指数 → 报告：最常用的标准作业
     "inspect_index_report": ("spectral_agent", "report_agent"),
@@ -66,16 +74,25 @@ def build_flow(
 
     agents: list[ChatAgent] = []
     for domain in sequence:
-        if domain not in specs:
-            raise KeyError(f"链路 {name!r} 引用了不存在的领域 {domain!r}")
-        agents.append(
-            build_domain_agent(
-                specs[domain],
-                model_client=model_client,
-                memory=memory,
-                context_factory=context_factory,
+        if domain == "report_agent":
+            agents.append(
+                build_report_finalizer(
+                    model_client=model_client,
+                    memory=memory,
+                    context_factory=context_factory,
+                )
             )
-        )
+        elif domain in specs:
+            agents.append(
+                build_domain_agent(
+                    specs[domain],
+                    model_client=model_client,
+                    memory=memory,
+                    context_factory=context_factory,
+                )
+            )
+        else:
+            raise KeyError(f"链路 {name!r} 引用了不存在的领域 {domain!r}")
 
     builder = DiGraphBuilder()
     for agent in agents:

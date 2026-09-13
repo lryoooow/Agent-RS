@@ -74,6 +74,12 @@ from app.agent.tools.water_mask.schema import (
     WATER_MASK_TOOL_NAME,
     WaterMaskArguments,
 )
+from app.agent.tools.web_search.runner import run_web_search_tool, web_search_tool_available
+from app.agent.tools.web_search.schema import (
+    WEB_SEARCH_TOOL_DESCRIPTION,
+    WEB_SEARCH_TOOL_NAME,
+)
+from app.agent.search.schema import WebSearchArguments
 from app.agent.types import ToolRunResult
 
 
@@ -91,6 +97,10 @@ class RegisteredTool:
     resource_kind: Literal["imagery", "document", "conversation", "none"]
     enabled: ToolEnabled | None = None
     tags: tuple[str, ...] = ()
+    # domain = 归 agent_name 独占，决定一个领域 Agent 的诞生；
+    # shared = 所有 Agent（含通用问答）都可调用，不催生任何 Agent。
+    # 联网检索、地图定位、报告生成属于平台级能力而非某个领域，因此是 shared。
+    scope: Literal["domain", "shared"] = "domain"
 
     def is_enabled(self) -> bool:
         return self.enabled() if self.enabled else True
@@ -146,6 +156,10 @@ async def _run_report(args: ReportArguments) -> ToolRunResult:
 
 async def _run_look_at_location(args: LookAtLocationArguments) -> ToolRunResult:
     return await run_look_at_location(args)
+
+
+async def _run_web_search(args: WebSearchArguments) -> ToolRunResult:
+    return await run_web_search_tool(args)
 
 
 TOOLS: dict[str, RegisteredTool] = {
@@ -278,10 +292,12 @@ TOOLS: dict[str, RegisteredTool] = {
         ),
         argument_model=ReportArguments,
         runner=_run_report,
-        agent_name="report_agent",
-        resource_kind="conversation",
+        # 共享工具：任何专家在用户要报告时直接调用；GraphFlow 的收尾节点也用它。
         # 不吃 imagery_id/document_id，读本对话已持久化的分析结果出 Word；
         # 归属由 build_conversation_report 的对话校验保证。
+        agent_name="shared",
+        resource_kind="conversation",
+        scope="shared",
         tags=("report",),
     ),
     "look_at_location": RegisteredTool(
@@ -291,10 +307,26 @@ TOOLS: dict[str, RegisteredTool] = {
         ),
         argument_model=LookAtLocationArguments,
         runner=_run_look_at_location,
-        agent_name="navigation_agent",
+        # 共享工具：对话控图是平台能力，不该为一个地理编码工具单设专家。
+        agent_name="shared",
         resource_kind="none",
-        # 对话控图：地名→坐标让地图跳转。无 docker/影像依赖，始终可用。
+        scope="shared",
         tags=("map", "location"),
+    ),
+    "web_search": RegisteredTool(
+        name="web_search",
+        definition=build_function_definition(
+            WEB_SEARCH_TOOL_NAME, WEB_SEARCH_TOOL_DESCRIPTION, WebSearchArguments
+        ),
+        argument_model=WebSearchArguments,
+        runner=_run_web_search,
+        # 共享工具：需要实时外部信息时任何专家直接调用；
+        # 未配置 TAVILY_API_KEY 或配额为零时不注册（is_enabled 门控）。
+        agent_name="shared",
+        resource_kind="none",
+        enabled=web_search_tool_available,
+        scope="shared",
+        tags=("search", "web"),
     ),
 }
 

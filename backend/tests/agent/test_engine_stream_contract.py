@@ -29,15 +29,15 @@ STEP_ONE = """已完成 NDVI 计算，均值 0.42。
 
 进度自检：
 - 计算 NDVI：已完成
-- 生成报告：未完成（需 report_agent 来做）
+- 地物分类：未完成（需 segmentation_agent 来做）
 
-[HANDOFF: report_agent]"""
+[HANDOFF: segmentation_agent]"""
 
-STEP_TWO = """报告已生成，共 3 页。
+STEP_TWO = """地物分类已完成：建筑 32%、林地 45%、水体 12%。
 
 进度自检：
 - 计算 NDVI：已完成
-- 生成报告：已完成
+- 地物分类：已完成
 
 [DONE]"""
 
@@ -150,7 +150,7 @@ async def test_scaffolding_never_reaches_the_user(monkeypatch) -> None:
     于是用户亲眼看到 `[DONE]` 和整段「进度自检」。
     """
     streamed, final, _ = await _run(
-        monkeypatch, ["spectral_agent", "report_agent"], [STEP_ONE, STEP_TWO]
+        monkeypatch, ["spectral_agent", "segmentation_agent"], [STEP_ONE, STEP_TWO]
     )
 
     for text, where in ((streamed, "流式正文"), (final.content, "落库正文")):
@@ -180,11 +180,11 @@ async def test_every_step_survives_in_the_saved_answer(monkeypatch) -> None:
     只留最后一条时，用户在流式过程中看到了"NDVI 均值 0.42"，刷新页面却没了。
     """
     streamed, final, _ = await _run(
-        monkeypatch, ["spectral_agent", "report_agent"], [STEP_ONE, STEP_TWO]
+        monkeypatch, ["spectral_agent", "segmentation_agent"], [STEP_ONE, STEP_TWO]
     )
 
     assert "均值 0.42" in final.content, "第一步的结论不能从落库正文里消失"
-    assert "报告已生成" in final.content
+    assert "地物分类已完成" in final.content
     assert "均值 0.42" in streamed
 
 
@@ -192,7 +192,7 @@ async def test_every_step_survives_in_the_saved_answer(monkeypatch) -> None:
 async def test_streamed_body_matches_saved_body(monkeypatch) -> None:
     """流式看到的和落库的必须一致，否则刷新页面内容会变。"""
     streamed, final, _ = await _run(
-        monkeypatch, ["spectral_agent", "report_agent"], [STEP_ONE, STEP_TWO]
+        monkeypatch, ["spectral_agent", "segmentation_agent"], [STEP_ONE, STEP_TWO]
     )
     assert streamed == final.content
 
@@ -234,7 +234,7 @@ async def test_explicit_handoff_skips_another_selector_model_call(monkeypatch) -
     )
 
     assert "均值 0.42" in streamed
-    assert "报告已生成" in final.content
+    assert "地物分类已完成" in final.content
     assert client.selector_calls == 1, "第二位专家应由 HANDOFF 直接选择"
 
 
@@ -255,7 +255,7 @@ async def test_disconnect_stops_the_rest_of_the_chain(monkeypatch) -> None:
     """
     import asyncio
 
-    client = _ScriptedClient(["spectral_agent", "report_agent"], [STEP_ONE, STEP_TWO])
+    client = _ScriptedClient(["spectral_agent", "segmentation_agent"], [STEP_ONE, STEP_TWO])
     monkeypatch.setattr(orchestrator, "build_model_client", lambda *a, **k: client)
 
     async def _selector(*_args, **_kwargs):
@@ -335,8 +335,8 @@ async def test_expert_with_only_scaffolding_leaves_no_blank_tail(monkeypatch) ->
     only_scaffolding = "进度自检：\n- 计算 NDVI：已完成\n\n[DONE]"
     streamed, final, _ = await _run(
         monkeypatch,
-        ["spectral_agent", "report_agent"],
-        ["已完成 NDVI 计算，均值 0.42。\n[HANDOFF: report_agent]", only_scaffolding],
+        ["spectral_agent", "segmentation_agent"],
+        ["已完成 NDVI 计算，均值 0.42。\n[HANDOFF: segmentation_agent]", only_scaffolding],
     )
 
     assert streamed == final.content

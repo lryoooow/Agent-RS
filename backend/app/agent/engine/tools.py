@@ -61,14 +61,14 @@ class RemoteSensingTool(BaseTool[BaseModel, str]):
     async def run(self, args: BaseModel, cancellation_token: CancellationToken) -> str:
         state = current_turn_state()
 
-        # GPU 配额：**执行前**占名额（并行工具调用下"跑完再记账"拦不住，
-        # 详见 turn_context 模块文档）。超了就如实告诉模型让它自己收敛，
+        # 配额（GPU 重工具 / 联网检索）：**执行前**占名额（并行工具调用下"跑完再记账"
+        # 拦不住，详见 turn_context 模块文档）。超了就如实告诉模型让它自己收敛，
         # 而不是抛异常炸链路。
         if state is not None and not state.try_reserve(self._tool.name):
             limit = state.quota_limit(self._tool.name)
-            logger.info("GPU 工具 %s 被回合配额拦下（上限 %s）", self._tool.name, limit)
+            logger.info("工具 %s 被回合配额拦下（上限 %s 次）", self._tool.name, limit)
             return (
-                f"未执行 {self._tool.name}：本轮 GPU 重工具调用已达上限（{limit} 次）。"
+                f"未执行 {self._tool.name}：本轮该工具调用已达上限（{limit} 次）。"
                 "请先基于已有结果回答，并告知用户这一步需要下一轮单独执行。"
                 "不要假装已经执行过，也不要编造结果。"
             )
@@ -149,6 +149,22 @@ def build_tools(names: tuple[str, ...] | None = None) -> list[RemoteSensingTool]
     """
     selected = TOOLS if names is None else {n: TOOLS[n] for n in names if n in TOOLS}
     return [RemoteSensingTool(tool) for tool in selected.values() if tool.is_enabled()]
+
+
+def shared_tool_names() -> tuple[str, ...]:
+    """共享工具名单（已启用的）。Agent 名册与 system prompt 引用它保持一致。"""
+    return tuple(
+        tool.name for tool in TOOLS.values() if tool.scope == "shared" and tool.is_enabled()
+    )
+
+
+def build_shared_tools() -> list[RemoteSensingTool]:
+    """平台级共享工具（联网检索/地图定位/报告生成）：每个 Agent 都持有。"""
+    return [
+        RemoteSensingTool(tool)
+        for tool in TOOLS.values()
+        if tool.scope == "shared" and tool.is_enabled()
+    ]
 
 
 def build_tool_map() -> dict[str, RemoteSensingTool]:

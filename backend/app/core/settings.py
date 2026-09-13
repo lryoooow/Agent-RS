@@ -84,7 +84,7 @@ class Settings(BaseSettings):
     # 影像清单注入上下文的上限（最新优先）。此前无上限，重度用户靠字符预算硬截断，
     # 可能把最新上传的影像截掉——模型恰好最常被问"这张刚传的图"。
     agent_imagery_inventory_limit: int = 20
-    agent_web_search_max_calls: int = 1
+    agent_web_search_max_calls: int = 3
     agent_web_search_max_results: int = 5
     agent_web_search_country: str = "china"
     agent_web_search_min_score: float = 0.4
