@@ -97,9 +97,12 @@ class Settings(BaseSettings):
     agent_web_search_rerank_top_n: int = 5
 
     # ---- AutoGen 唯一编排引擎 ----
-    # 标准作业先由结构化路由 Agent 判断是否走 GraphFlow；其它请求走 SelectorGroupChat。
+    # 标准作业先由结构化路由 Agent 判断是否走 GraphFlow；其余请求由主 Agent 直跑。
     agent_router_model: str = ""
     agent_router_max_tokens: int = 256
+    # 路由快车道：用户没有影像时跳过路由 LLM 调用直达主 Agent（三条标准流程
+    # 都需要影像，无影像绝无命中可能）。省掉闲聊/概念提问的路由延迟与费用。
+    agent_router_fast_path: bool = True
     agent_auto_flow_enabled: bool = True
     # 单轮内允许的工具调用轮数上限。
     agent_max_tool_iterations: int = 5
@@ -277,6 +280,9 @@ class Settings(BaseSettings):
 
     @property
     def context_max_total_chars(self) -> int:
+        # 命名澄清：配置名带 chars，但 BudgetedChatCompletionContext 拿它当 **token 预算**
+        # 用（estimate_tokens 的估算结果与之比较）。中文场景下 1 token ≈ 1~2 字符，
+        # 按字符数配置略偏保守，不会超支——改这里时别按"精确 token 数"理解。
         return self.ai_context_max_total_chars or self.ai_max_context_chars
 
     @property

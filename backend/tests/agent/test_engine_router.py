@@ -148,3 +148,61 @@ async def test_response_format_400_retries_as_plain_json_and_remembers_provider(
 
     assert first.strategy == second.strategy == "main"
     assert calls == [True, False, False]
+
+
+@pytest.mark.asyncio
+async def test_fast_path_skips_router_model_when_user_has_no_imagery(monkeypatch) -> None:
+    """无影像用户直达主 Agent：标准流程都需要影像，绝无命中可能。"""
+    build = AsyncMock(side_effect=AssertionError("router model must not be built"))
+    monkeypatch.setattr("app.agent.engine.router.build_model_client", build)
+
+    route = await choose_route(
+        TurnInput("帮我算个 1+1", (), has_imagery=False), SimpleNamespace()
+    )
+    assert route.strategy == "main"
+    assert route.reason == "fast_path_no_imagery"
+    build.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_fast_path_can_be_disabled(monkeypatch) -> None:
+    """关掉快车道后，无影像请求也走完整路由（保守回退开关）。"""
+    monkeypatch.setenv("AGENT_ROUTER_FAST_PATH", "false")
+    get_settings.cache_clear()
+    client = _Client()
+    monkeypatch.setattr(
+        "app.agent.engine.router.build_model_client", lambda *_a, **_k: client
+    )
+    monkeypatch.setattr(
+        "app.agent.engine.router._run_structured_router",
+        AsyncMock(
+            return_value=FlowDecision(strategy="main", flow_name=None, reason="普通请求")
+        ),
+    )
+
+    route = await choose_route(
+        TurnInput("帮我算个 1+1", (), has_imagery=False), SimpleNamespace()
+    )
+    assert route.strategy == "main"
+    assert route.reason == "普通请求"
+
+
+@pytest.mark.asyncio
+async def test_fast_path_not_triggered_when_imagery_presence_unknown(monkeypatch) -> None:
+    """has_imagery 默认 True（未标注=可能有）：快车道不得凭默认值关掉 GraphFlow 通道。"""
+    monkeypatch.setenv("AGENT_AUTO_FLOW_ENABLED", "true")
+    get_settings.cache_clear()
+    client = _Client()
+    monkeypatch.setattr(
+        "app.agent.engine.router.build_model_client", lambda *_a, **_k: client
+    )
+    monkeypatch.setattr(
+        "app.agent.engine.router._run_structured_router",
+        AsyncMock(
+            return_value=FlowDecision(strategy="graph", flow_name="detect_report", reason="完整流程")
+        ),
+    )
+
+    route = await choose_route(TurnInput("检测并生成报告", ()), SimpleNamespace())
+    assert route.strategy == "graph"
+    assert route.flow_name == "detect_report"

@@ -25,6 +25,7 @@ from app.agent.engine.memory._common import (
     BLOCK_KEY_KNOWLEDGE,
     inject_system_block,
     latest_user_query,
+    run_query_once_per_turn,
 )
 from app.agent.engine.turn_context import current_turn_state
 from app.agent.rag.service import retrieve_rag_context
@@ -53,7 +54,10 @@ class RagMemory(Memory):
         if not query:
             return UpdateContextResult(memories=MemoryQueryResult(results=[]))
 
-        result = await self.query(query)
+        # 回合级缓存：工具循环里每次模型调用都会走到这里，但检索词没变。
+        result = await run_query_once_per_turn(
+            BLOCK_KEY_KNOWLEDGE, query, lambda: self.query(query)
+        )
         if not result.results:
             # 这轮没检索到就把上一轮的块清掉：多步链路里每次发言都会重查，
             # 留着旧块等于拿上一步的资料回答这一步的问题。
