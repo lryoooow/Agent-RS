@@ -35,7 +35,8 @@ dependencies = [
   # autogen-ext 0.7.5 只声明 mcp>=1.11.0（无上界），但它是针对 mcp 1.x API 写的。
   # mcp 2.0.0 移除了 mcp.shared.context.RequestContext，会让 autogen_ext.tools.mcp 直接 ImportError。
   # AutoGen 已进入 maintenance mode，不会有上游修复，因此必须在这里钉死上界。
-  "mcp>=1.11.0,<2"
+  "mcp>=1.11.0,<2",
+  "pystac-client>=0.9.0",
 ]
 
 [project.optional-dependencies]
