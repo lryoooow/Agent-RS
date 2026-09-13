@@ -188,3 +188,62 @@ async def test_forward_geocode_returns_center_and_bbox(monkeypatch: pytest.Monke
     assert res["display_name"]
 
     assert await geocode.forward_geocode("") is None  # 空查询安全回落
+
+
+def _fake_nominatim(monkeypatch: pytest.MonkeyPatch, item: dict) -> None:
+    class FakeResp:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> list[dict]:
+            return [item]
+
+    class FakeClient:
+        async def get(self, *_args, **_kwargs) -> FakeResp:
+            return FakeResp()
+
+    monkeypatch.setattr(geocode, "_client", FakeClient())
+    geocode._FORWARD_CACHE.clear()
+
+
+@pytest.mark.asyncio
+async def test_city_geocodes_to_center_without_admin_bbox(monkeypatch: pytest.MonkeyPatch) -> None:
+    """点状地名（城市）定心 + 城市级缩放，不框行政区划。
+
+    Nominatim 把「北京市」标成 addresstype=city 但 bbox 是整个市域（含远郊
+    山区）；下发 bbox 会让前端 fitBounds 把市域框进视野，用户只看到"缩小"。
+    """
+    _fake_nominatim(
+        monkeypatch,
+        {
+            "lat": "39.9057",
+            "lon": "116.3913",
+            "display_name": "北京市, 中国",
+            "addresstype": "city",
+            "boundingbox": ["39.17", "41.06", "115.42", "117.51"],
+        },
+    )
+    res = await geocode.forward_geocode("北京")
+    assert res is not None
+    assert res["center"] == [116.3913, 39.9057]
+    assert res["zoom"] == 11
+    assert "bbox" not in res, "点状地名不应下发行政边界 bbox"
+
+
+@pytest.mark.asyncio
+async def test_area_geocodes_to_bbox(monkeypatch: pytest.MonkeyPatch) -> None:
+    """面状地名（省/流域/国家）保留 bbox 框选视角。"""
+    _fake_nominatim(
+        monkeypatch,
+        {
+            "lat": "30.5",
+            "lon": "114.3",
+            "display_name": "长江流域",
+            "addresstype": "river",
+            "boundingbox": ["24.0", "35.0", "90.0", "122.0"],
+        },
+    )
+    res = await geocode.forward_geocode("长江流域")
+    assert res is not None
+    assert res["bbox"] == [[90.0, 24.0], [122.0, 35.0]]
+    assert res["zoom"] == 4  # 跨度 >10° 的全国级视角
