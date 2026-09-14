@@ -16,7 +16,13 @@ logger = logging.getLogger(__name__)
 # Nominatim 请求需要 User-Agent（服务条款要求）
 USER_AGENT = "Agent-RS/1.0 (Remote Sensing AI Agent)"
 NOMINATIM_BASE_URL = "https://nominatim.openstreetmap.org"
-REQUEST_TIMEOUT = 1.5  # 秒
+def _request_timeout() -> float:
+    from app.core.settings import get_settings
+
+    return get_settings().geocode_timeout_seconds
+
+
+REQUEST_TIMEOUT = _request_timeout()  # 秒
 GEOCODE_CACHE_MAX_SIZE = 4096
 # 并发逆地理编码上限：Nominatim 用量策略 ~1 req/s，去重外的突发请求必须限流（O5）。
 PREFETCH_MAX_CONCURRENT = 4

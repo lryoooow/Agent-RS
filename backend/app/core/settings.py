@@ -107,6 +107,8 @@ class Settings(BaseSettings):
     agent_scene_preview_size: int = 1024
     # STAC 搜索与远程 COG 读取的超时（秒）。
     stac_timeout_seconds: float = 20.0
+    # Nominatim 地理编码超时（地名→坐标，逆地理 O-D 同步解析也用它）。
+    geocode_timeout_seconds: float = 5.0
     # GDAL 读取远程 COG 的出网代理（如 http://127.0.0.1:7890）。留空走系统默认；
     # STAC 搜索走 HTTP(S)_PROXY 环境变量。本机 TUN 模式代理下两者都可留空。
     stac_http_proxy: str = ""
