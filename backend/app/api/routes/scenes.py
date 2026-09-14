@@ -30,6 +30,8 @@ from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+
+from app.api.errors import api_error
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
@@ -136,16 +138,16 @@ def _require_heavy_quota(user_id: str) -> None:
     while window and now - window[0] > 3600:
         window.popleft()
     if len(window) >= _HEAVY_OPS_PER_HOUR:
-        raise HTTPException(status_code=429, detail="影像下载/导入过于频繁，请稍后再试。")
+        raise api_error(429, "RATE_LIMITED", "影像下载/导入过于频繁，请稍后再试。")
     window.append(now)
 
 
 def _get_record_or_404(user_id: str, key: str):
     if len(key) != 12 or not all(c in "0123456789abcdef" for c in key):
-        raise HTTPException(status_code=404, detail="场景不存在。")
+        raise api_error(404, "SCENE_NOT_FOUND", "场景不存在。")
     record = get_scene(user_id, key)
     if record is None:
-        raise HTTPException(status_code=404, detail="场景已过期或不存在，请重新搜索。")
+        raise api_error(404, "SCENE_NOT_FOUND", "场景已过期或不存在，请重新搜索。")
     return record
 
 
@@ -156,14 +158,14 @@ async def search_scene_cards(
 ) -> dict:
     """检索免账号数据源（Sentinel-2 / Landsat），结果进服务端缓存。"""
     if not request.bbox and not (request.place or "").strip():
-        raise HTTPException(status_code=400, detail="检索必须提供矩形范围或地名。")
+        raise api_error(400, "AREA_REQUIRED", "检索必须提供矩形范围或地名。")
     if request.bbox is not None and len(request.bbox) != 4:
-        raise HTTPException(status_code=400, detail="bbox 必须是 [west, south, east, north] 四元组。")
+        raise api_error(400, "INVALID_BBOX", "bbox 必须是 [west, south, east, north] 四元组。")
     bbox = request.bbox
     if bbox is None:
         geo = await forward_geocode((request.place or "").strip())
         if geo is None:
-            raise HTTPException(status_code=400, detail=f"无法解析地名「{request.place}」，请改用矩形范围。")
+            raise api_error(400, "PLACE_UNRESOLVED", f"无法解析地名「{request.place}」，请改用矩形范围。")
         center = geo["center"]
         # 地名检索给中心点 ±0.15° 的默认范围（城市尺度），用户可用 bbox 精确控制。
         bbox = [center[0] - 0.15, center[1] - 0.15, center[0] + 0.15, center[1] + 0.15]
@@ -178,7 +180,8 @@ async def search_scene_cards(
             limit=request.limit,
         )
     except StacSearchError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        logger.warning("影像检索失败：%s", exc)
+        raise api_error(502, "STAC_UNAVAILABLE", "影像检索暂时不可用，请稍后重试。") from exc
 
     put_scenes(user_id, records)
     cards = [
@@ -203,7 +206,8 @@ async def scene_preview(
         # 远程 COG 读取是同步阻塞（GDAL），放线程池避免卡事件循环。
         await asyncio.to_thread(render_scene_preview, record, out)
     except SceneRasterError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        logger.warning("场景预览生成失败 key=%s：%s", key, exc)
+        raise api_error(502, "SCENE_RASTER_FAILED", "影像预览生成失败，请稍后重试。") from exc
     return FileResponse(out, media_type="image/png")
 
 
@@ -215,7 +219,7 @@ async def scene_download(
 ) -> FileResponse:
     record = _get_record_or_404(user_id, key)
     if bbox is not None and len(bbox) != 4:
-        raise HTTPException(status_code=400, detail="bbox 必须是 [west, south, east, north] 四元组")
+        raise api_error(400, "INVALID_BBOX", "bbox 必须是 [west, south, east, north] 四元组。")
     _require_heavy_quota(user_id)
 
     out = _user_scene_dir(user_id, key) / "scene.tif"
@@ -223,7 +227,8 @@ async def scene_download(
         try:
             await asyncio.to_thread(partial(compose_scene_tif, record, out, bbox=bbox))
         except SceneRasterError as exc:
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
+            logger.warning("场景合成失败 key=%s：%s", key, exc)
+            raise api_error(502, "SCENE_RASTER_FAILED", "影像合成失败，请稍后重试。") from exc
         except FileExistsError:
             pass
         _enforce_scene_file_cap(user_id)
@@ -246,5 +251,6 @@ async def scene_import(
     try:
         result = await import_scene_as_imagery(record, user_id)
     except SceneImportError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        logger.warning("场景导入失败 key=%s：%s", key, exc)
+        raise api_error(502, "SCENE_IMPORT_FAILED", "场景导入失败，请稍后重试。") from exc
     return result

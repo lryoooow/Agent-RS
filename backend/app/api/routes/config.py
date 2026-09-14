@@ -1,4 +1,5 @@
 import httpx
+from app.api.errors import api_error
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.agent.config import resolve_ai_config
@@ -71,16 +72,14 @@ async def list_models(request: ModelListRequest) -> ModelListResponse:
     except httpx.HTTPStatusError as exc:
         status = exc.response.status_code
         if status in (401, 403):
-            detail = "模型供应商鉴权失败，请检查 API Key。"
-        else:
-            detail = f"模型供应商返回错误（HTTP {status}）。"
-        raise HTTPException(status_code=502, detail=detail) from exc
+            raise api_error(502, "PROVIDER_AUTH_FAILED", "模型供应商鉴权失败，请检查 API Key。") from exc
+        raise api_error(502, "PROVIDER_PROBE_FAILED", f"模型供应商返回错误（HTTP {status}）。") from exc
     except (httpx.HTTPError, ValueError) as exc:
-        raise HTTPException(status_code=502, detail="无法读取模型列表，请检查供应商地址与网络。") from exc
+        raise api_error(502, "PROVIDER_PROBE_FAILED", "无法读取模型列表，请检查供应商地址与网络。") from exc
 
     raw_models = payload.get("data") if isinstance(payload, dict) else None
     if not isinstance(raw_models, list):
-        raise HTTPException(status_code=502, detail="模型供应商返回了无效的模型列表。")
+        raise api_error(502, "PROVIDER_PROBE_FAILED", "模型供应商返回了无效的模型列表。")
 
     models_by_id: dict[str, AvailableModel] = {}
     for raw in raw_models[:1000]:

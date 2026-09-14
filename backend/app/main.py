@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.routes import router as api_router
 from app.agent.embedding.service import get_embedding_service
@@ -185,15 +186,57 @@ def create_app() -> FastAPI:
                     "code": "VALIDATION_ERROR",
                     "message": "Invalid request payload.",
                     # ctx 里可能带 ValueError 等异常对象（model_validator 抛出），
-                # 直接 json 序列化会 500；统一字符串化。
-                "details": [
-                    {**error, "ctx": {k: str(v) for k, v in error.get("ctx", {}).items()}}
-                    if error.get("ctx")
-                    else error
-                    for error in exc.errors()
-                ],
+                    # 直接 json 序列化会 500；统一字符串化。
+                    "details": [
+                        {**error, "ctx": {k: str(v) for k, v in error.get("ctx", {}).items()}}
+                        if error.get("ctx")
+                        else error
+                        for error in exc.errors()
+                    ],
                 }
             },
+        )
+
+    @app.exception_handler(StarletteHTTPException)
+    async def handle_http_exception(_, exc: StarletteHTTPException) -> JSONResponse:
+        """HTTPException → 唯一错误信封（app/api/errors.py 的契约）。
+
+        - detail 是 {code, message}（api_error 抛出）：原样包进 error 键；
+        - detail 是裸字符串（存量写法，逐步迁移中）：补 ``HTTP_<status>`` 机器码；
+        - 其它形态：字符串化兜底，绝不输出第二种顶层形状。
+        """
+        detail = exc.detail
+        if isinstance(detail, dict) and "code" in detail and "message" in detail:
+            payload = {"code": str(detail["code"]), "message": str(detail["message"])}
+            extra = {k: v for k, v in detail.items() if k not in ("code", "message")}
+            if extra:
+                payload.update(extra)
+        elif isinstance(detail, str):
+            payload = {"code": f"HTTP_{exc.status_code}", "message": detail}
+        else:
+            payload = {"code": f"HTTP_{exc.status_code}", "message": str(detail)}
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"error": payload},
+            headers=getattr(exc, "headers", None),
+        )
+
+    @app.exception_handler(Exception)
+    async def handle_unhandled_exception(request, exc: Exception) -> JSONResponse:
+        """兜底 500：不向客户端泄任何内部信息，细节只进日志。
+
+        没有 handler 时 FastAPI/Starlette 会返回 {"detail": "Internal Server Error"}
+        ——第三种错误形状；且 TestClient 场景下异常会直接抛出掩盖真实响应。
+        """
+        logger.exception(
+            "未处理异常 path=%s method=%s type=%s",
+            request.url.path,
+            request.method,
+            type(exc).__name__,
+        )
+        return JSONResponse(
+            status_code=500,
+            content={"error": {"code": "INTERNAL_ERROR", "message": "服务器内部错误，请稍后重试。"}},
         )
 
     return app
