@@ -110,3 +110,51 @@ def test_openai_sdk_outside_engine_is_embedding_only() -> None:
                 rel = path.relative_to(APP_ROOT.parent)
                 violations.append(f"{rel}:{node.lineno} import {module}")
     assert not violations, "生成式 OpenAI SDK 调用绕开 AutoGen：\n  " + "\n  ".join(violations)
+
+
+def test_no_agent_core_imports_api_layer() -> None:
+    """agent 核心层禁止向上依赖 HTTP 层（P4.5 修复①的回归闸）。
+
+    stac importer 曾延迟导入 routes/imagery 的私有持久化函数——
+    延迟导入能躲过运行时环，但方向错误；此断言连延迟导入一起拦。
+    """
+    import ast
+
+    backend = Path(__file__).resolve().parents[1]
+    for path in (backend / "app" / "agent").rglob("*.py"):
+        if "engine" in path.parts:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8-sig"))
+        for node in ast.walk(tree):
+            targets = []
+            if isinstance(node, ast.Import):
+                targets = [a.name for a in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                targets = [node.module]
+            for target in targets:
+                assert not target.startswith("app.api"), (
+                    f"{path} 向上依赖 HTTP 层：{target}"
+                )
+
+
+def test_tool_runners_do_not_import_engine() -> None:
+    """业务工具 runner 禁止感知编排层（P4.5 修复②的回归闸）。
+
+    编排产物（map_target 等）只能经 ToolRunResult 数据通道回流，
+    由 engine 包装层转移；runner 直连 engine 会构成包级循环。
+    """
+    import ast
+
+    backend = Path(__file__).resolve().parents[1]
+    for path in (backend / "app" / "agent" / "tools").rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8-sig"))
+        for node in ast.walk(tree):
+            targets = []
+            if isinstance(node, ast.Import):
+                targets = [a.name for a in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                targets = [node.module]
+            for target in targets:
+                assert not target.startswith("app.agent.engine"), (
+                    f"{path} 直连编排层：{target}"
+                )

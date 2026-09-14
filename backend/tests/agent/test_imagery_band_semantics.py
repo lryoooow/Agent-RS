@@ -11,7 +11,7 @@ from __future__ import annotations
 import pytest
 
 from app.agent.request_builder import build_imagery_inventory
-from app.api.routes.imagery import (
+from app.services.imagery_persist import (
     _derive_band_roles,
     _extract_metadata,
     _match_band_role,
