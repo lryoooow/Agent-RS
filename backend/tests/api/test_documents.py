@@ -51,7 +51,7 @@ def test_documents_route_reports_database_disabled(monkeypatch) -> None:
     )
 
     assert response.status_code == 503
-    assert response.json()["detail"]["code"] == "DATABASE_DISABLED"
+    assert response.json()["error"]["code"] == "DATABASE_DISABLED"
 
 
 def test_documents_list_reports_database_disabled(monkeypatch) -> None:
@@ -62,7 +62,7 @@ def test_documents_list_reports_database_disabled(monkeypatch) -> None:
     response = client.get("/api/documents")
 
     assert response.status_code == 503
-    assert response.json()["detail"]["code"] == "DATABASE_DISABLED"
+    assert response.json()["error"]["code"] == "DATABASE_DISABLED"
 
 
 async def _empty_list_documents(*_, **__):
@@ -165,7 +165,7 @@ def test_documents_delete_returns_not_found(monkeypatch) -> None:
     response = client.delete("/api/documents/00000000-0000-4000-8000-000000000902")
 
     assert response.status_code == 404
-    assert response.json()["detail"]["code"] == "DOCUMENT_NOT_FOUND"
+    assert response.json()["error"]["code"] == "DOCUMENT_NOT_FOUND"
 
 
 def test_documents_upload_accepts_text_file(monkeypatch, tmp_path) -> None:
@@ -247,7 +247,7 @@ def test_documents_upload_rejects_empty_text_file() -> None:
     )
 
     assert response.status_code == 400
-    assert response.json()["detail"]["code"] == "DOCUMENT_TEXT_EMPTY"
+    assert response.json()["error"]["code"] == "DOCUMENT_TEXT_EMPTY"
 
 
 def test_documents_upload_rejects_unsupported_file() -> None:
@@ -259,7 +259,7 @@ def test_documents_upload_rejects_unsupported_file() -> None:
     )
 
     assert response.status_code == 400
-    assert response.json()["detail"]["code"] == "UNSUPPORTED_DOCUMENT_TYPE"
+    assert response.json()["error"]["code"] == "UNSUPPORTED_DOCUMENT_TYPE"
 
 
 def test_documents_create_rejects_too_many_chunks(monkeypatch) -> None:
@@ -272,7 +272,7 @@ def test_documents_create_rejects_too_many_chunks(monkeypatch) -> None:
     )
 
     assert response.status_code == 413
-    assert response.json()["detail"]["code"] == "DOCUMENT_TOO_MANY_CHUNKS"
+    assert response.json()["error"]["code"] == "DOCUMENT_TOO_MANY_CHUNKS"
 
 
 def test_split_text_uses_overlap() -> None:
@@ -390,7 +390,7 @@ def test_create_document_still_rejects_beyond_new_limit(monkeypatch) -> None:
     response = client.post("/api/documents", json={"title": "TooMany", "content": content})
 
     assert response.status_code == 413
-    assert response.json()["detail"]["code"] == "DOCUMENT_TOO_MANY_CHUNKS"
+    assert response.json()["error"]["code"] == "DOCUMENT_TOO_MANY_CHUNKS"
 
 
 class FakeDate:

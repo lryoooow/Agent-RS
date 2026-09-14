@@ -78,8 +78,8 @@ def test_imagery_upload_rejects_invalid_geotiff_without_500(monkeypatch, tmp_pat
     )
 
     assert response.status_code == 422
-    assert "GeoTIFF" in response.json()["detail"]
-    assert "not a geotiff" not in response.json()["detail"]
+    assert "GeoTIFF" in response.json()["error"]["message"]
+    assert "not a geotiff" not in response.json()["error"]["message"]
 
 
 def test_imagery_upload_propagates_processing_exception_through_to_thread(
@@ -100,7 +100,7 @@ def test_imagery_upload_propagates_processing_exception_through_to_thread(
     )
 
     assert response.status_code == 422
-    assert "synthetic" not in response.json()["detail"]  # 异常细节不外泄
+    assert "synthetic" not in response.json()["error"]["message"]  # 异常细节不外泄
     # 失败清理：imagery 根目录下不应残留任何影像子目录
     imagery_root = tmp_path / "imagery"
     leftover = [p for p in imagery_root.iterdir() if p.is_dir()] if imagery_root.exists() else []
