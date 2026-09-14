@@ -11,7 +11,7 @@ import type {
   GeospatialSpectralIndexResult,
   SceneCardInfo,
 } from "../types";
-import { absoluteUrl } from "../lib/imagery-search-api";
+import { absoluteUrl, downloadSceneTif } from "../lib/imagery-search-api";
 
 // 聊天气泡内的遥感结果摘要卡（紧凑版）。覆盖后端各类 geospatial_result 类型。
 // 数据来自真实后端 done 事件解析（chat-events.ts），不再有任何 mock。
@@ -226,6 +226,24 @@ function SceneSearchRow({
 }) {
   const [importing, setImporting] = useState<string | null>(null);
   const [imported, setImported] = useState<Record<string, string>>({});
+  const [downloading, setDownloading] = useState<string | null>(null);
+  const [downloaded, setDownloaded] = useState<Record<string, string>>({});
+
+  const runDownload = async (scene: SceneCardInfo) => {
+    setDownloading(scene.key);
+    try {
+      const result = await downloadSceneTif(scene.key, scene.item_id);
+      const sizeMb = (result.sizeBytes / 1024 / 1024).toFixed(1);
+      setDownloaded((prev) => ({ ...prev, [scene.key]: `${result.filename}（${sizeMb} MB）` }));
+    } catch (exc) {
+      setDownloaded((prev) => ({
+        ...prev,
+        [scene.key]: `下载失败：${exc instanceof Error ? exc.message : "未知错误"}`,
+      }));
+    } finally {
+      setDownloading(null);
+    }
+  };
 
   const runImport = async (scene: SceneCardInfo) => {
     if (!onImport) return;
@@ -283,13 +301,19 @@ function SceneSearchRow({
                 >
                   <Eye className="size-3" /> 预览
                 </button>
-                <a
-                  href={absoluteUrl(scene.download_url)}
-                  download={`${scene.item_id}.tif`}
-                  className="flex items-center gap-1 rounded-md border border-border bg-card px-2 py-1 text-[10.5px] transition-colors hover:border-primary/50 hover:text-primary"
+                <button
+                  type="button"
+                  disabled={downloading === scene.key}
+                  onClick={() => runDownload(scene)}
+                  className="flex items-center gap-1 rounded-md border border-border bg-card px-2 py-1 text-[10.5px] transition-colors hover:border-primary/50 hover:text-primary disabled:opacity-50"
                 >
-                  <Download className="size-3" /> TIF
-                </a>
+                  {downloading === scene.key ? (
+                    <Loader2 className="size-3 animate-spin" />
+                  ) : (
+                    <Download className="size-3" />
+                  )}
+                  {downloading === scene.key ? "合成中" : "TIF"}
+                </button>
                 {done ? (
                   <span className="flex items-center gap-1 rounded-md border border-primary/40 bg-primary/10 px-2 py-1 text-[10.5px] text-primary">
                     <CheckCircle2 className="size-3" /> 已导入
@@ -310,6 +334,11 @@ function SceneSearchRow({
                   </button>
                 )}
               </div>
+              {downloaded[scene.key] && (
+                <p className="font-mono text-[10px] text-muted-foreground">
+                  {downloaded[scene.key]}
+                </p>
+              )}
             </div>
           );
         })}
