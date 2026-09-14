@@ -15,7 +15,7 @@ describe("imagery-search-api 端点拼装", () => {
       new Response(JSON.stringify({ scenes: [], notes: [] }), { status: 200 }),
     );
     vi.stubGlobal("fetch", mock);
-    await searchImagery("/api/chat", { bbox: [0, 0, 1, 1] });
+    await searchImagery({ bbox: [0, 0, 1, 1] });
     expect(lastFetchUrl()).toBe("/api/scenes/search");
   });
 
@@ -27,16 +27,16 @@ describe("imagery-search-api 端点拼装", () => {
       ),
     );
     vi.stubGlobal("fetch", mock);
-    await importScene("/api/chat", "ab12cd34ef56");
+    await importScene("ab12cd34ef56");
     expect(lastFetchUrl()).toBe("/api/scenes/ab12cd34ef56/import");
   });
 
-  it("绝对 URL 端点（自建部署）同样剥掉 /chat", async () => {
+  it("基址来自模块级 API_BASE（默认相对 /api）", async () => {
     const mock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ scenes: [], notes: [] }), { status: 200 }),
     );
     vi.stubGlobal("fetch", mock);
-    await searchImagery("http://example.com/api/chat", {});
-    expect(lastFetchUrl()).toBe("http://example.com/api/scenes/search");
+    await searchImagery({});
+    expect(lastFetchUrl()).toBe("/api/scenes/search");
   });
 });

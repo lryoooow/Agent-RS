@@ -16,14 +16,12 @@ import { HistoryPanel } from "./HistoryPanel";
 export function DataPanel({
   open,
   onOpenChange,
-  endpoint,
   onOpenConversation,
   activeConversationId,
   onActiveConversationDeleted,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  endpoint: string;
   onOpenConversation: (
     id: string,
     messages: { role: string; content: string; metadata?: Record<string, unknown> | null }[],
@@ -52,14 +50,13 @@ export function DataPanel({
             <TabsTrigger value="history">历史</TabsTrigger>
           </TabsList>
           <TabsContent value="knowledge" className="min-h-0 flex-1">
-            <KnowledgePanel endpoint={endpoint} />
+            <KnowledgePanel />
           </TabsContent>
           <TabsContent value="memory" className="min-h-0 flex-1">
-            <MemoryPanel endpoint={endpoint} />
+            <MemoryPanel />
           </TabsContent>
           <TabsContent value="history" className="min-h-0 flex-1">
             <HistoryPanel
-              endpoint={endpoint}
               onOpen={onOpenConversation}
               activeConversationId={activeConversationId}
               onActiveDeleted={onActiveConversationDeleted}

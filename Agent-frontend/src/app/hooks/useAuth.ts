@@ -16,7 +16,7 @@ export function useAuth(endpoint: string) {
     setLoading(true);
     setError("");
     try {
-      setUser(await fetchMe(endpoint));
+      setUser(await fetchMe());
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setUser(null);
@@ -29,7 +29,7 @@ export function useAuth(endpoint: string) {
     setLoading(true);
     setError("");
     try {
-      setUser(await login(endpoint, email, password));
+      setUser(await login(email, password));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       throw err;
@@ -42,7 +42,7 @@ export function useAuth(endpoint: string) {
     setLoading(true);
     setError("");
     try {
-      setUser(await register(endpoint, email, password, name));
+      setUser(await register(email, password, name));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       throw err;
@@ -55,7 +55,7 @@ export function useAuth(endpoint: string) {
     setLoading(true);
     setError("");
     try {
-      await logout(endpoint);
+      await logout();
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));

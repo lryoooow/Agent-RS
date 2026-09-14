@@ -146,7 +146,7 @@ export function useChatController({
     abortRef.current = controller;
 
     try {
-      const res = await postChat(endpoint, body, controller.signal);
+      const res = await postChat(body, controller.signal);
 
       if (shouldStream) {
         await readStreamResponse(
@@ -210,7 +210,7 @@ export function useChatController({
     if (reportPending) return;
     setReportPending(true);
     try {
-      const artifact = await createReport(endpoint, {
+      const artifact = await createReport({
         conversationId: activeConversationId,
         imageryId,
       });

@@ -1,11 +1,10 @@
-import { getDocumentsEndpoint } from "../config";
+import { apiFetch } from "./http";
 import type {
   DocumentChunk,
   DocumentJob,
   DocumentSearchResponse,
   KnowledgeDocument,
 } from "../types";
-import { readErrorMessage } from "./errors";
 
 export type DocumentCreateBody = {
   title: string;
@@ -25,29 +24,18 @@ export type DocumentUploadJobResult = {
   status: string;
 };
 
-export async function listDocuments(chatEndpoint: string): Promise<KnowledgeDocument[]> {
-  const res = await fetch(getDocumentsEndpoint(chatEndpoint), { credentials: "include" });
-  if (!res.ok) throw await readApiError(res);
-  const payload = (await res.json()) as { documents?: KnowledgeDocument[] };
-  return payload.documents ?? [];
+export async function listDocuments(): Promise<KnowledgeDocument[]> {
+  const response = await apiFetch("/documents", {});
+  const payload = (await response.json().catch(() => null)) as { documents?: KnowledgeDocument[] } | null;
+  return payload?.documents ?? [];
 }
 
-export async function createDocument(
-  chatEndpoint: string,
-  body: DocumentCreateBody,
-): Promise<DocumentCreateResult> {
-  const res = await fetch(getDocumentsEndpoint(chatEndpoint), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    credentials: "include",
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) throw await readApiError(res);
-  return (await res.json()) as DocumentCreateResult;
+export async function createDocument(body: DocumentCreateBody): Promise<DocumentCreateResult> {
+  const response = await apiFetch("/documents", { method: "POST", json: body });
+  return (await response.json()) as DocumentCreateResult;
 }
 
 export async function uploadDocumentFile(
-  chatEndpoint: string,
   file: File,
   title?: string,
   metadata?: Record<string, unknown>,
@@ -57,55 +45,34 @@ export async function uploadDocumentFile(
   if (title?.trim()) formData.append("title", title.trim());
   if (metadata) formData.append("metadata", JSON.stringify(metadata));
 
-  const res = await fetch(`${getDocumentsEndpoint(chatEndpoint).replace(/\/$/, "")}/upload`, {
+  const response = await apiFetch("/documents/upload", {
     method: "POST",
-    credentials: "include",
-    body: formData,
+    formData,
+    // 上传大文件：放宽到 5 分钟，不走默认 30s。
+    timeoutMs: 300_000,
   });
-  if (!res.ok) throw await readApiError(res);
-  return (await res.json()) as DocumentUploadJobResult;
+  return (await response.json()) as DocumentUploadJobResult;
 }
 
-export async function getDocumentJob(chatEndpoint: string, jobId: string): Promise<DocumentJob> {
-  const base = getDocumentsEndpoint(chatEndpoint).replace(/\/$/, "");
-  const res = await fetch(`${base}/jobs/${jobId}`, { credentials: "include" });
-  if (!res.ok) throw await readApiError(res);
-  return (await res.json()) as DocumentJob;
+export async function getDocumentJob(jobId: string): Promise<DocumentJob> {
+  const response = await apiFetch(`/documents/jobs/${jobId}`, {});
+  return (await response.json()) as DocumentJob;
 }
 
-export async function listDocumentChunks(
-  chatEndpoint: string,
-  documentId: string,
-): Promise<DocumentChunk[]> {
-  const base = getDocumentsEndpoint(chatEndpoint).replace(/\/$/, "");
-  const res = await fetch(`${base}/${documentId}/chunks?limit=50`, { credentials: "include" });
-  if (!res.ok) throw await readApiError(res);
-  const payload = (await res.json()) as { chunks?: DocumentChunk[] };
-  return payload.chunks ?? [];
+export async function listDocumentChunks(documentId: string): Promise<DocumentChunk[]> {
+  const response = await apiFetch(`/documents/${documentId}/chunks?limit=50`, {});
+  const payload = (await response.json().catch(() => null)) as { chunks?: DocumentChunk[] } | null;
+  return payload?.chunks ?? [];
 }
 
-export async function searchDocuments(
-  chatEndpoint: string,
-  query: string,
-): Promise<DocumentSearchResponse> {
-  const base = getDocumentsEndpoint(chatEndpoint).replace(/\/$/, "");
-  const res = await fetch(`${base}/search`, {
+export async function searchDocuments(query: string): Promise<DocumentSearchResponse> {
+  const response = await apiFetch("/documents/search", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    credentials: "include",
-    body: JSON.stringify({ query, limit: 8 }),
+    json: { query, limit: 8 },
   });
-  if (!res.ok) throw await readApiError(res);
-  return (await res.json()) as DocumentSearchResponse;
+  return (await response.json()) as DocumentSearchResponse;
 }
 
-export async function deleteDocument(chatEndpoint: string, documentId: string): Promise<void> {
-  const base = getDocumentsEndpoint(chatEndpoint).replace(/\/$/, "");
-  const res = await fetch(`${base}/${documentId}`, { method: "DELETE", credentials: "include" });
-  if (!res.ok) throw await readApiError(res);
-}
-
-async function readApiError(res: Response) {
-  const payload = await res.json().catch(() => null);
-  return new Error(readErrorMessage(payload) ?? `${res.status} ${res.statusText}`);
+export async function deleteDocument(documentId: string): Promise<void> {
+  await apiFetch(`/documents/${documentId}`, { method: "DELETE" });
 }

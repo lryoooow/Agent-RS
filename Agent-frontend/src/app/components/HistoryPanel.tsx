@@ -12,12 +12,10 @@ import {
 } from "../lib/conversations-api";
 
 export function HistoryPanel({
-  endpoint,
   onOpen,
   activeConversationId,
   onActiveDeleted,
 }: {
-  endpoint: string;
   onOpen: (
     id: string,
     messages: { role: string; content: string; metadata?: Record<string, unknown> | null }[],
@@ -38,7 +36,7 @@ export function HistoryPanel({
     setLoading(true);
     setError("");
     try {
-      setItems(await listConversations(endpoint));
+      setItems(await listConversations());
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -49,12 +47,12 @@ export function HistoryPanel({
   useEffect(() => {
     refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [endpoint]);
+  }, []);
 
   const open = async (id: string) => {
     setError("");
     try {
-      const messages = await listConversationMessages(endpoint, id);
+      const messages = await listConversationMessages(id);
       onOpen(
         id,
         // 透传 metadata：loadConversation 据此还原 geospatial_result/tool_result，
@@ -73,7 +71,7 @@ export function HistoryPanel({
       return;
     }
     try {
-      await renameConversation(endpoint, id, title);
+      await renameConversation(id, title);
       setItems((prev) => prev.map((c) => (c.id === id ? { ...c, title } : c)));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -84,7 +82,7 @@ export function HistoryPanel({
 
   const remove = async (id: string) => {
     try {
-      await deleteConversation(endpoint, id);
+      await deleteConversation(id);
       setItems((prev) => prev.filter((c) => c.id !== id));
       // 删的若是当前激活会话，通知上层重置（否则下条消息仍带已删 id 发出 → 上下文断裂）。
       if (id === activeConversationId) onActiveDeleted?.();
