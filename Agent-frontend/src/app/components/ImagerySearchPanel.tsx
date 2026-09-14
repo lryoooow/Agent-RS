@@ -34,13 +34,11 @@ export function ImagerySearchPanel({
   onOpenChange,
   mapRef,
   roi,
-  endpoint,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   mapRef: React.MutableRefObject<MapLibreMap | null>;
   roi: Roi | null;
-  endpoint: string;
 }) {
   // ── 筛选条件 ──
   const [place, setPlace] = useState("");
@@ -94,7 +92,7 @@ export function ImagerySearchPanel({
     setLoading(true);
     setError(null);
     try {
-      const response = await searchImagery(endpoint, {
+      const response = await searchImagery({
         bbox: bbox ?? undefined,
         place: place.trim() || undefined,
         start_date: startDate || undefined,
@@ -145,7 +143,7 @@ export function ImagerySearchPanel({
     setImporting(scene.key);
     setError(null);
     try {
-      const result = await importScene(endpoint, scene.key);
+      const result = await importScene(scene.key);
       setImported((prev) => ({ ...prev, [scene.key]: result.imagery_id }));
     } catch (exc) {
       setError(exc instanceof Error ? exc.message : "导入失败，请稍后重试。");

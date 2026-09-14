@@ -1,5 +1,4 @@
-import { getApiBaseEndpoint } from "../config";
-import { readErrorMessage } from "./errors";
+import { apiFetch } from "./http";
 
 export type AuthUser = {
   id: string;
@@ -8,57 +7,35 @@ export type AuthUser = {
   authenticated: boolean;
 };
 
-export async function fetchMe(chatEndpoint: string): Promise<AuthUser> {
-  const res = await fetch(`${getApiBaseEndpoint(chatEndpoint)}/auth/me`, {
-    credentials: "include",
-  });
-  if (!res.ok) throw await readApiError(res);
-  const payload = (await res.json()) as { user: AuthUser };
-  return payload.user;
+function isAuthUser(value: unknown): value is AuthUser {
+  if (!value || typeof value !== "object") return false;
+  const v = value as Record<string, unknown>;
+  return typeof v.id === "string" && typeof v.email === "string" && typeof v.authenticated === "boolean";
 }
 
-export async function login(
-  chatEndpoint: string,
-  email: string,
-  password: string,
-): Promise<AuthUser> {
-  const res = await fetch(`${getApiBaseEndpoint(chatEndpoint)}/auth/login`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    credentials: "include",
-    body: JSON.stringify({ email, password }),
-  });
-  if (!res.ok) throw await readApiError(res);
-  const payload = (await res.json()) as { user: AuthUser };
-  return payload.user;
+async function userFrom(path: string, init: Parameters<typeof apiFetch>[1]): Promise<AuthUser> {
+  const response = await apiFetch(path, init);
+  const payload = (await response.json().catch(() => null)) as { user?: unknown } | null;
+  const user = payload?.user;
+  if (!isAuthUser(user)) {
+    // 200 但载荷异常（代理劫持/网关页）：按未登录处理而不是崩成 undefined。
+    return { id: "", email: "", name: "", authenticated: false };
+  }
+  return user;
 }
 
-export async function register(
-  chatEndpoint: string,
-  email: string,
-  password: string,
-  name: string,
-): Promise<AuthUser> {
-  const res = await fetch(`${getApiBaseEndpoint(chatEndpoint)}/auth/register`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    credentials: "include",
-    body: JSON.stringify({ email, password, name }),
-  });
-  if (!res.ok) throw await readApiError(res);
-  const payload = (await res.json()) as { user: AuthUser };
-  return payload.user;
+export async function fetchMe(): Promise<AuthUser> {
+  return userFrom("/auth/me", {});
 }
 
-export async function logout(chatEndpoint: string): Promise<void> {
-  const res = await fetch(`${getApiBaseEndpoint(chatEndpoint)}/auth/logout`, {
-    method: "POST",
-    credentials: "include",
-  });
-  if (!res.ok) throw await readApiError(res);
+export async function login(email: string, password: string): Promise<AuthUser> {
+  return userFrom("/auth/login", { method: "POST", json: { email, password }, timeoutMs: 15_000 });
 }
 
-async function readApiError(res: Response) {
-  const payload = await res.json().catch(() => null);
-  return new Error(readErrorMessage(payload) ?? `${res.status} ${res.statusText}`);
+export async function register(email: string, password: string, name: string): Promise<AuthUser> {
+  return userFrom("/auth/register", { method: "POST", json: { email, password, name }, timeoutMs: 15_000 });
+}
+
+export async function logout(): Promise<void> {
+  await apiFetch("/auth/logout", { method: "POST" });
 }

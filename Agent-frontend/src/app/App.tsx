@@ -203,13 +203,11 @@ export default function App() {
         onOpenChange={setSearchOpen}
         mapRef={mapRef}
         roi={roi}
-        endpoint={settings.endpoint}
       />
 
       <DataPanel
         open={dataOpen}
         onOpenChange={setDataOpen}
-        endpoint={settings.endpoint}
         onOpenConversation={openConversation}
         activeConversationId={chat.conversationId}
         onActiveConversationDeleted={handleActiveConversationDeleted}
@@ -284,7 +282,7 @@ export default function App() {
             }}
             onSceneImport={async (sceneKey) => {
               try {
-                const result = await importScene(settings.endpoint, sceneKey);
+                const result = await importScene(sceneKey);
                 chat.addSystemNote(
                   `卫星影像已导入平台（${result.satellite}，影像 ID ${result.imagery_id}）。` +
                     '可直接说“对这张影像算 NDVI / 做地物分类”开始分析。',

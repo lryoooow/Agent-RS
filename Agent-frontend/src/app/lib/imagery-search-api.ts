@@ -1,9 +1,6 @@
 // 卫星影像检索 API（免账号公共数据源：Sentinel-2 / Landsat）。
-// 形制对齐 conversations-api.ts：同源 cookie 鉴权 + 统一错误文案提取。
-// 注意：入参是聊天端点（如 /api/chat），必须经 getApiBaseEndpoint 剥掉 /chat
-// 再拼路径——直接拼会得到 /api/chat/scenes/... → 404。
-import { getApiBaseEndpoint } from "../config";
-
+// 统一走 lib/http.ts 客户端：同源 cookie、错误归一、按调用点超时。
+import { apiFetch } from "./http";
 
 export interface SceneCard {
   key: string;
@@ -33,33 +30,13 @@ export interface SceneSearchParams {
   limit?: number;
 }
 
-function apiBase(chatEndpoint: string): string {
-  return getApiBaseEndpoint(chatEndpoint);
-}
-
-async function readApiError(response: Response): Promise<string> {
-  try {
-    const payload = await response.json();
-    const detail = payload?.detail;
-    if (typeof detail === "string") return detail;
-    if (detail?.message) return String(detail.message);
-  } catch {
-    // 非 JSON 响应走状态码兜底
-  }
-  return `请求失败（HTTP ${response.status}）`;
-}
-
-export async function searchImagery(
-  endpoint: string,
-  params: SceneSearchParams,
-): Promise<SceneSearchResponse> {
-  const response = await fetch(`${apiBase(endpoint)}/scenes/search`, {
+export async function searchImagery(params: SceneSearchParams): Promise<SceneSearchResponse> {
+  // STAC 双源检索可能要几十秒（远端超时上限 20s×2 源），放宽到 60s。
+  const response = await apiFetch("/scenes/search", {
     method: "POST",
-    credentials: "include",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(params),
+    json: params,
+    timeoutMs: 60_000,
   });
-  if (!response.ok) throw new Error(await readApiError(response));
   return (await response.json()) as SceneSearchResponse;
 }
 
@@ -70,15 +47,12 @@ export interface SceneImportResponse {
   band_roles: Record<string, number>;
 }
 
-export async function importScene(
-  endpoint: string,
-  sceneKey: string,
-): Promise<SceneImportResponse> {
-  const response = await fetch(`${apiBase(endpoint)}/scenes/${sceneKey}/import`, {
+export async function importScene(sceneKey: string): Promise<SceneImportResponse> {
+  // 远程合成五波段 GeoTIFF 是重活，3 分钟。
+  const response = await apiFetch(`/scenes/${sceneKey}/import`, {
     method: "POST",
-    credentials: "include",
+    timeoutMs: 180_000,
   });
-  if (!response.ok) throw new Error(await readApiError(response));
   return (await response.json()) as SceneImportResponse;
 }
 
@@ -96,11 +70,11 @@ export async function downloadSceneTif(
   itemId: string,
   options?: { signal?: AbortSignal },
 ): Promise<{ filename: string; sizeBytes: number }> {
-  const response = await fetch(absoluteUrl(`/api/scenes/${sceneKey}/download`), {
-    credentials: "include",
-    signal: options?.signal ?? AbortSignal.timeout(180_000),
+  const response = await apiFetch(`/scenes/${sceneKey}/download`, {
+    timeoutMs: 180_000,
+    signal: options?.signal,
+    retryOnNetworkError: false,
   });
-  if (!response.ok) throw new Error(await readApiError(response));
   const blob = await response.blob();
   const filename = `${itemId}.tif`;
   const url = URL.createObjectURL(blob);
