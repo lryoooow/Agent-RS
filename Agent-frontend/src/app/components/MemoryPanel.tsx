@@ -4,7 +4,7 @@ import { Button } from "./ui/button";
 import { ScrollArea } from "./ui/scroll-area";
 import { listMemories, deleteMemory, type MemoryItem } from "../lib/memories-api";
 
-export function MemoryPanel({ endpoint }: { endpoint: string }) {
+export function MemoryPanel() {
   const [items, setItems] = useState<MemoryItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -13,7 +13,7 @@ export function MemoryPanel({ endpoint }: { endpoint: string }) {
     setLoading(true);
     setError("");
     try {
-      setItems(await listMemories(endpoint));
+      setItems(await listMemories());
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -24,11 +24,11 @@ export function MemoryPanel({ endpoint }: { endpoint: string }) {
   useEffect(() => {
     refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [endpoint]);
+  }, []);
 
   const remove = async (id: string) => {
     try {
-      await deleteMemory(endpoint, id);
+      await deleteMemory(id);
       setItems((prev) => prev.filter((m) => m.id !== id));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));

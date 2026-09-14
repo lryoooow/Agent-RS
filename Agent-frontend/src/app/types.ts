@@ -142,6 +142,27 @@ export type GeospatialReportResult = {
   download_url: string;
 };
 
+// 影像检索结果：不是图层，是一组可预览/下载/导入的场景卡片（独立形态）。
+// preview/download_url 是平台自身的相对路径（服务端从免账号公共 COG 生成）。
+export type SceneCardInfo = {
+  key: string;
+  satellite: string;
+  item_id: string;
+  datetime: string;
+  cloud_cover: number | null;
+  bbox: number[];
+  resolution_m: number | null;
+  display_name: string;
+  preview_url: string;
+  download_url: string;
+};
+
+export type GeospatialSceneSearchResult = {
+  type: "scene_search";
+  scenes: SceneCardInfo[];
+  notes?: string[];
+};
+
 export type GeospatialResult =
   | GeospatialPreviewResult
   | GeospatialNdviResult
@@ -149,7 +170,8 @@ export type GeospatialResult =
   | GeospatialCompositeResult
   | GeospatialDetectionResult
   | GeospatialSegmentationResult
-  | GeospatialReportResult;
+  | GeospatialReportResult
+  | GeospatialSceneSearchResult;
 
 export type RasterBandStats = {
   band: number;

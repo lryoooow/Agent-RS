@@ -1,5 +1,4 @@
-import { getApiBaseEndpoint } from "../config";
-import { readErrorMessage } from "./errors";
+import { apiFetch } from "./http";
 
 export type ConversationItem = {
   id: string;
@@ -22,54 +21,23 @@ export type ConversationMessage = {
   created_at: string;
 };
 
-export async function listConversations(chatEndpoint: string): Promise<ConversationItem[]> {
-  const res = await fetch(`${getApiBaseEndpoint(chatEndpoint)}/conversations`, {
-    credentials: "include",
-  });
-  if (!res.ok) throw await readApiError(res);
-  const payload = (await res.json()) as { conversations?: ConversationItem[] };
-  return payload.conversations ?? [];
+export async function listConversations(): Promise<ConversationItem[]> {
+  const response = await apiFetch("/conversations", {});
+  const payload = (await response.json().catch(() => null)) as { conversations?: ConversationItem[] } | null;
+  return payload?.conversations ?? [];
 }
 
-export async function listConversationMessages(
-  chatEndpoint: string,
-  conversationId: string,
-): Promise<ConversationMessage[]> {
-  const res = await fetch(`${getApiBaseEndpoint(chatEndpoint)}/conversations/${conversationId}/messages`, {
-    credentials: "include",
-  });
-  if (!res.ok) throw await readApiError(res);
-  const payload = (await res.json()) as { messages?: ConversationMessage[] };
-  return payload.messages ?? [];
+export async function listConversationMessages(conversationId: string): Promise<ConversationMessage[]> {
+  const response = await apiFetch(`/conversations/${conversationId}/messages`, {});
+  const payload = (await response.json().catch(() => null)) as { messages?: ConversationMessage[] } | null;
+  return payload?.messages ?? [];
 }
 
 // 后端已支持 PATCH 改名 / DELETE 删除（conversations.py），老前端 lib 未实现，这里补齐。
-export async function renameConversation(
-  chatEndpoint: string,
-  conversationId: string,
-  title: string,
-): Promise<void> {
-  const res = await fetch(`${getApiBaseEndpoint(chatEndpoint)}/conversations/${conversationId}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    credentials: "include",
-    body: JSON.stringify({ title }),
-  });
-  if (!res.ok) throw await readApiError(res);
+export async function renameConversation(conversationId: string, title: string): Promise<void> {
+  await apiFetch(`/conversations/${conversationId}`, { method: "PATCH", json: { title } });
 }
 
-export async function deleteConversation(
-  chatEndpoint: string,
-  conversationId: string,
-): Promise<void> {
-  const res = await fetch(`${getApiBaseEndpoint(chatEndpoint)}/conversations/${conversationId}`, {
-    method: "DELETE",
-    credentials: "include",
-  });
-  if (!res.ok) throw await readApiError(res);
-}
-
-async function readApiError(res: Response) {
-  const payload = await res.json().catch(() => null);
-  return new Error(readErrorMessage(payload) ?? `${res.status} ${res.statusText}`);
+export async function deleteConversation(conversationId: string): Promise<void> {
+  await apiFetch(`/conversations/${conversationId}`, { method: "DELETE" });
 }

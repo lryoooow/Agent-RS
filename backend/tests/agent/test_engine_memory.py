@@ -251,3 +251,93 @@ async def _fake_pool():
 
 async def _boom_pool():
     raise AssertionError("禁用状态下不应触碰连接池")
+
+
+# --------------------------------------------------------------- 回合级检索缓存
+
+
+@pytest.mark.asyncio
+async def test_rag_memory_queries_once_per_turn_for_same_query(monkeypatch) -> None:
+    """工具循环里每次模型调用前都会触发 update_context，检索词不变就只检索一次。
+
+    不缓存的话，一次多步工具循环会对同一句话重复 embedding + 混合检索 + rerank。
+    """
+    calls: list[str] = []
+
+    class _CountingEmbed:
+        def available(self) -> bool:
+            return True
+
+        async def embed_text(self, text: str):
+            calls.append(f"embed:{text}")
+            return [0.1] * 8
+
+    async def fake_retrieve(_pool, **kwargs):
+        calls.append("retrieve")
+        return RAGResult(context="【知识库】命中内容", retrieved_chunks=1, trace={})
+
+    monkeypatch.setattr("app.agent.engine.memory.rag_memory.fetch_optional_pool", _fake_pool)
+    monkeypatch.setattr("app.agent.engine.memory.rag_memory.retrieve_rag_context", fake_retrieve)
+    monkeypatch.setattr(
+        "app.agent.engine.memory.rag_memory.get_embedding_service", lambda: _CountingEmbed()
+    )
+
+    memory = RagMemory(user_id=USER)
+    with turn_scope():
+        for _ in range(3):  # 模拟工具循环里的多次模型调用
+            ctx = UnboundedChatCompletionContext()
+            await ctx.add_message(UserMessage(content="台风路径怎么预报", source="user"))
+            result = await memory.update_context(ctx)
+        assert len(result.memories.results) == 1
+
+    assert calls.count("retrieve") == 1, "同一回合的相同检索词只应真正检索一次"
+
+    # 新回合重新检索：上一回合的缓存不能跨回合存活（检索词可能已变）。
+    with turn_scope():
+        ctx = UnboundedChatCompletionContext()
+        await ctx.add_message(UserMessage(content="台风路径怎么预报", source="user"))
+        await memory.update_context(ctx)
+    assert calls.count("retrieve") == 2
+
+
+@pytest.mark.asyncio
+async def test_pg_memory_queries_once_per_turn_for_same_query(monkeypatch) -> None:
+    calls: list[str] = []
+
+    class _CountingEmbed:
+        def available(self) -> bool:
+            return True
+
+        async def embed_text(self, text: str):
+            calls.append("embed")
+            return [0.1] * 8
+
+    from autogen_core.memory import MemoryContent, MemoryMimeType
+
+    async def fake_list(_conn, *, user_id, embedding, limit):
+        calls.append("query")
+        return [
+            {
+                "content": "用户关注珠三角区域",
+                "memory_type": "fact",
+                "importance": 0.8,
+            }
+        ]
+
+    monkeypatch.setattr("app.agent.engine.memory.pg_memory.fetch_optional_pool", _fake_pool)
+    monkeypatch.setattr(
+        "app.agent.engine.memory.pg_memory.get_embedding_service", lambda: _CountingEmbed()
+    )
+    monkeypatch.setattr(
+        "app.agent.engine.memory.pg_memory.list_relevant_memories", fake_list
+    )
+
+    memory = PgVectorMemory(user_id=USER)
+    with turn_scope():
+        for _ in range(3):
+            ctx = UnboundedChatCompletionContext()
+            await ctx.add_message(UserMessage(content="分析这个区域", source="user"))
+            result = await memory.update_context(ctx)
+        assert len(result.memories.results) == 1
+
+    assert calls.count("query") == 1

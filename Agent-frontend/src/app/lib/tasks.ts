@@ -84,6 +84,8 @@ const TOOL_TASK_LABELS: Record<string, string> = {
   clip_reproject_raster: "裁剪/重投影",
   parse_document: "解析文档",
   ocr_recognize: "影像文字识别",
+  look_at_location: "地图定位",
+  generate_report: "生成报告",
 };
 
 function toolRunningLabel(toolName?: string): string | undefined {

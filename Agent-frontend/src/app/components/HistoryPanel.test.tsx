@@ -60,7 +60,6 @@ describe("HistoryPanel 删除激活会话重置", () => {
     const user = userEvent.setup();
     render(
       <HistoryPanel
-        endpoint="/api/chat"
         onOpen={vi.fn()}
         activeConversationId={ACTIVE_ID}
         onActiveDeleted={onActiveDeleted}
@@ -70,7 +69,7 @@ describe("HistoryPanel 删除激活会话重置", () => {
     await screen.findByText("当前会话");
     await clickDelete(user, "当前会话");
 
-    await waitFor(() => expect(deleteConversation).toHaveBeenCalledWith("/api/chat", ACTIVE_ID));
+    await waitFor(() => expect(deleteConversation).toHaveBeenCalledWith(ACTIVE_ID));
     expect(onActiveDeleted).toHaveBeenCalledTimes(1);
     // 该会话行从列表移除
     await waitFor(() => expect(screen.queryByText("当前会话")).not.toBeInTheDocument());
@@ -81,7 +80,6 @@ describe("HistoryPanel 删除激活会话重置", () => {
     const user = userEvent.setup();
     render(
       <HistoryPanel
-        endpoint="/api/chat"
         onOpen={vi.fn()}
         activeConversationId={ACTIVE_ID}
         onActiveDeleted={onActiveDeleted}
@@ -91,7 +89,7 @@ describe("HistoryPanel 删除激活会话重置", () => {
     await screen.findByText("另一会话");
     await clickDelete(user, "另一会话");
 
-    await waitFor(() => expect(deleteConversation).toHaveBeenCalledWith("/api/chat", OTHER_ID));
+    await waitFor(() => expect(deleteConversation).toHaveBeenCalledWith(OTHER_ID));
     expect(onActiveDeleted).not.toHaveBeenCalled();
     await waitFor(() => expect(screen.queryByText("另一会话")).not.toBeInTheDocument());
     // 激活会话仍在
@@ -102,7 +100,7 @@ describe("HistoryPanel 删除激活会话重置", () => {
     const onActiveDeleted = vi.fn();
     const user = userEvent.setup();
     render(
-      <HistoryPanel endpoint="/api/chat" onOpen={vi.fn()} onActiveDeleted={onActiveDeleted} />,
+      <HistoryPanel onOpen={vi.fn()} onActiveDeleted={onActiveDeleted} />,
     );
 
     await screen.findByText("当前会话");
@@ -118,7 +116,6 @@ describe("HistoryPanel 删除激活会话重置", () => {
     const user = userEvent.setup();
     render(
       <HistoryPanel
-        endpoint="/api/chat"
         onOpen={vi.fn()}
         activeConversationId={ACTIVE_ID}
         onActiveDeleted={onActiveDeleted}
@@ -169,7 +166,7 @@ describe("HistoryPanel 打开会话透传 metadata（结果卡片重现）", () 
     const onOpen = vi.fn();
     const user = userEvent.setup();
     render(
-      <HistoryPanel endpoint="/api/chat" onOpen={onOpen} activeConversationId={ACTIVE_ID} />,
+      <HistoryPanel onOpen={onOpen} activeConversationId={ACTIVE_ID} />,
     );
 
     await screen.findByText("当前会话");

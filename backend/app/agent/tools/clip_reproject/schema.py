@@ -58,46 +58,9 @@ def _is_valid_crs_hint(value: str) -> bool:
     return text.startswith("+") or "PROJCS" in text.upper() or "GEOGCS" in text.upper()
 
 
-CLIP_REPROJECT_TOOL = {
-    "type": "function",
-    "function": {
-        "name": "clip_reproject_raster",
-        "description": (
-            "对上传的卫星影像做裁剪和/或重投影（按 bbox 裁剪范围、转换到目标坐标系）。"
-            "当用户要求裁剪影像、按范围裁切、转换投影/坐标系、重投影到 EPSG 时调用此工具。"
-            "产出可下载的栅格与预览图（不会注册为新的影像 ID）。"
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "imagery_id": {
-                    "type": "string",
-                    "description": "已上传影像的ID",
-                },
-                "dst_crs": {
-                    "type": "string",
-                    "description": "目标坐标系，如 EPSG:4326；为空则保持源坐标系（仅裁剪）",
-                },
-                "bbox": {
-                    "type": "array",
-                    "items": {"type": "number"},
-                    "description": "裁剪范围 [minx, miny, maxx, maxy]；为空则不裁剪",
-                },
-                "bbox_crs": {
-                    "type": "string",
-                    "description": "bbox 所在坐标系；为空则视为与源影像相同",
-                },
-                "resampling": {
-                    "type": "string",
-                    "description": "重采样方法：nearest/bilinear/cubic（默认 nearest）",
-                },
-                "reason": {
-                    "type": "string",
-                    "description": "计算原因说明",
-                },
-            },
-            "required": ["imagery_id"],
-            "additionalProperties": False,
-        },
-    },
-}
+CLIP_REPROJECT_TOOL_NAME = "clip_reproject_raster"
+CLIP_REPROJECT_TOOL_DESCRIPTION = (
+    "对上传的卫星影像做裁剪和/或重投影（按 bbox 裁剪范围、转换到目标坐标系）。"
+    "当用户要求裁剪影像、按范围裁切、转换投影/坐标系、重投影到 EPSG 时调用此工具。"
+    "产出可下载的栅格与预览图（不会注册为新的影像 ID）。"
+)

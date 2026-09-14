@@ -14,8 +14,9 @@ from autogen_core import CancellationToken
 from app.agent.engine.tools import RemoteSensingTool, build_tools
 from app.agent.engine.turn_context import turn_scope
 from app.agent.tool_registry import RegisteredTool
-from app.agent.tools.detect.schema import DETECT_TOOL, DetectArguments
-from app.agent.tools.ndvi.schema import NDVI_TOOL, NDVIArguments
+from app.agent.tools.detect.schema import DETECT_TOOL_NAME, DetectArguments
+from app.agent.tools.ndvi.schema import NDVI_TOOL_DESCRIPTION, NDVI_TOOL_NAME, NDVIArguments
+from app.agent.tools.schema_gen import build_function_definition
 from app.agent.types import ToolRunResult
 from app.auth import reset_current_user_id, set_current_user_id
 from app.core.settings import get_settings
@@ -47,7 +48,9 @@ def as_owner():
 def _ndvi_tool(runner) -> RegisteredTool:
     return RegisteredTool(
         name="calculate_ndvi",
-        definition=NDVI_TOOL,
+        definition=build_function_definition(
+            NDVI_TOOL_NAME, NDVI_TOOL_DESCRIPTION, NDVIArguments
+        ),
         argument_model=NDVIArguments,
         runner=runner,
         agent_name="spectral_agent",
@@ -58,7 +61,9 @@ def _ndvi_tool(runner) -> RegisteredTool:
 def _detect_tool(runner) -> RegisteredTool:
     return RegisteredTool(
         name="detect_objects",
-        definition=DETECT_TOOL,
+        definition=build_function_definition(
+            DETECT_TOOL_NAME, "目标检测测试工具", DetectArguments
+        ),
         argument_model=DetectArguments,
         runner=runner,
         agent_name="detection_agent",

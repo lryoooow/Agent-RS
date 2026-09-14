@@ -1,6 +1,6 @@
 # Agent-RS Agent and Tool Architecture
 
-Agent-RS 只使用 AutoGen 作为生成式 Agent 编排框架。聊天回答、标准流程路由、领域协作、
+Agent-RS 只使用 AutoGen 作为生成式 Agent 编排框架。聊天回答、标准流程路由、
 联网搜索和长期记忆判断都经过 AutoGen；embedding、rerank、资源鉴权和遥感计算保持确定性。
 
 ## 请求路径
@@ -9,15 +9,16 @@ Agent-RS 只使用 AutoGen 作为生成式 Agent 编排框架。聊天回答、�
 ChatRequest
   → build_turn_input：历史 + 安全 system prompt + 地图 + 影像/文档清单 + 既有结果
   → flow_router（AutoGen structured output）
-      ├─ 完整命中标准作业 → GraphFlow
-      └─ 不完整 / 不确定 / 自由任务 → SelectorGroupChat
-  → general / navigation / spectral / preprocess / segmentation / detection /
-    document / report / search AssistantAgent
+      ├─ 完整命中标准作业 → GraphFlow（流内领域专家 + report 收尾节点）
+      └─ 不完整 / 不确定 / 自由任务 → main_agent（持有全部工具的单主 Agent）
   → 统一工具执行管线
   → AutoGen event bridge → 既有 SSE 与 ChatResponse
 ```
 
-路由失败必须回退到 SelectorGroupChat，不得根据不完整请求猜测一个固定流程。当前标准流程：
+两层编排（Phase 4 起）：**main_agent** 处理一切自由请求——闲聊、单步分析、
+跨领域多步任务都在它自己的工具循环里完成，没有专家接力，也没有 `[DONE]`/`[HANDOFF]`
+控制行；**GraphFlow** 只保留给顺序确定的固定流水线。路由失败回退 main_agent，
+不得根据不完整请求猜测一个固定流程。当前标准流程：
 
 - `inspect_index_report`：影像质检与指数计算 → 报告
 - `mask_segment_report`：云阴影掩膜 → 地物分类 → 报告
@@ -28,9 +29,16 @@ ChatRequest
 `backend/app/agent/tool_registry.py` 是工具契约与所有权的唯一数据源。每个工具声明：
 
 - 唯一名称、Pydantic 参数模型和 async runner
-- `agent_name`：唯一持有它的 AutoGen Agent
+- `agent_name`：`scope="domain"` 时唯一持有它的 AutoGen Agent；`scope="shared"` 时为
+  平台级共享工具（web_search / look_at_location / generate_report / search_imagery /
+  fetch_scene），每个 Agent 都持有、不催生任何领域专家
 - `resource_kind`：`imagery`、`document`、`conversation` 或 `none`
 - 可用性判据、模型可见描述和 tags
+
+发给模型的 function 定义**不再手写**：`app/agent/tools/schema_gen.py` 在注册时从
+Pydantic 参数模型生成（default/ge/pattern/description 全部来自 `Field`，归一化规则见
+该模块文档），约束与描述只有参数模型这一份来源。`tests/agent/test_tool_schema_gen.py`
+锁定生成形状，改字段约束必须过这组快照。
 
 Agent 清单和资源 guard 都从注册表派生，不再维护并行的 routing、capability 或 domain 映射表。
 新增工具时必须登记所有权与资源类型，并为执行阶段文案增加标签。
@@ -56,6 +64,12 @@ Agent 清单和资源 guard 都从注册表派生，不再维护并行的 routin
 每个 Agent 创建独立的 `BudgetedChatCompletionContext`。当前用户消息只作为 AutoGen task
 发送一次，避免重复。
 
+影像清单是结构化的：上传时 `_extract_metadata` 提取波段描述与标签，派生
+`band_roles`（角色→波段号，描述优先、位置约定兜底）与传感器/拍摄时间；清单按最新优先、
+`AGENT_IMAGERY_INVENTORY_LIMIT` 条数上限注入。模型选 `red_band`/`nir_band` 等参数以
+角色表为准，不再依赖「GF-2 默认波序」的硬编码假设。老影像元数据缺新字段时自动回退
+位置约定，零迁移。
+
 RAG 与长期记忆实现 AutoGen `Memory` 协议，在每次 Agent 模型调用前按当前问题更新。
 检索块按来源覆盖，纳入 token 预算，避免多步链路重复注入。记忆判官也使用 AutoGen
 structured output；embedding 与写库仍走确定性服务。
@@ -71,12 +85,11 @@ structured output；embedding 与写库仍走确定性服务。
 | 模块 | 职责 |
 | --- | --- |
 | `engine/input.py` | 完整请求上下文转 AutoGen 消息 |
-| `engine/router.py` | 结构化 GraphFlow/Selector 路由 |
-| `engine/agents.py` | 通用、导航和领域 AssistantAgent |
+| `engine/router.py` | 结构化 GraphFlow/main 路由 |
+| `engine/agents.py` | 主 Agent、流内领域专家与 report 收尾节点 |
 | `engine/flows.py` | 固定标准作业 GraphFlow |
-| `engine/orchestrator.py` | 团队构造、执行、终止与收尾 |
-| `engine/tools.py` | 注册工具的 AutoGen 包装 |
-| `engine/search.py` | 可多轮检索的搜索 Agent |
+| `engine/orchestrator.py` | main/GraphFlow 装配、执行与收尾 |
+| `engine/tools.py` | 注册工具的 AutoGen 包装（含共享工具装配） |
 | `engine/memory/` | RAG 与长期记忆协议适配 |
 | `engine/memory_judge.py` | 结构化记忆判断 |
 | `engine/event_bridge.py` | AutoGen 消息映射为现有 SSE trace |
@@ -84,22 +97,43 @@ structured output；embedding 与写库仍走确定性服务。
 
 ## 运行约束
 
-- `[DONE]` 只在 Agent 消息末尾触发终止，避免规则复述误杀流程。
-- `[DONE]`、进度自检、推理标签和显式过程旁白不进入用户正文；流式路径用有状态 sanitizer
-  处理跨分片标记，并在推理块未闭合时 fail closed。
+- 推理标签（`<think>` 等）和显式过程旁白不进入用户正文；流式路径用有状态 sanitizer
+  跨分片剥离（标签可能被切成 `<th` + `ink>`），推理块未闭合时 fail closed。
+  交棒协议（`[DONE]`/`[HANDOFF]`/进度自检）已随 SelectorGroupChat 一起移除，
+  Agent 不再输出任何控制行。
 - 原始 reasoning/thought 不建立 SSE 契约、不进入 `agent_trace`、不持久化。前端只接受
   `thinking_summary`，阶段和文案均来自固定枚举；服务端事件中的任意 label 不会被渲染。
 - AutoGen 的 core/agentchat event 与 trace logger 固定为 WARNING，避免其 INFO 事件记录完整
   system prompt、历史消息、工具结果和模型 thought。
 - 路由模型自由文本 reason 仅在内存中用于诊断分类，不进入 SSE trace 或日志；失败元数据只保存
   error code/type，不保存可能携带供应商请求或响应正文的异常字符串。
-- 落库正文合并所有专家的可见结论，不能只保留最后一条。
-- 前端断连使用 `ExternalTermination` 停止后续步骤，并后台排空在飞调用后关闭模型客户端。
+- 落库正文合并 GraphFlow 各节点的可见结论（main 路径只有一条最终消息），不能只保留最后一条。
+- 前端断连：GraphFlow 用 `ExternalTermination` 停止后续节点；main 路径在后台排空在飞
+  调用。两者都在排空后关闭模型客户端。
 - `AGENT_MAX_TOOL_ITERATIONS` 限制工具循环；GPU 工具和联网搜索另有按回合硬配额。
+- RAG 与长期记忆在回合内按（来源, 检索词）缓存：工具循环里每次模型调用前都会触发
+  `memory.update_context()`，检索词不变时不重复 embedding/检索/rerank；缓存随回合结束失效。
+- 路由快车道（`AGENT_ROUTER_FAST_PATH`，默认开）：用户无影像时跳过路由 LLM 调用直达
+  主 Agent——标准流程都需要影像，无影像绝无命中可能。`TurnInput.has_imagery` 默认 True
+  （未标注=可能有），保证任何直接构造路径都不会被快车道静默关掉 GraphFlow 通道。
 - `mcp` 依赖固定在 `<2`，与当前 AutoGen 版本保持兼容。
+
+## 免账号卫星影像检索（Phase 7）
+
+`app/agent/stac_search/` 是独立数据层：EarthSearch（Sentinel-2）+ Planetary Computer
+（Landsat，匿名 SAS 签名）双源适配，出网端点硬编码白名单（无客户端可控 URL，无 SSRF 面）。
+`search_imagery` / `fetch_scene` 是共享工具，配额各走独立桶（默认 2 次 / 1 次每回合）。
+
+- 场景 key 只存于 user_id 隔离的服务端缓存（TTL 30 分钟）；资产 URL 与 SAS 令牌
+  **不进提示词/日志/落库**，模型的 tool_context 只有 key 与摘要，卡片 URL 是平台相对路径。
+- 预览 PNG 与多波段 GeoTIFF 由服务端从远程 COG 窗口读取生成（窗口像素封顶）；
+  混合分辨率波段按地理范围对齐窗口，Landsat SR 偏置量化转真反射率。
+- 导入复用上传目录约定与归属管线；波段语义以 STAC asset key 为权威
+  （`band_roles_source="stac_assets"`），导入后立即可被现有分析工具使用。
+- 下载/导入走 `/api/scenes/*`（强制登录 + 滑动窗口限流 + 产物文件数封顶）。
 
 ## 测试与评测
 
-评测录制格式为 schema v2：按顺序保存 router、selector、Agent 以及每次工具调用，附带
+评测录制格式为 schema v2：按顺序保存 router、main/graph 决策以及每次工具调用，附带
 `strategy` 与 `flow_name`。旧单次规划 JSON 录制已经移除。红队仍独立检查越权资源、
 幻觉 ID、文档注入和过度代理；所有执行层安全结论以统一工具 guard 为准。

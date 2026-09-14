@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import logging
 
-from app.agent.engine import current_turn_state
 from app.agent.geocode import forward_geocode
+# 对话控图产物经 ToolRunResult.metadata 回流（与 geospatial_result 同款数据通道），
+# 由 engine/tools.py 包装层转移到回合状态——业务 runner 不感知编排层。
 from app.agent.tools.look_at_location.schema import LookAtLocationArguments
 from app.agent.types import ToolRunResult
 
@@ -28,11 +29,6 @@ async def run_look_at_location(args: LookAtLocationArguments) -> ToolRunResult:
         map_target["zoom"] = geo["zoom"]
     if geo.get("bbox"):
         map_target["bbox"] = geo["bbox"]
-
-    # autogen 链路：写入回合状态，编排层 mid-stream 取走发 map_control 事件。
-    state = current_turn_state()
-    if state is not None:
-        state.map_target = map_target
 
     label = geo.get("display_name") or args.query
     return ToolRunResult(

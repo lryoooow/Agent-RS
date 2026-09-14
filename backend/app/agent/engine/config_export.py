@@ -27,11 +27,8 @@ from typing import Any
 
 from app.agent.engine.agents import domain_specs
 from app.agent.engine.flows import PRESET_FLOWS
-from app.agent.engine.search import (
-    SEARCH_AGENT_LABEL,
-    SEARCH_AGENT_NAME,
-    search_agent_available,
-)
+from app.agent.engine.tools import shared_tool_names
+from app.agent.tool_registry import TOOLS
 from app.core.settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -43,40 +40,40 @@ _SECRET_KEYS = frozenset({"api_key", "apikey", "token", "secret", "password"})
 def describe_orchestration() -> dict[str, Any]:
     """脱敏的编排描述，可安全经 API 暴露。"""
     settings = get_settings()
+    shared = list(shared_tool_names())
+    all_tools = sorted(TOOLS)
     return {
         "engine": "autogen",
         "auto_flow_enabled": settings.agent_auto_flow_enabled,
         "max_tool_iterations": settings.agent_max_tool_iterations,
         "max_gpu_tool_calls": settings.agent_max_gpu_tool_calls,
+        "shared_tools": shared,
         "agents": [
             {
-                "name": "general_agent",
-                "label": "通用问答",
-                "tools": [],
-                "description": "无需工具的通用问答专家",
+                "name": "main_agent",
+                "label": "主智能体",
+                "tools": all_tools,
+                "description": "自由请求的唯一入口：闲聊问答与全部遥感分析",
             },
         ]
+        # 以下节点仅 GraphFlow 固定流水线使用；流内领域专家同样持有共享工具。
         + [
             {
                 "name": spec.name,
                 "label": spec.label,
-                "tools": list(spec.tools),
-                "description": spec.description,
+                "tools": [*spec.tools, *shared],
+                "description": f"GraphFlow 流内节点。{spec.description}",
             }
             for spec in domain_specs()
         ]
-        + (
-            [
-                {
-                    "name": SEARCH_AGENT_NAME,
-                    "label": SEARCH_AGENT_LABEL,
-                    "tools": ["web_search"],
-                    "description": "联网检索专家",
-                }
-            ]
-            if search_agent_available()
-            else []
-        ),
+        + [
+            {
+                "name": "report_agent",
+                "label": "报告生成",
+                "tools": ["generate_report"],
+                "description": "GraphFlow 收尾节点。",
+            }
+        ],
         "preset_flows": {name: list(seq) for name, seq in PRESET_FLOWS.items()},
     }
 

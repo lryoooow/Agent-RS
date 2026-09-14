@@ -12,17 +12,51 @@ Agent-RS 把大模型、多 Agent 编排与容器化遥感算法连接起来。�
 
 > **使用限制：本项目不是开源软件。仅允许个人、非商业、本地学习与评估。未经项目权利人事先书面许可，禁止商业使用、对外提供服务、二次分发，以及使用本项目的代码、设计、数据、结果或衍生成果发表论文、预印本、学位论文、专利、项目申报或竞赛作品。发现违规使用，权利人将保留停止授权并依法追究责任的权利。完整条款见 [LICENSE](LICENSE)。**
 
-## 本次更新（2026-08-12）
+## 本次更新（2026-09-14）
 
-- **全面接入 AutoGen 0.7.5**：AutoGen 成为唯一 Agent 编排框架。标准作业走 `GraphFlow`，开放任务走 `SelectorGroupChat`，遥感、搜索、通用回答和记忆判断均由独立 `AssistantAgent` 协作。
-- **原生工具接入**：现有遥感能力封装为 AutoGen `BaseTool`，MCP Docker 算法层保持隔离；RAG 与长期记忆通过 AutoGen Memory 协议注入。
-- **推理泄漏防护**：后端在模型、AutoGen 事件、SSE、日志和持久化边界过滤原始 reasoning/`<think>` 内容。前端不显示“思考摘要”标题，只滚动展示“正在思考”“正在调用工具”“正在回复”等固定安全阶段词，光晕仅裁剪在文字内部。
-- **终止与去重修复**：为 Agent 回合、工具次数、GPU 重工具和流式结束设置硬边界，拦截重复回复、无止境对话以及正文结束后 SSE 长时间不关闭的问题。
-- **Tavily 联网搜索**：可使用服务端密钥，也可在前端设置中填写；密钥按请求传递，不进入提示词、日志、消息元数据或数据库。
-- **ROI 地物分类**：地图框选区域后可直接执行“分类选区”；可信 ROI 由请求上下文传入，后端先裁剪栅格，再调用地物分割工具。
-- **动态模型选择**：右上角模型名可下拉选择供应商 `/models` 返回的已拉取模型，并按创建时间优先展示较新模型。
-- **30 天登录保持**：账号会话默认有效期调整为 30 天，本机浏览器在 Cookie 有效且未主动退出时可持续登录。
-- **稳定性与安全加固**：增加模型结构化输出兼容回退、搜索输入脱敏、embedding 失败熔断、消息顺序修复、输出文件名隔离和前端地图包拆分。
+本轮为一次系统性重构与加固：编排架构收敛、免账号卫星影像检索接入、请求层制度化、层级倒置修复，共 **24 个提交**，后端测试从 821 → **876 全绿**、前端从 62 → **68 全绿**。
+
+### 一、编排架构收敛（Phase 3/4）
+
+- **共享工具制**：联网搜索（`web_search`）、地图定位（`look_at_location`）、报告生成（`generate_report`）从平级"专家 Agent"降级为所有 Agent 共有的共享工具——用一次检索不再需要交棒往返两次完整 LLM 调用，中间答案不再泄漏给用户。
+- **两层编排定型**：`SelectorGroupChat`、8 位平级专家、`[DONE]`/`[HANDOFF]` 交棒协议与约 300 行流式净化器整体移除。自由请求由持有全部工具的单主 Agent（`main_agent`）直接完成；完整命中标准作业走 `GraphFlow` 固定流水线（报告收尾由专用节点保证确定性）。
+- **工具 schema 单一事实源**（Phase 1）：13 个遥感工具的手写 OpenAI function dict 全部删除，注册时由 Pydantic 参数模型生成（含 anyOf 展开、定长元组降级等归一化），约束与描述不再有两份漂移源。
+- **影像清单结构化**（Phase 2）：上传时提取波段描述/标签派生**波段角色表**（`B1蓝,B3红,B8近红外`），模型选波段以角色表为准（来源标注可信度），取代散落提示词里的「GF-2 默认波序」硬编码；清单含传感器/拍摄时间，最新优先且有条数上限。
+- **性能**（Phase 5）：RAG/长期记忆回合级缓存（工具循环内同一检索词不再重复 embedding+检索+rerank）；无影像用户跳过路由 LLM 调用直达主 Agent（`AGENT_ROUTER_FAST_PATH`，默认开，`has_imagery` 保守默认避免误杀 GraphFlow）。
+
+### 二、免账号卫星影像检索（Phase 7）
+
+- **双源免账号**：EarthSearch（Sentinel-2 L2A，10m）+ Microsoft Planetary Computer（Landsat 8-9，30m，匿名 SAS 签名自行实现，未引入停更 SDK）；`auto` 双源并发、单源失败降级不拖垮。
+- **检索页**：顶部导航「卫星影像」，NASA EarthData Search 三栏形态（左筛选：地名/当前视野/框选 + 时间 + 云量 + 数据源；中主地图；右结果卡片），非模态设计中央地图保持可交互。
+- **对话驱动**：`search_imagery` 共享工具支持自然语言取图（"找深圳湾上个月云量低于 20% 的影像"），结果以场景卡片进对话（落库/历史恢复全链路），卡片上可**预览**（地图定位）/ **下载多波段 TIF**（含加载反馈）/ **一键导入**平台直接分析。
+- **数据正确性**：五波段 GeoTIFF（蓝/绿/红/近红外/短波红外）带波段描述与地理参照；S2 的 10m/20m 混合分辨率按地理范围对齐窗口；Landsat SR 偏置量化转真反射率（保证 NDVI 等比值指数正确）。
+- **安全**：出网端点硬编码白名单（无 SSRF 面）；资产 URL/SAS 令牌只存服务端按用户隔离的缓存（TTL 30 分钟），不进提示词/日志/落库；下载导入滑动窗口限流 + 产物文件数封顶；回合配额（搜索 2 次、导入 1 次）。
+
+### 三、请求层制度化（P0-P3）
+
+- **后端统一错误契约**（P1）：全平台唯一错误信封 `{"error":{"code","message"}}`——新增 HTTPException 全局处理器与兜底 500 处理器；32 处裸字符串错误编码迁移；上游异常原文不再泄进响应体；`/health` 存储故障返回 503。状态码规则文档化（`backend/app/api/errors.py`）。
+- **前端统一 HTTP 客户端**（P2）：`lib/http.ts` 成为唯一 fetch 出口——统一基址、cookie、**所有请求默认 30s 超时**（重活按场景放宽）、错误归一 `ApiError`（读懂新旧契约与反向代理 HTML 页）、幂等 GET 自动重试。删除 7 份重复错误解析与 4 个死代码 URL 派生助手，拆除 5 个组件的 endpoint 穿线链。SSE 加固：90s 空闲看门狗；连接被掐断显式报"回答可能不完整"。
+- **可观测性**（P3）：每个请求 `X-Request-ID`（响应头回显）+ 结构化完成日志（method/path/status/duration_ms/user）——工具审计日志自此可与 HTTP 流量关联；新增 `docs/deployment.md`（反代要求/错误契约/降级模式）。
+
+### 四、层级倒置修复与方向断言（P4.5）
+
+依赖方向全量审计后修复三处接入期倒置：影像持久化助手从 HTTP 路由层下沉到 `services/imagery_persist.py`（服务层不再向上依赖路由）；`look_at_location` runner 不再直写编排状态（产物统一经 `ToolRunResult.metadata` 回流）。边界测试新增两条 **AST 级方向断言**：agent 核心层禁止 import `app.api`、工具 runner 禁止 import 编排层——此类错误提交即红。
+
+### 五、问题修复
+
+- 下载 TIF 点击无响应：后端实际 200（远程合成需数十秒），`<a>` 直跳零反馈——改为 fetch+blob 带进度/错误/防重复。
+- 卫星影像面板点输入框整体关闭：双 Sheet 共享开关 + 模态判定外部交互误关——改非模态并阻止外部点击关闭。
+- 影像检索全部 404：前端端点拼装违反基址约定——统一客户端内定基址并加回归用例。
+- 城市级地名跳转"只缩小"：Nominatim 把城市解析为行政区划 bbox，fitBounds 拉远视角——点状地名改定心 + 城市级缩放（city=11）。
+- SSRF 校验误伤 fake-ip 代理（Clash TUN）用户：报错带主机名与白名单补救方法（`AI_PROVIDER_ALLOWED_HOSTS`）。
+- 存量 bug：422 处理器序列化 model_validator 异常对象会 500；上传测试隐式依赖 `.env` 密钥。
+
+### 破坏性变更提示
+
+- 路由策略字面量 `selector` → `main`（仅日志/trace 元数据，不落库）。
+- `AGENT_WEB_SEARCH_MAX_CALLS` 默认 1 → 3（共享工具自主多轮检索）。
+- 错误响应体统一为 `{"error":{code,message}}`（旧客户端读 `detail` 需适配）。
+- `docker-compose.yml` 数据库端口映射改为 `5432:5432`（本机 5432 被占用时自行调整）。
 
 ## 架构
 
@@ -30,30 +64,31 @@ Agent-RS 把大模型、多 Agent 编排与容器化遥感算法连接起来。�
 用户请求
    │
    ▼
-AutoGen 结构化路由 Agent
-   ├── 完整标准作业 ──► GraphFlow
-   └── 开放/不确定任务 ► SelectorGroupChat
+AutoGen 结构化路由 Agent（无影像用户走快车道直达主 Agent）
+   ├── 完整标准作业 ──► GraphFlow（流内领域专家 + report 收尾节点）
+   └── 其余一切 ─────► main_agent（持有全部工具 + 共享工具的单主 Agent）
                               │
-             ┌────────────────┼────────────────┐
-             ▼                ▼                ▼
-       遥感领域 Agent      搜索 Agent       通用 Agent
-             │                │
-       AutoGen BaseTool     Tavily
-             │
-       MCP stdio / Docker
-             │
-       遥感算法与结果图层
+              ┌───────────────┼────────────────┐
+              ▼               ▼                ▼
+        遥感领域工具      共享工具          卫星影像检索
+      （AutoGen BaseTool） web_search /       search_imagery /
+              │           look_at_location /  fetch_scene
+              │           generate_report        │
+       MCP stdio / Docker                    STAC 双源（免账号）
+              │                              EarthSearch + PC
+       遥感算法与结果图层                     预览/下载TIF/导入
 ```
 
-业务代码通过 `backend/app/agent/engine/` 适配 AutoGen，避免在 API、存储和领域代码中散落框架调用。旧的自研 planner、单工具 runtime、JSON 规划解析器与 decision cache 已移除，不再存在双运行时。
+业务代码通过 `backend/app/agent/engine/` 适配 AutoGen，避免在 API、存储和领域代码中散落框架调用。层级方向受 AST 级边界测试强制：只有 engine 可 import `autogen_*`；agent 核心层不得向上依赖 HTTP 层；工具 runner 不得感知编排层。请求层制度：后端唯一错误信封 `{"error":{code,message}}`、`X-Request-ID` 贯穿、结构化访问日志；前端统一 HTTP 客户端（超时/重试/错误归一）。详见 `docs/agent-tool-architecture.md` 与 `docs/deployment.md`。
 
 ## 主要能力
 
 | 类别 | 能力 |
 | --- | --- |
-| 智能对话 | 流式 Markdown、多 Agent 协作、上下文压缩、长期记忆、文档 RAG |
+| 智能对话 | 流式 Markdown、上下文压缩、长期记忆、文档 RAG |
+| 卫星影像检索 | 免账号搜 Sentinel-2 / Landsat（区域/时间/云量），预览 / 下载多波段 TIF / 导入分析 |
 | 联网搜索 | Tavily 查询改写、多轮检索、来源整理与调用次数限制 |
-| 影像管理 | GeoTIFF 上传、压缩预览、图层开关、图例、ROI 框选 |
+| 影像管理 | GeoTIFF 上传、压缩预览、图层开关、图例、ROI 框选、波段角色表 |
 | 影像质检 | 尺寸、波段、坐标系、范围与像素统计 |
 | 光谱分析 | NDVI、NDWI、MNDWI、NDBI、BSI、EVI、SAVI、MSAVI、GNDVI、NDMI、NBR |
 | 栅格处理 | 真/假彩色合成、云影掩膜、水体掩膜、裁剪、重投影 |
@@ -83,7 +118,7 @@ AutoGen 结构化路由 Agent
 ```bash
 cp backend/.env.example backend/.env
 uv sync --project backend
-npm --prefix Agent-frontend ci
+npm --prefix Agent-frontend ci   # 或 pnpm --prefix Agent-frontend install
 ```
 
 随后编辑 `backend/.env`，至少配置 `AUTH_SECRET_KEY`，并在后端环境变量或前端设置页提供可用的模型端点、API Key 与模型名。

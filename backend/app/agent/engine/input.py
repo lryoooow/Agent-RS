@@ -17,9 +17,12 @@ class TurnInput:
     query: str
     initial_messages: tuple[LLMMessage, ...]
     trusted_tool_arguments: dict[str, dict] = field(default_factory=dict)
+    # 用户是否持有影像。默认 True 是刻意保守：未标注时宁可多跑一次路由，
+    # 也不能让快车道静默关掉 GraphFlow 通道（只有 build_turn_input 会如实设置）。
+    has_imagery: bool = True
 
     def context(self) -> BudgetedChatCompletionContext:
-        # Every Agent and the group-chat manager need their own mutable context.
+        # Every Agent and the group manager need their own mutable context.
         return BudgetedChatCompletionContext(list(self.initial_messages))
 
 
@@ -76,4 +79,7 @@ async def build_turn_input(request: ChatRequest, *, user_id: str | None) -> Turn
         query=query,
         initial_messages=tuple(initial),
         trusted_tool_arguments=trusted_tool_arguments,
+        # getattr 而非直接取属性：测试用 SimpleNamespace 伪造 provider；
+        # 缺标注时按"可能有影像"处理（与 TurnInput.has_imagery 的保守默认一致）。
+        has_imagery=bool(getattr(provider, "has_imagery", True)),
     )

@@ -28,14 +28,14 @@ FlowName = Literal["inspect_index_report", "mask_segment_report", "detect_report
 
 
 class FlowDecision(BaseModel):
-    strategy: Literal["selector", "graph"] = "selector"
+    strategy: Literal["main", "graph"] = "main"
     flow_name: FlowName | None = None
     reason: str = Field(max_length=240)
 
 
 @dataclass(frozen=True)
 class RouteResult:
-    strategy: Literal["selector", "graph"]
+    strategy: Literal["main", "graph"]
     flow_name: FlowName | None
     reason: str
     usage: dict[str, int] | None = None
@@ -51,7 +51,7 @@ _ROUTER_PROMPT = """
 - detect_report：同一影像上明确要求目标检测 + 生成报告。
 
 只有用户明确要求流程中的全部步骤、顺序成立且没有额外跨领域步骤时才选 graph。
-缺任一步、只是概念提问、需要澄清资源、步骤更多/不同、或任何不确定情况都选 selector，
+缺任一步、只是概念提问、需要澄清资源、步骤更多/不同、或任何不确定情况都选 main，
 flow_name 置空。不得根据历史内容替用户补出当前没要求的步骤。
 """.strip()
 
@@ -59,7 +59,12 @@ flow_name 置空。不得根据历史内容替用户补出当前没要求的步�
 async def choose_route(turn: TurnInput, config: ResolvedAIConfig) -> RouteResult:
     settings = get_settings()
     if not settings.agent_auto_flow_enabled:
-        return RouteResult(strategy="selector", flow_name=None, reason="auto_flow_disabled")
+        return RouteResult(strategy="main", flow_name=None, reason="auto_flow_disabled")
+    # 快车道：三条标准流程都要求对影像执行分析工具，用户没有影像就绝无命中可能。
+    # 省掉的是每次自由对话（闲聊、概念提问）都要付的一次路由 LLM 调用。
+    # has_imagery 默认 True（保守），只有 build_turn_input 如实设置过才可能为 False。
+    if settings.agent_router_fast_path and not turn.has_imagery:
+        return RouteResult(strategy="main", flow_name=None, reason="fast_path_no_imagery")
 
     client = build_model_client(
         config,
@@ -80,7 +85,7 @@ async def choose_route(turn: TurnInput, config: ResolvedAIConfig) -> RouteResult
                 _remember_plain_router(router_key)
         if decision.strategy == "graph" and decision.flow_name is None:
             raise ValueError("graph strategy requires flow_name")
-        if decision.strategy == "selector" and decision.flow_name is not None:
+        if decision.strategy == "main" and decision.flow_name is not None:
             decision = decision.model_copy(update={"flow_name": None})
         return RouteResult(
             strategy=decision.strategy,
@@ -91,11 +96,11 @@ async def choose_route(turn: TurnInput, config: ResolvedAIConfig) -> RouteResult
     except Exception as exc:
         # 第三方异常字符串可能带请求/响应正文，只记录异常类别。
         logger.warning(
-            "AutoGen flow router failed; falling back to selector: %s",
+            "AutoGen flow router failed; falling back to main agent: %s",
             type(exc).__name__,
         )
         return RouteResult(
-            strategy="selector",
+            strategy="main",
             flow_name=None,
             reason=f"router_fallback:{type(exc).__name__}",
             usage=_usage(client),
@@ -139,7 +144,7 @@ async def _run_plain_router(turn: TurnInput, client) -> FlowDecision:
         system_message=(
             f"{_ROUTER_PROMPT}\n\n"
             '供应商不支持结构化响应。只返回一行 JSON，例如：'
-            '{"strategy":"selector","flow_name":null,"reason":"请求未完整命中标准流程"}。'
+            '{"strategy":"main","flow_name":null,"reason":"请求未完整命中标准流程"}。'
             "不要使用 Markdown 代码块，不要添加其它文字。"
         ),
         model_context=turn.context(),

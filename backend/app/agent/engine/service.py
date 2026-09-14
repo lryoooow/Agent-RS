@@ -51,7 +51,7 @@ class AutogenTurnOutput:
     usage: dict | None = None
     map_target: dict | None = None
     framework: str = "autogen"
-    strategy: str = "selector"
+    strategy: str = "main"
     flow_name: str | None = None
     route_reason: str = ""
 

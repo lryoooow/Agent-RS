@@ -10,6 +10,7 @@ from app.api.routes.health import router as health_router
 from app.api.routes.imagery import router as imagery_router
 from app.api.routes.memories import router as memories_router
 from app.api.routes.report import router as report_router
+from app.api.routes.scenes import router as scenes_router
 
 router = APIRouter()
 
@@ -27,3 +28,4 @@ router.include_router(conversations_router, dependencies=_auth_dep)
 router.include_router(memories_router, dependencies=_auth_dep)
 router.include_router(imagery_router, dependencies=_auth_dep)
 router.include_router(report_router, dependencies=_auth_dep)
+router.include_router(scenes_router, dependencies=_auth_dep)

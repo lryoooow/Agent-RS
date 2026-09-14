@@ -56,7 +56,7 @@ export function useSettings() {
     async function loadServerConfig() {
       try {
         setConfigError("");
-        const data = await fetchConfig(getConfigEndpoint(endpoint));
+        const data = await fetchConfig();
         if (!cancelled) setServerConfig(data);
       } catch (err) {
         if (!cancelled) {
@@ -70,7 +70,7 @@ export function useSettings() {
     return () => {
       cancelled = true;
     };
-  }, [endpoint]);
+  }, []);
 
   const refreshModels = useCallback(async () => {
     if (modelsRequestRef.current) return;
@@ -78,11 +78,7 @@ export function useSettings() {
     setModelsLoading(true);
     setModelsError("");
     try {
-      const data = await fetchModels(
-        getModelsEndpoint(endpoint),
-        providerConfig,
-        model || serverConfig?.default_model,
-      );
+      const data = await fetchModels(providerConfig, model || serverConfig?.default_model);
       setAvailableModels(data.models);
     } catch (err) {
       setModelsError(err instanceof Error ? err.message : String(err));
@@ -90,7 +86,7 @@ export function useSettings() {
       modelsRequestRef.current = false;
       setModelsLoading(false);
     }
-  }, [endpoint, model, providerConfig, serverConfig?.default_model]);
+  }, [model, providerConfig, serverConfig?.default_model]);
 
   function clearSettings() {
     clearStoredConfig();
