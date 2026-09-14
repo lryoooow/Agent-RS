@@ -3,15 +3,42 @@
 from __future__ import annotations
 
 import logging
+from typing import Awaitable, Callable, TypeVar
 
 from autogen_core.model_context import ChatCompletionContext
 from autogen_core.models import SystemMessage, UserMessage
+
+from app.agent.engine.turn_context import current_turn_state
 
 logger = logging.getLogger(__name__)
 
 # 注入块的来源标识。同一个 key 每轮覆盖上一轮，不同 key 各占一块。
 BLOCK_KEY_KNOWLEDGE = "knowledge_base"
 BLOCK_KEY_MEMORY = "user_memory"
+
+_T = TypeVar("_T")
+
+
+async def run_query_once_per_turn(
+    source_key: str, query: str, run_query: Callable[[], Awaitable[_T]]
+) -> _T:
+    """同一回合内相同 (来源, 检索词) 只真正执行一次检索。
+
+    AutoGen 在 Agent 每次模型调用前都调 memory.update_context()；多步工具循环里
+    检索词（最新用户消息）不变，重复 embedding + 混合检索 + rerank 是纯浪费。
+    回合作用域（turn_scope）之外的调用不缓存——单测直连等场景没有回合概念。
+
+    并发下最多造成一次重复检索（check 与 set 之间有 await），不会出错；
+    原生异步单线程里 dict 读写本身原子。
+    """
+    state = current_turn_state()
+    if state is None:
+        return await run_query()
+    cache_key = f"{source_key}:{query}"
+    cache = state.retrieval_cache
+    if cache_key not in cache:
+        cache[cache_key] = await run_query()
+    return cache[cache_key]
 
 
 async def latest_user_query(model_context: ChatCompletionContext) -> str:

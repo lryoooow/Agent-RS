@@ -16,7 +16,13 @@ logger = logging.getLogger(__name__)
 # Nominatim 请求需要 User-Agent（服务条款要求）
 USER_AGENT = "Agent-RS/1.0 (Remote Sensing AI Agent)"
 NOMINATIM_BASE_URL = "https://nominatim.openstreetmap.org"
-REQUEST_TIMEOUT = 1.5  # 秒
+def _request_timeout() -> float:
+    from app.core.settings import get_settings
+
+    return get_settings().geocode_timeout_seconds
+
+
+REQUEST_TIMEOUT = _request_timeout()  # 秒
 GEOCODE_CACHE_MAX_SIZE = 4096
 # 并发逆地理编码上限：Nominatim 用量策略 ~1 req/s，去重外的突发请求必须限流（O5）。
 PREFETCH_MAX_CONCURRENT = 4
@@ -126,6 +132,22 @@ async def reverse_geocode(
 
 _FORWARD_CACHE: OrderedDict[str, dict] = OrderedDict()
 
+# 点状地名的目标缩放：城市及以下直接定心到中心点，**不**框行政边界。
+# Nominatim 里「北京市」的 addresstype=city，但 bbox 是整个市域（含远郊山区，
+# 跨约 2°）；前端对 bbox 走 fitBounds，把这个框整个装进视野只会把视角拉远——
+# 用户说"去北京"要的是城市核心区，不是"看清北京市界"。
+_POINT_PLACE_ZOOM: dict[str, int] = {
+    "city": 11,
+    "town": 13,
+    "village": 14,
+    "hamlet": 15,
+    "suburb": 13,
+    "quarter": 13,
+    "neighbourhood": 14,
+    "borough": 12,
+    "city_district": 12,
+}
+
 
 def _zoom_for_bbox(bbox: list[str] | None) -> int:
     """据 Nominatim boundingbox 粗估缩放级别；无 bbox 给城市级默认。"""
@@ -179,19 +201,30 @@ async def forward_geocode(query: str) -> dict | None:
         lon = float(item["lon"])
     except (KeyError, TypeError, ValueError):
         return None
-    result: dict = {
-        "display_name": item.get("display_name") or q,
-        "center": [lon, lat],
-        "zoom": _zoom_for_bbox(item.get("boundingbox")),
-    }
+
+    # bbox 先解析成 MapLibre 形状 [[west,south],[east,north]]；
+    # 是否随结果下发由地名类型决定（见 _POINT_PLACE_ZOOM 的说明）。
+    bbox_parsed = None
     bbox = item.get("boundingbox")
     if isinstance(bbox, list) and len(bbox) == 4:
         try:
             south, north, west, east = (float(x) for x in bbox)
-            # MapLibre fitBounds 期望 [[swLng, swLat], [neLng, neLat]]
-            result["bbox"] = [[west, south], [east, north]]
+            bbox_parsed = [[west, south], [east, north]]
         except (TypeError, ValueError):
             pass
+
+    result: dict = {
+        "display_name": item.get("display_name") or q,
+        "center": [lon, lat],
+    }
+    addresstype = str(item.get("addresstype") or "").lower()
+    if addresstype in _POINT_PLACE_ZOOM:
+        # 点状地名：定心 + 城市级缩放，不下发 bbox（前端见 bbox 会改走 fitBounds）。
+        result["zoom"] = _POINT_PLACE_ZOOM[addresstype]
+    else:
+        result["zoom"] = _zoom_for_bbox(bbox)
+        if bbox_parsed is not None:
+            result["bbox"] = bbox_parsed
     _FORWARD_CACHE[key] = result
     _FORWARD_CACHE.move_to_end(key)
     while len(_FORWARD_CACHE) > GEOCODE_CACHE_MAX_SIZE:

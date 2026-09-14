@@ -15,7 +15,7 @@ import type { KnowledgeDocument, DocumentSearchResult } from "../types";
 
 const TERMINAL = new Set(["done", "failed"]);
 
-export function KnowledgePanel({ endpoint }: { endpoint: string }) {
+export function KnowledgePanel() {
   const [docs, setDocs] = useState<KnowledgeDocument[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -30,7 +30,7 @@ export function KnowledgePanel({ endpoint }: { endpoint: string }) {
     setLoading(true);
     setError("");
     try {
-      setDocs(await listDocuments(endpoint));
+      setDocs(await listDocuments());
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -41,7 +41,7 @@ export function KnowledgePanel({ endpoint }: { endpoint: string }) {
   useEffect(() => {
     refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [endpoint]);
+  }, []);
 
   const handleUpload = async (file: File | undefined) => {
     if (!file) return;
@@ -49,11 +49,11 @@ export function KnowledgePanel({ endpoint }: { endpoint: string }) {
     setProgress(5);
     setError("");
     try {
-      const { job_id } = await uploadDocumentFile(endpoint, file);
+      const { job_id } = await uploadDocumentFile(file);
       // 轮询任务进度直到 done/failed。
       for (let i = 0; i < 120; i++) {
         await new Promise((r) => setTimeout(r, 1000));
-        const job = await getDocumentJob(endpoint, job_id);
+        const job = await getDocumentJob(job_id);
         setProgress(job.progress || 0);
         if (TERMINAL.has(job.status)) {
           if (job.status === "failed") {
@@ -79,7 +79,7 @@ export function KnowledgePanel({ endpoint }: { endpoint: string }) {
     setSearching(true);
     setError("");
     try {
-      const res = await searchDocuments(endpoint, query.trim());
+      const res = await searchDocuments(query.trim());
       setResults(res.results);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -90,7 +90,7 @@ export function KnowledgePanel({ endpoint }: { endpoint: string }) {
 
   const remove = async (id: string) => {
     try {
-      await deleteDocument(endpoint, id);
+      await deleteDocument(id);
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));

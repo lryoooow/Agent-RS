@@ -9,6 +9,7 @@ import { TopBar } from "./components/TopBar";
 import { TaskBar } from "./components/TaskBar";
 import { ToolsPage } from "./components/ToolsPage";
 import { DataPanel } from "./components/DataPanel";
+import { ImagerySearchPanel } from "./components/ImagerySearchPanel";
 import { TaskQueuePanel } from "./components/TaskQueuePanel";
 import { AnalysisReportPanel } from "./components/AnalysisReportPanel";
 import { AuthGate } from "./components/AuthGate";
@@ -21,6 +22,7 @@ import { layersFromTurns } from "./lib/layers";
 import { tasksFromTurns } from "./lib/tasks";
 import { reportsFromTurns } from "./lib/reports";
 import { resolveAppGate } from "./lib/app-gate";
+import { importScene } from "./lib/imagery-search-api";
 import type { GeospatialResult, MapAnnotation } from "./types";
 import type { Roi } from "./lib/roi";
 
@@ -76,6 +78,7 @@ export default function App() {
   const [dataOpen, setDataOpen] = useState(false);
   const [tasksOpen, setTasksOpen] = useState(false);
   const [reportsOpen, setReportsOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
   // 图层显隐/透明度的本地覆盖（按 layer id）；图层本体由真实 geospatialResults 派生。
   const [layerOverrides, setLayerOverrides] = useState<
     Record<string, { visible?: boolean; opacity?: number; removed?: boolean }>
@@ -192,12 +195,19 @@ export default function App() {
         onOpenData={() => setDataOpen(true)}
         onOpenTasks={() => setTasksOpen(true)}
         onOpenReports={() => setReportsOpen(true)}
+        onOpenSearch={() => setSearchOpen(true)}
+      />
+
+      <ImagerySearchPanel
+        open={searchOpen}
+        onOpenChange={setSearchOpen}
+        mapRef={mapRef}
+        roi={roi}
       />
 
       <DataPanel
         open={dataOpen}
         onOpenChange={setDataOpen}
-        endpoint={settings.endpoint}
         onOpenConversation={openConversation}
         activeConversationId={chat.conversationId}
         onActiveConversationDeleted={handleActiveConversationDeleted}
@@ -259,6 +269,32 @@ export default function App() {
             reportPending={chat.reportPending}
             thinkingStrength={settings.thinkingStrength}
             onThinkingChange={settings.setThinkingStrength}
+            onScenePreview={(bbox) => {
+              const map = mapRef.current;
+              if (!map || bbox.length !== 4) return;
+              map.fitBounds(
+                [
+                  [bbox[0], bbox[1]],
+                  [bbox[2], bbox[3]],
+                ],
+                { padding: 96, duration: 900 },
+              );
+            }}
+            onSceneImport={async (sceneKey) => {
+              try {
+                const result = await importScene(sceneKey);
+                chat.addSystemNote(
+                  `卫星影像已导入平台（${result.satellite}，影像 ID ${result.imagery_id}）。` +
+                    '可直接说“对这张影像算 NDVI / 做地物分类”开始分析。',
+                );
+                return result.imagery_id;
+              } catch (exc) {
+                chat.addSystemNote(
+                  `场景导入失败：${exc instanceof Error ? exc.message : "未知错误"}`,
+                );
+                return null;
+              }
+            }}
           />
         )}
       </AnimatePresence>

@@ -12,12 +12,18 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from app.api.errors import api_error
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 from app.auth.current_user import get_current_user_id
 from app.core.paths import imagery_root
+from app.services.imagery_persist import (
+    _extract_metadata,
+    _file_sha256,
+    _persist_imagery_record,
+)
 from app.core.settings import get_settings
 from app.db.errors import is_missing_schema_error
 from app.db.pool import fetch_optional_pool
@@ -46,6 +52,11 @@ class ImageryMetadata(BaseModel):
     band_count: int = 0
     pixel_size: list[float] | None = None
     dtype: str = ""
+    band_descriptions: list[str | None] | None = None
+    band_roles: dict[str, int] | None = None
+    band_roles_source: str | None = None
+    sensor: str | None = None
+    acquired_at: str | None = None
     preview_url: str | None = None
     working_width: int = 0
     working_height: int = 0
@@ -72,19 +83,19 @@ def _imagery_root() -> Path:
 
 def _imagery_dir(imagery_id: str) -> Path:
     if not IMAGERY_ID_PATTERN.fullmatch(imagery_id):
-        raise HTTPException(status_code=400, detail="非法影像 ID")
+        raise api_error(400, "INVALID_ID", "非法影像 ID。")
     return _imagery_root() / imagery_id
 
 
 def _safe_result_path(imagery_id: str, filename: str) -> Path:
     if "/" in filename or "\\" in filename:
-        raise HTTPException(status_code=400, detail="非法文件名")
+        raise api_error(400, "INVALID_FILENAME", "非法文件名。")
     results_root = (_imagery_dir(imagery_id) / "results").resolve()
     result_path = (results_root / filename).resolve()
     try:
         result_path.relative_to(results_root)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail="非法文件路径") from exc
+        raise api_error(400, "INVALID_PATH", "非法文件路径。") from exc
     return result_path
 
 
@@ -101,44 +112,6 @@ def _safe_rmtree(path: Path) -> None:
     except OSError:
         logger.warning("Failed to remove directory: %s", path, exc_info=True)
 
-
-def _display_bounds(crs: Any, bounds: Any) -> list[float] | None:
-    if not crs or not bounds:
-        return None
-    try:
-        from rasterio.crs import CRS
-        from rasterio.warp import transform_bounds
-
-        src_crs = CRS.from_user_input(crs)
-        if src_crs.to_epsg() == 4326:
-            return list(bounds)
-        return list(transform_bounds(src_crs, CRS.from_epsg(4326), *bounds))
-    except Exception:
-        logger.warning("Failed to transform imagery bounds to EPSG:4326.", exc_info=True)
-        return list(bounds)
-
-
-def _extract_metadata(tif_path: Path) -> dict[str, Any]:
-    import rasterio
-
-    with rasterio.open(tif_path) as src:
-        return {
-            "crs": str(src.crs) if src.crs else None,
-            "bounds": _display_bounds(src.crs, src.bounds),
-            "width": src.width,
-            "height": src.height,
-            "band_count": src.count,
-            "pixel_size": list(src.res),
-            "dtype": src.dtypes[0],
-        }
-
-
-def _file_sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with open(path, "rb") as source:
-        for chunk in iter(lambda: source.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def _rescaled_shape(width: int, height: int, max_dimension: int) -> tuple[int, int, bool]:
@@ -255,7 +228,7 @@ async def _write_upload_to_temp(file: UploadFile, max_bytes: int, suffix: str) -
             while chunk := await file.read(1024 * 1024):
                 total_bytes += len(chunk)
                 if total_bytes > max_bytes:
-                    raise HTTPException(status_code=413, detail="文件超过大小限制")
+                    raise api_error(413, "FILE_TOO_LARGE", "文件超过大小限制")
                 target.write(chunk)
     except Exception:
         _safe_unlink(temp_path)
@@ -329,17 +302,17 @@ async def _ensure_imagery_owner_db_first(imagery_id: str, meta: dict[str, Any]) 
     db_owner = await _db_imagery_owner(imagery_id)
     owner = db_owner if db_owner is not None else _metadata_owner(meta)
     if owner != get_current_user_id():
-        raise HTTPException(status_code=404, detail="Imagery was not found.")
+        raise api_error(404, "IMAGERY_NOT_FOUND", "Imagery was not found.")
 
 
 def _read_metadata_only(dest_dir: Path) -> dict[str, Any]:
     """读 metadata.json（不校验 owner）。文件缺失/损坏 → 对应 HTTP 错误。"""
     meta_file = dest_dir / "metadata.json"
     if not meta_file.exists():
-        raise HTTPException(status_code=404, detail="Imagery was not found.")
+        raise api_error(404, "IMAGERY_NOT_FOUND", "Imagery was not found.")
     meta = _read_metadata(meta_file)
     if meta is None:
-        raise HTTPException(status_code=500, detail="Imagery metadata is invalid.")
+        raise api_error(500, "INTERNAL_ERROR", "Imagery metadata is invalid.")
     return meta
 
 
@@ -350,115 +323,13 @@ async def _read_owned_metadata(dest_dir: Path) -> dict[str, Any]:
     return meta
 
 
-async def _persist_imagery_record(
-    imagery_id: str,
-    dest_dir: Path,
-    meta: dict[str, Any],
-    owner_user_id: str,
-) -> None:
-    """上传后持久化：DB 登记影像归属 + minio 后端上传二进制到对象存储。
-
-    后端语义差异（#2 根因修复）：
-    - local 后端：DB 登记 best-effort（无库/表未建/冲突只告警，本地 metadata.json 兜底）；不上传对象。
-    - minio 后端：DB owner 行是硬依赖——跨实例的 owner 鉴权 / list / read 全靠它。故：
-        ① DB 不可用 → 直接 503，不产生任何孤儿对象；
-        ② DB-first（先写 DB 行，再传对象）：任一步失败都回滚已写的 DB 行 + 已传对象，
-           保证"DB 行与对象要么都在、要么都不在"，杜绝"对象在/DB 无行"的孤儿对象。
-    raises HTTPException：minio 模式下 DB 不可用/写入失败/对象上传失败。
-    """
-    settings = get_settings()
-    backend = settings.storage_backend.strip().lower()
-
-    if backend != "minio":
-        await _persist_db_record_best_effort(imagery_id, meta, owner_user_id, backend)
-        return
-
-    # ── minio 后端：DB 硬依赖 + DB-first + 失败回滚 ──
-    pool = await fetch_optional_pool()
-    if pool is None:
-        raise HTTPException(status_code=503, detail="对象存储模式需要数据库，但数据库当前不可用。")
-    # ① 先写 DB owner 行（此时未传任何对象，失败即抛、无对象需清理）。
-    try:
-        async with pool.acquire() as conn:
-            await db_insert_imagery(
-                conn,
-                imagery_id=imagery_id,
-                owner_user_id=owner_user_id,
-                filename=meta.get("filename"),
-                sha256=meta.get("sha256"),
-                bounds=meta.get("bounds"),
-                bands=meta.get("band_count"),
-                storage_backend=backend,
-                metadata=meta,
-            )
-    except ImageryOwnershipConflict as exc:
-        raise HTTPException(status_code=409, detail="影像 ID 冲突，请重试上传。") from exc
-    except Exception as exc:
-        logger.exception("影像 DB 登记失败（minio 模式，拒绝上传以防孤儿对象）：%s", imagery_id)
-        raise HTTPException(status_code=503, detail="影像登记失败，请稍后重试。") from exc
-
-    # ② 上传对象（失败则回滚 DB 行 + 清已传对象，保持原子性）。
-    store = get_object_store()
-    try:
-        for rel in ("source.tif", "working.tif", "metadata.json", "results/preview.png"):
-            local = dest_dir / rel
-            if local.exists():
-                await store.put(f"{imagery_id}/{rel}", local)
-    except Exception as exc:
-        logger.exception("影像对象上传失败，回滚 DB 行与已传对象：%s", imagery_id)
-        await _rollback_minio_persist(pool, store, imagery_id, owner_user_id)
-        raise HTTPException(status_code=502, detail="影像上传到对象存储失败，请重试。") from exc
-
-
-async def _persist_db_record_best_effort(
-    imagery_id: str, meta: dict[str, Any], owner_user_id: str, backend: str
-) -> None:
-    """local 后端的 DB 登记：尽力而为，无库/表未建/冲突只告警，绝不阻断上传（与迁移前一致）。"""
-    pool = await fetch_optional_pool()
-    if pool is None:
-        return
-    try:
-        async with pool.acquire() as conn:
-            await db_insert_imagery(
-                conn,
-                imagery_id=imagery_id,
-                owner_user_id=owner_user_id,
-                filename=meta.get("filename"),
-                sha256=meta.get("sha256"),
-                bounds=meta.get("bounds"),
-                bands=meta.get("band_count"),
-                storage_backend=backend,
-                metadata=meta,
-            )
-    except ImageryOwnershipConflict:
-        logger.warning("影像 ID 已属他人，跳过 DB 登记（local metadata.json 兜底）：%s", imagery_id)
-    except Exception as exc:
-        if is_missing_schema_error(exc):
-            logger.warning("imagery 表未建，跳过 DB 登记（本地 metadata.json 兜底）：%s", imagery_id)
-        else:
-            logger.exception("影像 DB 登记失败（不阻断上传）：%s", imagery_id)
-
-
-async def _rollback_minio_persist(pool, store, imagery_id: str, owner_user_id: str) -> None:
-    """minio 上传失败的回滚：删已传对象 + 删 DB 行（best-effort，不掩盖原始错误）。"""
-    try:
-        await store.delete_prefix(imagery_id)
-    except Exception:
-        logger.exception("回滚：删除已上传对象失败：%s", imagery_id)
-    try:
-        async with pool.acquire() as conn:
-            await db_delete_imagery(conn, imagery_id=imagery_id, owner_user_id=owner_user_id)
-    except Exception:
-        logger.exception("回滚：删除 DB 行失败：%s", imagery_id)
-
-
 @router.post("/upload", response_model=ImageryMetadata)
 async def upload_imagery(file: UploadFile = File(...)) -> ImageryMetadata:
     settings = get_settings()
     owner_user_id = get_current_user_id()
 
     if not file.filename or not file.filename.lower().endswith((".tif", ".tiff")):
-        raise HTTPException(status_code=400, detail="仅支持 GeoTIFF (.tif/.tiff) 格式")
+        raise api_error(400, "INVALID_REQUEST", "仅支持 GeoTIFF (.tif/.tiff) 格式")
 
     suffix = Path(file.filename).suffix.lower()
     temp_path = await _write_upload_to_temp(file, settings.imagery_max_file_bytes, suffix)
@@ -467,7 +338,7 @@ async def upload_imagery(file: UploadFile = File(...)) -> ImageryMetadata:
     except Exception as exc:
         _safe_unlink(temp_path)
         logger.warning("Failed to parse uploaded GeoTIFF: %s", file.filename, exc_info=True)
-        raise HTTPException(status_code=422, detail="无法解析 GeoTIFF，请确认文件格式和影像完整性") from exc
+        raise api_error(422, "INVALID_GEOTIFF", "无法解析 GeoTIFF，请确认文件格式和影像完整性") from exc
 
     imagery_id = uuid.uuid4().hex[:12]
     dest_dir = _imagery_dir(imagery_id)
@@ -486,7 +357,7 @@ async def upload_imagery(file: UploadFile = File(...)) -> ImageryMetadata:
         _safe_unlink(temp_path)
         _safe_rmtree(dest_dir)
         logger.warning("Failed to process uploaded GeoTIFF: %s", file.filename, exc_info=True)
-        raise HTTPException(status_code=422, detail="无法处理 GeoTIFF，请确认影像波段、尺寸和压缩格式") from exc
+        raise api_error(422, "INVALID_GEOTIFF", "无法处理 GeoTIFF，请确认影像波段、尺寸和压缩格式") from exc
 
     meta = {
         **meta,
@@ -596,7 +467,7 @@ async def _load_owned_meta_db_first(imagery_id: str) -> dict[str, Any]:
             row = None
         if row is not None:
             if row["owner_user_id"] != get_current_user_id():
-                raise HTTPException(status_code=404, detail="Imagery was not found.")
+                raise api_error(404, "IMAGERY_NOT_FOUND", "Imagery was not found.")
             meta = dict(row.get("metadata") or {})
             if meta:
                 return meta
@@ -642,7 +513,7 @@ async def _ensure_owned_for_mutation(imagery_id: str, dest_dir: Path) -> None:
     db_owner = await _db_imagery_owner(imagery_id)
     if db_owner is not None:
         if db_owner != get_current_user_id():
-            raise HTTPException(status_code=404, detail="Imagery was not found.")
+            raise api_error(404, "IMAGERY_NOT_FOUND", "Imagery was not found.")
         return
     # DB 无此行 → 回落本地 metadata.json（必须存在且 owner 匹配）。
     await _read_owned_metadata(dest_dir)
@@ -673,7 +544,7 @@ async def get_result_file(imagery_id: str, filename: str):
         try:
             stream = await store.open_stream(key)
         except FileNotFoundError:
-            raise HTTPException(status_code=404, detail="结果文件不存在")
+            raise api_error(404, "IMAGERY_NOT_FOUND", "结果文件不存在")
         # 代理流式：保留 owner 鉴权（不用 presigned URL，避免绕过校验越权）。
         return StreamingResponse(
             stream,
@@ -684,5 +555,5 @@ async def get_result_file(imagery_id: str, filename: str):
     # local 后端：原逻辑，本地 metadata.json owner 校验 + FileResponse。
     await _read_owned_metadata(result_path.parent.parent)
     if not result_path.exists():
-        raise HTTPException(status_code=404, detail="结果文件不存在")
+        raise api_error(404, "IMAGERY_NOT_FOUND", "结果文件不存在")
     return FileResponse(result_path, media_type=media_type, filename=filename)

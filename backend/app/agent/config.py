@@ -88,7 +88,14 @@ def _validate_client_base_url(url: str, settings: Settings) -> str:
         except ValueError:
             continue
         if not resolved.is_loopback and _is_blocked_ip(resolved):
-            raise ConfigError("provider base_url 解析到内网/保留地址，已拒绝。")
+            # 常见误伤：本机跑着 fake-ip 代理（Clash TUN 等）时，所有域名都解析到
+            # 198.18.0.0/15 保留段。流量经代理是通的，只是校验过不去——把主机加进
+            # AI_PROVIDER_ALLOWED_HOSTS 即可跳过 DNS 校验（白名单命中在解析之前）。
+            raise ConfigError(
+                f"provider base_url 解析到内网/保留地址（{hostname} -> {resolved}），已拒绝。"
+                "若本机使用 fake-ip 代理（Clash TUN 等），请在服务端 .env 的 "
+                "AI_PROVIDER_ALLOWED_HOSTS 里加上该主机后重启。"
+            )
     return url
 
 

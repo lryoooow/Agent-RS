@@ -41,12 +41,17 @@ GPU_HEAVY_TOOLS: frozenset[str] = frozenset({"detect_objects", "segment_landcove
 
 # 联网检索工具名。按次计费，所以和 GPU 工具一样要按回合限次。
 WEB_SEARCH_TOOL = "web_search"
+# 卫星影像检索/导入工具名。外部 STAC 查询与远程 COG 合成同样按回合限次。
+IMAGERY_SEARCH_TOOL = "search_imagery"
+SCENE_FETCH_TOOL = "fetch_scene"
 
 # 配额桶：工具名 -> 桶名。GPU 那几个**共用**一个桶（detect + segment 合计不超上限），
-# 检索自己一个桶。不在表里的工具不限次。
+# 检索、影像搜索、场景导入各一个桶。不在表里的工具不限次。
 _QUOTA_BUCKETS: dict[str, str] = {
     **{name: "gpu" for name in GPU_HEAVY_TOOLS},
     WEB_SEARCH_TOOL: "web_search",
+    IMAGERY_SEARCH_TOOL: "imagery_search",
+    SCENE_FETCH_TOOL: "scene_fetch",
 }
 
 
@@ -54,6 +59,10 @@ def _bucket_limit(bucket: str) -> int:
     settings = get_settings()
     if bucket == "gpu":
         return settings.agent_max_gpu_tool_calls
+    if bucket == "imagery_search":
+        return settings.agent_imagery_search_max_calls
+    if bucket == "scene_fetch":
+        return settings.agent_scene_fetch_max_calls
     return settings.agent_web_search_max_calls
 
 
@@ -75,6 +84,11 @@ class TurnToolState:
     # 与工具产物同理：AutoGen 的 Memory 协议没有返回值通道，只能靠回合级状态传递。
     retrieved_chunks: int = 0
     rag_trace: dict | None = None
+    # 回合级检索缓存：来源 key + query -> MemoryQueryResult。
+    # 同一回合里 Agent 每次模型调用前都会触发 memory.update_context()，而
+    # 检索词（最新用户消息）在回合内不变——不缓存的话，一次多步工具循环
+    # 会对同一句话重复做 embedding + 混合检索 + rerank 好几次，纯烧延迟和费用。
+    retrieval_cache: dict = field(default_factory=dict)
     # 「对话控图」目标：look_at_location 工具写入，编排层取走发 map_control 事件。
     map_target: dict | None = None
     # UI-originated parameters are trusted request context.  They override model

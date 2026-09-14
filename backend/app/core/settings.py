@@ -81,7 +81,10 @@ class Settings(BaseSettings):
     tavily_search_url: str = "https://api.tavily.com/search"
     tavily_search_depth: str = "basic"
     agent_document_inventory_limit: int = 100
-    agent_web_search_max_calls: int = 1
+    # 影像清单注入上下文的上限（最新优先）。此前无上限，重度用户靠字符预算硬截断，
+    # 可能把最新上传的影像截掉——模型恰好最常被问"这张刚传的图"。
+    agent_imagery_inventory_limit: int = 20
+    agent_web_search_max_calls: int = 3
     agent_web_search_max_results: int = 5
     agent_web_search_country: str = "china"
     agent_web_search_min_score: float = 0.4
@@ -93,10 +96,30 @@ class Settings(BaseSettings):
     agent_web_search_rerank_enabled: bool = True
     agent_web_search_rerank_top_n: int = 5
 
+    # ---- 免账号卫星影像检索（Phase 7：EarthSearch + Planetary Computer）----
+    # 单轮对话内 search_imagery 工具的调用上限（外部 API，防刷）。
+    agent_imagery_search_max_calls: int = 2
+    # 单轮对话内 fetch_scene（远程合成并导入影像库）的调用上限，重活默认 1 次。
+    agent_scene_fetch_max_calls: int = 1
+    # 场景合成（下载/导入）的窗口像素封顶：超出按比例降采样，防流量失控。
+    agent_scene_window_max_pixels: int = 4000
+    # 预览 PNG 最长边像素。
+    agent_scene_preview_size: int = 1024
+    # STAC 搜索与远程 COG 读取的超时（秒）。
+    stac_timeout_seconds: float = 20.0
+    # Nominatim 地理编码超时（地名→坐标，逆地理 O-D 同步解析也用它）。
+    geocode_timeout_seconds: float = 5.0
+    # GDAL 读取远程 COG 的出网代理（如 http://127.0.0.1:7890）。留空走系统默认；
+    # STAC 搜索走 HTTP(S)_PROXY 环境变量。本机 TUN 模式代理下两者都可留空。
+    stac_http_proxy: str = ""
+
     # ---- AutoGen 唯一编排引擎 ----
-    # 标准作业先由结构化路由 Agent 判断是否走 GraphFlow；其它请求走 SelectorGroupChat。
+    # 标准作业先由结构化路由 Agent 判断是否走 GraphFlow；其余请求由主 Agent 直跑。
     agent_router_model: str = ""
     agent_router_max_tokens: int = 256
+    # 路由快车道：用户没有影像时跳过路由 LLM 调用直达主 Agent（三条标准流程
+    # 都需要影像，无影像绝无命中可能）。省掉闲聊/概念提问的路由延迟与费用。
+    agent_router_fast_path: bool = True
     agent_auto_flow_enabled: bool = True
     # 单轮内允许的工具调用轮数上限。
     agent_max_tool_iterations: int = 5
@@ -174,6 +197,8 @@ class Settings(BaseSettings):
     document_ocr_min_chars_per_page: int = 50
     document_ocr_languages: str = "chi_sim+eng"
 
+    # 免账号影像检索的场景产物（预览 PNG / 合成 TIF）目录，per-user 隔离。
+    scene_cache_dir: str = "backend/storage/scenes"
     imagery_upload_dir: str = "storage/imagery"
     imagery_max_file_bytes: int = 500_000_000
     imagery_working_max_dimension: int = 4096
@@ -274,6 +299,9 @@ class Settings(BaseSettings):
 
     @property
     def context_max_total_chars(self) -> int:
+        # 命名澄清：配置名带 chars，但 BudgetedChatCompletionContext 拿它当 **token 预算**
+        # 用（estimate_tokens 的估算结果与之比较）。中文场景下 1 token ≈ 1~2 字符，
+        # 按字符数配置略偏保守，不会超支——改这里时别按"精确 token 数"理解。
         return self.ai_context_max_total_chars or self.ai_max_context_chars
 
     @property

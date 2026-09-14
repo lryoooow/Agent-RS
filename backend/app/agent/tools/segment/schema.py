@@ -5,9 +5,9 @@ class SegmentArguments(BaseModel):
     model_config = {"extra": "forbid"}
 
     imagery_id: str = Field(pattern=r"^[a-f0-9]{12}$", description="已上传影像的 ID")
-    red_band: int = Field(default=3, ge=1)
-    green_band: int = Field(default=2, ge=1)
-    blue_band: int = Field(default=1, ge=1)
+    red_band: int = Field(default=3, ge=1, description="红光波段号（GF-2默认3）")
+    green_band: int = Field(default=2, ge=1, description="绿光波段号（GF-2默认2）")
+    blue_band: int = Field(default=1, ge=1, description="蓝光波段号（GF-2默认1）")
     bbox: tuple[float, float, float, float] | None = Field(
         default=None,
         description="可选地理框 [left,bottom,right,top]；框选请求由平台可信上下文自动注入",
@@ -39,25 +39,8 @@ class SegmentArguments(BaseModel):
         return self
 
 
-SEGMENT_TOOL = {
-    "type": "function",
-    "function": {
-        "name": "segment_landcover",
-        "description": "遥感地物语义分割（U-Net / LandCover.ai，地物类别：建筑、林地、水体、背景）。支持平台框选 ROI；框选存在时仅分类选区并输出该选区的彩色掩膜图层。",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "imagery_id": {"type": "string", "description": "已上传影像的 ID"},
-                "red_band": {"type": "integer", "default": 3},
-                "green_band": {"type": "integer", "default": 2},
-                "blue_band": {"type": "integer", "default": 1},
-                "bbox": {"type": "array", "items": {"type": "number"}, "minItems": 4, "maxItems": 4},
-                "bbox_crs": {"type": "string", "description": "bbox 的坐标系"},
-                "pixel_bbox": {"type": "array", "items": {"type": "number"}, "minItems": 4, "maxItems": 4},
-                "reason": {"type": "string", "description": "分割原因说明"},
-            },
-            "required": ["imagery_id"],
-            "additionalProperties": False,
-        },
-    },
-}
+SEGMENT_TOOL_NAME = "segment_landcover"
+SEGMENT_TOOL_DESCRIPTION = (
+    "遥感地物语义分割（U-Net / LandCover.ai，地物类别：建筑、林地、水体、背景）。"
+    "支持平台框选 ROI；框选存在时仅分类选区并输出该选区的彩色掩膜图层。"
+)

@@ -120,3 +120,49 @@ describe("layersFromTurns — report 不进地图图层", () => {
     expect(layers[0].kind).toBe("segmentation");
   });
 });
+
+// ───────────────────────── scene_search（影像检索卡片） ─────────────────────────
+
+describe("parseGeospatialResult scene_search", () => {
+  const valid = {
+    type: "scene_search",
+    scenes: [
+      {
+        key: "ab12cd34ef56",
+        satellite: "Sentinel-2B",
+        item_id: "S2B_X",
+        datetime: "2026-08-11T03:11:32+00:00",
+        cloud_cover: 5.5,
+        bbox: [113.9, 22.4, 114.3, 22.7],
+        resolution_m: 10,
+        display_name: "S2B_X",
+        preview_url: "/api/scenes/ab12cd34ef56/preview",
+        download_url: "/api/scenes/ab12cd34ef56/download",
+      },
+    ],
+    notes: [],
+  };
+
+  it("解析合法的检索卡片", () => {
+    const result = parseGeospatialResult(valid);
+    expect(result?.type).toBe("scene_search");
+    if (result?.type === "scene_search") {
+      expect(result.scenes).toHaveLength(1);
+      expect(result.scenes[0].key).toBe("ab12cd34ef56");
+      expect(result.scenes[0].preview_url).toContain("/api/scenes/");
+    }
+  });
+
+  it("缺 preview_url / bbox 的场景项被丢弃而不是整卡失效", () => {
+    const result = parseGeospatialResult({
+      ...valid,
+      scenes: [valid.scenes[0], { key: "x", satellite: "S" }, { ...valid.scenes[0], bbox: [1, 2] }],
+    });
+    expect(result?.type).toBe("scene_search");
+    if (result?.type === "scene_search") expect(result.scenes).toHaveLength(1);
+  });
+
+  it("scenes 非数组时整体拒绝", () => {
+    expect(parseGeospatialResult({ type: "scene_search", scenes: "nope" })).toBeUndefined();
+  });
+});

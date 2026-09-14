@@ -27,34 +27,10 @@ class ParseDocumentArguments(BaseModel):
     reason: str = Field(default="用户请求读取文档全文", description="读取原因")
 
 
-PARSE_DOCUMENT_TOOL = {
-    "type": "function",
-    "function": {
-        "name": "parse_document",
-        "description": (
-            "按文档ID取出已上传文档的整体全文与元信息（标题、类型、页数、字数）。"
-            "当用户要求总结/概括整篇文档、抽取贯穿全文的信息（如所有日期、指标、条款），"
-            "或需要分块检索之外的完整上下文时调用此工具。文档在上传时已解析入库，"
-            "本工具直接读取，不重新解析原始文件。"
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "document_id": {
-                    "type": "string",
-                    "description": "已上传文档的ID（UUID）",
-                },
-                "max_chars": {
-                    "type": "integer",
-                    "description": "返回全文的最大字符数；0 表示用系统默认上限",
-                },
-                "reason": {
-                    "type": "string",
-                    "description": "读取原因说明",
-                },
-            },
-            "required": ["document_id"],
-            "additionalProperties": False,
-        },
-    },
-}
+PARSE_DOCUMENT_TOOL_NAME = "parse_document"
+PARSE_DOCUMENT_TOOL_DESCRIPTION = (
+    "按文档ID取出已上传文档的整体全文与元信息（标题、类型、页数、字数）。"
+    "当用户要求总结/概括整篇文档、抽取贯穿全文的信息（如所有日期、指标、条款），"
+    "或需要分块检索之外的完整上下文时调用此工具。文档在上传时已解析入库，"
+    "本工具直接读取，不重新解析原始文件。"
+)

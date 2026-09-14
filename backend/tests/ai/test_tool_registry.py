@@ -23,11 +23,13 @@ def test_unknown_tool_returns_none() -> None:
     assert get_tool("missing") is None
 
 
-def test_web_search_is_not_in_tool_registry() -> None:
+def test_web_search_is_registered_as_shared_tool() -> None:
+    """web_search 是共享工具：在注册表里、scope=shared、由 TAVILY 配置门控。"""
     definitions = list_tool_definitions(available_only=False)
     names = {item["function"]["name"] for item in definitions}
 
-    assert "web_search" not in names
+    assert "web_search" in names
+    assert get_tool("web_search").scope == "shared"
     assert "calculate_ndvi" in names
     assert "raster_inspect" in names
     assert "calculate_spectral_index" in names
@@ -42,7 +44,11 @@ def test_web_search_is_not_in_tool_registry() -> None:
 
 def test_every_registered_tool_declares_autogen_ownership_and_resource_kind() -> None:
     for tool in TOOLS.values():
-        assert tool.agent_name.endswith("_agent")
+        if tool.scope == "domain":
+            assert tool.agent_name.endswith("_agent")
+        else:
+            assert tool.agent_name == "shared"
+            assert tool.scope == "shared"
         assert tool.resource_kind in {"imagery", "document", "conversation", "none"}
 
 

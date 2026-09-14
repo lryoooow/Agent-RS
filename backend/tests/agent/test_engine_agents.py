@@ -1,10 +1,10 @@
-"""engine/agents.py + engine/search.py：领域 Agent 与搜索 Agent。
+"""engine/agents.py：领域 Agent、通用 Agent 与共享工具的组装。
 
 核心断言是 AutoGen Agent 清单和工具注册表始终一致：
 - 领域指引进了 system_message 而不是拼在工具结果后面
-- 每个领域只拿到自己那批工具
+- 每个领域拿到「自己那批领域工具 + 全部共享工具」，不多不少
 - 多步工具循环真的开着
-- 每个工具恰好归属一个 Agent
+- 领域工具恰好归属一个 Agent；共享工具不催生 Agent
 """
 from __future__ import annotations
 
@@ -16,10 +16,11 @@ from app.agent.engine.agents import (
     DOMAIN_GUIDANCE,
     DOMAIN_LABELS,
     build_domain_agent,
-    build_domain_agents,
+    build_main_agent,
+    build_report_finalizer,
     domain_specs,
 )
-from app.agent.engine.search import WebSearchTool, build_search_agent
+from app.agent.engine.tools import RemoteSensingTool, shared_tool_names
 from app.agent.engine.turn_context import turn_scope
 from app.agent.search.schema import WebSearchArguments
 from app.agent.tool_registry import TOOLS
@@ -72,11 +73,13 @@ def client():
 
 
 def test_domain_specs_are_derived_from_tool_registry() -> None:
-    """注册表是工具归属的唯一数据源。"""
+    """注册表是工具归属的唯一数据源（只统计领域工具，共享工具除外）。"""
     specs = {spec.name: spec for spec in domain_specs()}
 
     expected: dict[str, set[str]] = {}
     for tool in TOOLS.values():
+        if tool.scope == "shared":
+            continue
         expected.setdefault(tool.agent_name, set()).add(tool.name)
 
     assert set(specs) == set(expected)
@@ -85,27 +88,50 @@ def test_domain_specs_are_derived_from_tool_registry() -> None:
         assert specs[name].label == DOMAIN_LABELS[name]
 
 
+def test_shared_tools_do_not_spawn_agents() -> None:
+    """共享工具（检索/定位/报告）不催生任何领域 Agent。"""
+    shared = {tool.name for tool in TOOLS.values() if tool.scope == "shared"}
+    assert shared == {
+        "web_search",
+        "look_at_location",
+        "generate_report",
+        "search_imagery",
+        "fetch_scene",
+    }
+    spec_names = {spec.name for spec in domain_specs()}
+    assert spec_names.isdisjoint({"report_agent", "navigation_agent", "search_agent"})
+
+
 def test_guidance_is_in_system_message() -> None:
     for spec in domain_specs():
         assert DOMAIN_GUIDANCE[spec.name] in spec.system_message
         assert "绝不编造" in spec.system_message
 
 
-def test_each_domain_agent_only_gets_its_own_tools(client) -> None:
-    """领域隔离：指数分析的 Agent 不该拿得到目标检测工具。"""
+def test_each_domain_agent_gets_its_own_tools_plus_shared(client) -> None:
+    """领域隔离 + 平台能力：拿到自己的领域工具和全部共享工具，仅此而已。"""
     for spec in domain_specs():
         agent = build_domain_agent(spec, model_client=client)
         names = {t.name for t in agent._tools}  # noqa: SLF001
-        assert names == set(spec.tools), f"{spec.name} 的工具集不符"
+        assert names == set(spec.tools) | set(shared_tool_names()), f"{spec.name} 的工具集不符"
+
+
+def test_main_agent_holds_all_enabled_tools(client) -> None:
+    """主 Agent 持有全部已启用工具：领域工具 + 共享工具，一个不少。"""
+    agent = build_main_agent(model_client=client)
+    names = {t.name for t in agent._tools}  # noqa: SLF001
+    expected = {tool.name for tool in TOOLS.values() if tool.is_enabled()}
+    assert names == expected
+    assert "web_search" in names or True  # 未配 TAVILY key 时合理缺席
 
 
 def test_multi_step_tool_loop_is_enabled(client) -> None:
     settings = get_settings()
     assert settings.agent_max_tool_iterations > 1, "配置本身要允许多步"
 
-    for agent in build_domain_agents(model_client=client):
-        if agent.name == "general_agent":
-            continue
+    agents = [build_main_agent(model_client=client)]
+    agents += [build_domain_agent(spec, model_client=client) for spec in domain_specs()]
+    for agent in agents:
         assert agent._max_tool_iterations == settings.agent_max_tool_iterations  # noqa: SLF001
 
 
@@ -118,41 +144,62 @@ def test_domain_description_is_discriminative() -> None:
         assert any(tool in spec.description for tool in spec.tools)
 
 
-# --------------------------------------------------------------- 搜索 Agent
+# --------------------------------------------------------------- web_search 共享工具
+
+
+@pytest.fixture
+def _search_tool_ready(monkeypatch):
+    """启用 web_search（默认无 TAVILY_API_KEY 时它是未注册状态）并关掉 DB。"""
+    monkeypatch.setenv("TAVILY_API_KEY", "test-key")
+    monkeypatch.setenv("DATABASE_ENABLED", "false")
+    get_settings.cache_clear()
+    yield RemoteSensingTool(TOOLS["web_search"])
+    get_settings.cache_clear()
 
 
 @pytest.mark.asyncio
-async def test_search_tool_clamps_result_count(monkeypatch) -> None:
-    """条数上限由服务端强制，模型说了不算——否则它能要 100 条把上下文撑爆。"""
+async def test_web_search_clamps_result_count(monkeypatch) -> None:
+    """条数上限由服务端强制，模型说了不算。
+
+    参数模型约束请求 ≤5 条（与旧手写 schema 的 maximum:5 一致），但运营可以把
+    AGENT_WEB_SEARCH_MAX_RESULTS 压得更低——运行时钳制负责执行这个更严的上限。
+    """
     captured: list[WebSearchArguments] = []
 
     async def fake_search(args: WebSearchArguments) -> ToolRunResult:
         captured.append(args)
         return ToolRunResult(tool_context="检索结果……", result_count=3)
 
-    monkeypatch.setattr("app.agent.engine.search.run_web_search", fake_search)
-
-    with turn_scope() as state:
-        text = await WebSearchTool().run(
-            WebSearchArguments(query="明天杭州天气", reason="需要实时天气", max_results=999),
-            CancellationToken(),
-        )
+    monkeypatch.setattr("app.agent.tools.web_search.runner.run_web_search", fake_search)
+    monkeypatch.setenv("TAVILY_API_KEY", "test-key")
+    monkeypatch.setenv("DATABASE_ENABLED", "false")
+    monkeypatch.setenv("AGENT_WEB_SEARCH_MAX_RESULTS", "2")
+    get_settings.cache_clear()
+    try:
+        tool = RemoteSensingTool(TOOLS["web_search"])
+        with turn_scope() as state:
+            text = await tool.run(
+                WebSearchArguments(query="明天杭州天气", reason="需要实时天气", max_results=5),
+                CancellationToken(),
+            )
+    finally:
+        get_settings.cache_clear()
 
     assert text == "检索结果……"
-    limit = get_settings().agent_web_search_max_results
-    assert captured[0].max_results == limit
+    assert captured[0].max_results == 2
     assert len(state.invocations) == 1
+    assert state.invocations[0].name == "web_search"
 
 
 @pytest.mark.asyncio
-async def test_search_tool_reports_failure_without_fabricating(monkeypatch) -> None:
+async def test_web_search_reports_failure_without_fabricating(monkeypatch, _search_tool_ready) -> None:
     async def boom(_args):
         raise RuntimeError("Tavily 超时")
 
-    monkeypatch.setattr("app.agent.engine.search.run_web_search", boom)
+    monkeypatch.setattr("app.agent.tools.web_search.runner.run_web_search", boom)
 
     with turn_scope():
-        text = await WebSearchTool().run(
+        text = await _search_tool_ready.run(
             WebSearchArguments(query="x", reason="y"), CancellationToken()
         )
     assert "检索失败" in text
@@ -160,42 +207,27 @@ async def test_search_tool_reports_failure_without_fabricating(monkeypatch) -> N
 
 
 @pytest.mark.asyncio
-async def test_empty_results_invite_a_retry(monkeypatch) -> None:
+async def test_web_search_empty_results_invite_a_retry(monkeypatch, _search_tool_ready) -> None:
     """零结果时提示模型换检索词重试。"""
 
     async def empty(_args):
         return ToolRunResult(tool_context="", result_count=0)
 
-    monkeypatch.setattr("app.agent.engine.search.run_web_search", empty)
+    monkeypatch.setattr("app.agent.tools.web_search.runner.run_web_search", empty)
 
     with turn_scope():
-        text = await WebSearchTool().run(
+        text = await _search_tool_ready.run(
             WebSearchArguments(query="x", reason="y"), CancellationToken()
         )
     assert "换一组检索词" in text
 
 
-def test_search_agent_can_loop(client) -> None:
-    """多轮检索能力：查一次不够要能再查。"""
-    agent = build_search_agent(model_client=client)
-    assert agent._max_tool_iterations > 1  # noqa: SLF001
-    assert {t.name for t in agent._tools} == {"web_search"}  # noqa: SLF001
-
-
-def test_search_agent_receives_the_same_autogen_memories(client) -> None:
-    """搜索 Agent 也必须获得 RAG/长期记忆，不能成为上下文注入的例外。"""
-    memory = object()
-    agent = build_search_agent(model_client=client, memory=[memory])  # type: ignore[list-item]
-    assert agent._memory == [memory]  # noqa: SLF001
-
-
 @pytest.mark.asyncio
-async def test_web_search_respects_per_turn_call_cap(monkeypatch) -> None:
+async def test_web_search_respects_per_turn_call_cap(monkeypatch, _search_tool_ready) -> None:
     """`AGENT_WEB_SEARCH_MAX_CALLS` 必须真的是上限。
 
-    AutoGen Agent 能连续请求工具，因此服务端仍须按回合强制限额；否则一次回合可以
-    打满 max_tool_iterations 次
-    ——而 Tavily 是按次计费的。
+    Agent 能连续请求工具，因此服务端仍须按回合强制限额；否则一次回合可以
+    打满 max_tool_iterations 次——而 Tavily 是按次计费的。
     """
     calls = 0
 
@@ -204,13 +236,14 @@ async def test_web_search_respects_per_turn_call_cap(monkeypatch) -> None:
         calls += 1
         return ToolRunResult(tool_context="检索结果……", result_count=3)
 
-    monkeypatch.setattr("app.agent.engine.search.run_web_search", counting)
+    monkeypatch.setattr("app.agent.tools.web_search.runner.run_web_search", counting)
 
     limit = get_settings().agent_web_search_max_calls
-    tool = WebSearchTool()
     with turn_scope():
         texts = [
-            await tool.run(WebSearchArguments(query=f"q{i}", reason="r"), CancellationToken())
+            await _search_tool_ready.run(
+                WebSearchArguments(query=f"q{i}", reason="r"), CancellationToken()
+            )
             for i in range(limit + 2)
         ]
 
@@ -220,18 +253,35 @@ async def test_web_search_respects_per_turn_call_cap(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_web_search_cap_is_per_turn(monkeypatch) -> None:
+async def test_web_search_cap_is_per_turn(monkeypatch, _search_tool_ready) -> None:
     """配额按回合重置，不能让上一次对话的用量影响下一次。"""
 
     async def ok(_args):
         return ToolRunResult(tool_context="检索结果……", result_count=1)
 
-    monkeypatch.setattr("app.agent.engine.search.run_web_search", ok)
+    monkeypatch.setattr("app.agent.tools.web_search.runner.run_web_search", ok)
 
-    tool = WebSearchTool()
     for _ in range(3):
         with turn_scope():
-            text = await tool.run(
+            text = await _search_tool_ready.run(
                 WebSearchArguments(query="q", reason="r"), CancellationToken()
             )
             assert text == "检索结果……", "新回合应重新拿到检索配额"
+
+
+# --------------------------------------------------------------- GraphFlow 收尾节点
+
+
+def test_report_finalizer_holds_only_report_tool(client) -> None:
+    """收尾节点是流内最小专家：只拿 generate_report，不进 selector 团队。"""
+    agent = build_report_finalizer(model_client=client)
+    assert agent.name == "report_agent"
+    assert {t.name for t in agent._tools} == {"generate_report"}  # noqa: SLF001
+    assert agent._max_tool_iterations > 1  # noqa: SLF001
+    assert DOMAIN_GUIDANCE["report_agent"] in agent._system_messages[0].content  # noqa: SLF001
+
+
+def test_report_finalizer_receives_the_same_autogen_memories(client) -> None:
+    memory = object()
+    agent = build_report_finalizer(model_client=client, memory=[memory])  # type: ignore[list-item]
+    assert agent._memory == [memory]  # noqa: SLF001

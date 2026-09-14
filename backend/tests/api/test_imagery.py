@@ -78,8 +78,8 @@ def test_imagery_upload_rejects_invalid_geotiff_without_500(monkeypatch, tmp_pat
     )
 
     assert response.status_code == 422
-    assert "GeoTIFF" in response.json()["detail"]
-    assert "not a geotiff" not in response.json()["detail"]
+    assert "GeoTIFF" in response.json()["error"]["message"]
+    assert "not a geotiff" not in response.json()["error"]["message"]
 
 
 def test_imagery_upload_propagates_processing_exception_through_to_thread(
@@ -100,7 +100,7 @@ def test_imagery_upload_propagates_processing_exception_through_to_thread(
     )
 
     assert response.status_code == 422
-    assert "synthetic" not in response.json()["detail"]  # 异常细节不外泄
+    assert "synthetic" not in response.json()["error"]["message"]  # 异常细节不外泄
     # 失败清理：imagery 根目录下不应残留任何影像子目录
     imagery_root = tmp_path / "imagery"
     leftover = [p for p in imagery_root.iterdir() if p.is_dir()] if imagery_root.exists() else []
@@ -341,12 +341,17 @@ def make_minio_client(
     store = _FakeObjectStore()
     db = _FakeImageryDB()
     monkeypatch.setattr("app.api.routes.imagery.get_object_store", lambda: store)
+    monkeypatch.setattr("app.services.imagery_persist.get_object_store", lambda: store)
     monkeypatch.setattr("app.api.routes.imagery.object_store_for", lambda b: store)
     if with_db:
         monkeypatch.setattr("app.api.routes.imagery.fetch_optional_pool", lambda: _wrap(_FakePool()))
         monkeypatch.setattr("app.api.routes.imagery.db_insert_imagery", db.insert)
+        # 持久化逻辑下沉后，patch 面向服务模块
+        monkeypatch.setattr("app.services.imagery_persist.fetch_optional_pool", lambda: _wrap(_FakePool()))
+        monkeypatch.setattr("app.services.imagery_persist.db_insert_imagery", db.insert)
         monkeypatch.setattr("app.api.routes.imagery.db_get_imagery", db.get)
         monkeypatch.setattr("app.api.routes.imagery.db_delete_imagery", db.delete)
+        monkeypatch.setattr("app.services.imagery_persist.db_delete_imagery", db.delete)
         monkeypatch.setattr("app.api.routes.imagery.db_list_imagery", db.list)
     else:
         monkeypatch.setattr("app.api.routes.imagery.fetch_optional_pool", lambda: _wrap(None))

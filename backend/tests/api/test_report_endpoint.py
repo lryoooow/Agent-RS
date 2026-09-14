@@ -57,9 +57,9 @@ def test_create_report_maps_error_codes_to_status(monkeypatch, tmp_path: Path) -
         # O6：detail 必须是 {code,message} 对象信封（与其余路由/全局处理器一致），
         # 前端 readErrorMessage 依赖 detail.message；裸字符串会让错误降级为不可读。
         body = resp.json()
-        assert isinstance(body["detail"], dict)
-        assert body["detail"]["code"] == code
-        assert body["detail"]["message"]
+        assert isinstance(body["error"], dict)
+        assert body["error"]["code"] == code
+        assert body["error"]["message"]
 
 
 def test_create_report_rejects_bad_imagery_id(monkeypatch, tmp_path: Path) -> None:

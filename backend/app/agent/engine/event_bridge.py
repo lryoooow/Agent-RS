@@ -40,7 +40,6 @@ from autogen_agentchat.messages import (
 )
 
 from app.agent.engine.agents import agent_label
-from app.agent.engine.search import SEARCH_AGENT_LABEL, SEARCH_AGENT_NAME
 from app.agent.prompting.scenarios import (
     tool_ready_label,
     tool_request_label,
@@ -67,8 +66,6 @@ class BridgeState:
 
 
 def _agent_label(agent_name: str) -> str:
-    if agent_name == SEARCH_AGENT_NAME:
-        return SEARCH_AGENT_LABEL
     return agent_label(agent_name)
 
 

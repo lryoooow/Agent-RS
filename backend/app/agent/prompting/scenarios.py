@@ -18,6 +18,8 @@ TOOL_FINAL_PROMPTS: dict[str, str] = {
     "ocr_recognize": "正在基于影像文字识别结果生成回答",
     "generate_report": "正在基于分析报告生成回答",
     "look_at_location": "正在确认地图定位结果",
+    "search_imagery": "正在基于影像检索结果生成回答",
+    "fetch_scene": "正在基于导入的卫星影像生成回答",
 }
 
 
@@ -36,6 +38,8 @@ TOOL_REQUEST_LABELS: dict[str, str] = {
     "ocr_recognize": "请求调用影像文字识别",
     "generate_report": "请求生成分析报告",
     "look_at_location": "请求定位地图",
+    "search_imagery": "请求检索卫星影像",
+    "fetch_scene": "请求导入卫星影像",
 }
 
 
@@ -54,6 +58,8 @@ TOOL_READY_LABELS: dict[str, str] = {
     "ocr_recognize": "影像文字识别结果已整理",
     "generate_report": "分析报告已生成",
     "look_at_location": "地图定位已完成",
+    "search_imagery": "影像检索结果已整理",
+    "fetch_scene": "卫星影像已导入",
 }
 
 
@@ -74,6 +80,8 @@ TOOL_RUNNING_LABELS: dict[str, str] = {
     "ocr_recognize": "正在识别影像文字",
     "generate_report": "正在生成分析报告",
     "look_at_location": "正在定位地图",
+    "search_imagery": "正在检索卫星影像",
+    "fetch_scene": "正在导入卫星影像",
 }
 
 

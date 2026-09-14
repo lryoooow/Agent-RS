@@ -62,8 +62,22 @@ export async function readStreamResponse(res: Response, handlers: StreamHandlers
     await reader.cancel().catch(() => undefined);
   }
 
+  // P2 加固①：90s 空闲看门狗——连接开着但上游停滞（代理/模型挂起）时，
+  // 不能让 loading 状态无限转下去。任何新事件重置计时。
+  const IDLE_TIMEOUT_MS = 90_000;
+  let idleTimer: ReturnType<typeof setTimeout> | undefined;
+
   while (true) {
-    const { done, value } = await reader.read();
+    const readResult = await Promise.race([
+      reader.read(),
+      new Promise<never>((_, reject) => {
+        idleTimer = setTimeout(
+          () => reject(new Error("连接空闲超时，请重试。")),
+          IDLE_TIMEOUT_MS,
+        );
+      }),
+    ]).finally(() => clearTimeout(idleTimer));
+    const { done, value } = readResult;
     buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done }).replace(/\r\n/g, "\n");
 
     let separator = buffer.indexOf("\n\n");
@@ -89,7 +103,9 @@ export async function readStreamResponse(res: Response, handlers: StreamHandlers
           return;
         }
       }
-      return;
+      // P2 加固②：EOF 但没有收到应用层 done 事件——代理掐断连接的典型形态。
+      // 静默返回会把半截回答当完整结果渲染；显式抛错让上层出错误气泡。
+      throw new Error("连接中断，回答可能不完整。请重试。");
     }
   }
 }

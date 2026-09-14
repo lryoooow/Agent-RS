@@ -1,4 +1,5 @@
-import type { GeospatialReportResult, GeospatialResult, ChatTurn, LegendInfo } from "../types";
+import type { GeospatialReportResult, GeospatialResult,
+  GeospatialSceneSearchResult, ChatTurn, LegendInfo } from "../types";
 import { DETECTION_CLASSES, LANDCOVER_CLASSES, NDVI_RAMP, WATER_RAMP } from "../data/rs";
 
 // 图层视图模型：地图叠加 + 右侧图层面板共用。
@@ -46,8 +47,10 @@ function backendLegend(legend: LegendInfo | null | undefined): LegendStop[] | un
 }
 
 /** 把一条 geospatial 结果转成一个图层视图模型（id 用 imagery_id + 类型，保证同图同类可替换）。 */
-// 报告结果不是图层（由 layersFromTurns 提前排除），故入参排除 report 类型。
-function layerFromResult(result: Exclude<GeospatialResult, GeospatialReportResult>): RSLayer {
+// 报告/影像检索结果不是图层（由 layersFromTurns 提前排除），故入参排除这两种类型。
+function layerFromResult(
+  result: Exclude<GeospatialResult, GeospatialReportResult | GeospatialSceneSearchResult>,
+): RSLayer {
   const idShort = result.imagery_id.slice(0, 8);
   const base = {
     url: result.result_url || undefined,
@@ -140,7 +143,7 @@ export function layersFromTurns(
   for (const turn of turns) {
     if (!turn.geospatialResult) continue;
     // 报告结果是可下载文档、不是地图图层，跳过（无 result_url/bounds）。
-    if (turn.geospatialResult.type === "report") continue;
+    if (turn.geospatialResult.type === "report" || turn.geospatialResult.type === "scene_search") continue;
     const layer = layerFromResult(turn.geospatialResult);
     byId.set(layer.id, layer); // 后出现覆盖先出现
   }

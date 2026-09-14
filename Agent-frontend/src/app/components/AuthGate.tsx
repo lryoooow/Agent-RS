@@ -48,7 +48,7 @@ export function AuthGate({ auth }: { auth: Auth }) {
         </motion.div>
 
         <motion.ul variants={fadeInUp} className="relative flex flex-col gap-2.5 text-[12px] text-muted-foreground">
-          <Feature icon={<Layers className="size-3.5 text-primary" />}>两级规划 · 三域子智能体编排遥感工具</Feature>
+          <Feature icon={<Layers className="size-3.5 text-primary" />}>主智能体统一编排全部遥感工具</Feature>
           <Feature icon={<Sparkles className="size-3.5 text-primary" />}>对话 / 影像 / 分析一体化工作台</Feature>
           <Feature icon={<ShieldCheck className="size-3.5 text-primary" />}>账户体系 · 数据按账户隔离</Feature>
         </motion.ul>

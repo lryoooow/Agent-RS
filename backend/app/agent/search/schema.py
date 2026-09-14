@@ -4,11 +4,24 @@
 class WebSearchArguments(BaseModel):
     model_config = {"extra": "forbid"}
 
-    query: str = Field(min_length=1)
-    reason: str = Field(min_length=1)
-    max_results: int | None = None
-    # 复合问题（如“天气+攻略”）可由搜索 Agent 拆成多个独立检索词；留空则回退到单一 query。
-    queries: list[str] | None = None
+    query: str = Field(
+        min_length=1,
+        description="聚焦的检索词；不要把整句用户提问原样丢进去",
+    )
+    reason: str = Field(min_length=1, description="为什么这轮回答需要联网检索")
+    max_results: int | None = Field(
+        default=None,
+        ge=1,
+        le=5,
+        description="期望结果条数；服务端强制最终上限，模型说了不算",
+    )
+    # 复合问题（如“天气+攻略”）可拆成多个独立检索词；留空则回退到单一 query。
+    # 数量上限由 effective_queries() 在运行时裁（max_queries=3），不在 schema 层硬卡，
+    # 保证直接以 Python 调用的旧用法仍由方法层统一收敛。
+    queries: list[str] | None = Field(
+        default=None,
+        description="复合问题按意图各写一条聚焦检索词（最多 3 条生效）；简单问题留空",
+    )
 
     @field_validator("query", "reason")
     @classmethod
@@ -21,9 +34,7 @@ class WebSearchArguments(BaseModel):
     @field_validator("queries")
     @classmethod
     def normalize_queries(cls, value: list[str] | None) -> list[str] | None:
-        if value is None:
-            return None
-        cleaned = [item.strip() for item in value if isinstance(item, str) and item.strip()]
+        cleaned = [item.strip() for item in value or [] if isinstance(item, str) and item.strip()]
         return cleaned or None
 
     def effective_queries(self, *, max_queries: int = 3) -> list[str]:
@@ -53,46 +64,3 @@ class WebSearchArguments(BaseModel):
         max_results = self.max_results or max_results_limit
         max_results = max(1, min(max_results, max_results_limit))
         return self.model_copy(update={"max_results": max_results})
-
-
-WEB_SEARCH_TOOL = {
-    "type": "function",
-    "function": {
-        "name": "web_search",
-        "description": (
-            "Search public web pages when the answer needs fresh, external, or verifiable "
-            "information. Use only when the existing conversation context is insufficient."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "Focused search query for the current user question.",
-                },
-                "queries": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "maxItems": 3,
-                    "description": (
-                        "Optional. For compound questions with multiple independent intents "
-                        "(e.g. live weather AND a travel plan), provide one focused query per "
-                        "intent so each topic is retrieved separately. Omit for simple questions."
-                    ),
-                },
-                "reason": {
-                    "type": "string",
-                    "description": "Why web search is needed for this answer.",
-                },
-                "max_results": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "maximum": 5,
-                    "description": "Requested result count. The backend enforces the final cap.",
-                },
-            },
-            "required": ["query", "reason"],
-            "additionalProperties": False,
-        },
-    },
-}

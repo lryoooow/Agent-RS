@@ -1,4 +1,4 @@
-import { LayoutDashboard, Boxes, ListTodo, Database, FileBarChart } from "lucide-react";
+import { LayoutDashboard, Boxes, ListTodo, Database, FileBarChart, Satellite } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { motion, useReducedMotion } from "motion/react";
 import { slideDown } from "../lib/motion";
@@ -13,6 +13,7 @@ interface TaskItem {
 // placeholders for you to wire up later.
 const ITEMS: TaskItem[] = [
   { id: "workspace", label: "工作台", icon: LayoutDashboard },
+  { id: "search", label: "卫星影像", icon: Satellite },
   { id: "tools", label: "模型工具", icon: Boxes },
   { id: "tasks", label: "任务队列", icon: ListTodo },
   { id: "data", label: "数据管理", icon: Database },
@@ -24,17 +25,20 @@ export function TaskBar({
   onOpenData,
   onOpenTasks,
   onOpenReports,
+  onOpenSearch,
 }: {
   onOpenTools: () => void;
   onOpenData: () => void;
   onOpenTasks: () => void;
   onOpenReports: () => void;
+  onOpenSearch: () => void;
 }) {
   const handle = (id: string) => {
     if (id === "tools") onOpenTools();
     else if (id === "data") onOpenData();
     else if (id === "tasks") onOpenTasks();
     else if (id === "reports") onOpenReports();
+    else if (id === "search") onOpenSearch();
     // 「工作台」为当前主视图，无需额外动作
   };
 
