@@ -1,5 +1,8 @@
 // 卫星影像检索 API（免账号公共数据源：Sentinel-2 / Landsat）。
 // 形制对齐 conversations-api.ts：同源 cookie 鉴权 + 统一错误文案提取。
+// 注意：入参是聊天端点（如 /api/chat），必须经 getApiBaseEndpoint 剥掉 /chat
+// 再拼路径——直接拼会得到 /api/chat/scenes/... → 404。
+import { getApiBaseEndpoint } from "../config";
 
 
 export interface SceneCard {
@@ -30,6 +33,10 @@ export interface SceneSearchParams {
   limit?: number;
 }
 
+function apiBase(chatEndpoint: string): string {
+  return getApiBaseEndpoint(chatEndpoint);
+}
+
 async function readApiError(response: Response): Promise<string> {
   try {
     const payload = await response.json();
@@ -46,7 +53,7 @@ export async function searchImagery(
   endpoint: string,
   params: SceneSearchParams,
 ): Promise<SceneSearchResponse> {
-  const response = await fetch(`${endpoint}/scenes/search`, {
+  const response = await fetch(`${apiBase(endpoint)}/scenes/search`, {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
@@ -67,7 +74,7 @@ export async function importScene(
   endpoint: string,
   sceneKey: string,
 ): Promise<SceneImportResponse> {
-  const response = await fetch(`${endpoint}/scenes/${sceneKey}/import`, {
+  const response = await fetch(`${apiBase(endpoint)}/scenes/${sceneKey}/import`, {
     method: "POST",
     credentials: "include",
   });
