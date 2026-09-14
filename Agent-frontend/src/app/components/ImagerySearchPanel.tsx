@@ -20,6 +20,7 @@ import {
 } from "./ui/select";
 import {
   absoluteUrl,
+  downloadSceneTif,
   importScene,
   searchImagery,
   type SceneCard,
@@ -60,6 +61,8 @@ export function ImagerySearchPanel({
   const [searched, setSearched] = useState(false);
   const [importing, setImporting] = useState<string | null>(null);
   const [imported, setImported] = useState<Record<string, string>>({}); // key → imagery_id
+  const [downloading, setDownloading] = useState<string | null>(null);
+  const [downloaded, setDownloaded] = useState<Record<string, string>>({}); // key → 文件名 (大小)
 
   const useCurrentView = () => {
     const map = mapRef.current;
@@ -121,6 +124,21 @@ export function ImagerySearchPanel({
       ],
       { padding: 96, duration: 900 },
     );
+  };
+
+  const downloadTif = async (scene: SceneCard) => {
+    setDownloading(scene.key);
+    setError(null);
+    try {
+      const result = await downloadSceneTif(scene.key, scene.item_id);
+      const sizeMb = (result.sizeBytes / 1024 / 1024).toFixed(1);
+      setDownloaded((prev) => ({ ...prev, [scene.key]: `${result.filename}（${sizeMb} MB）` }));
+    } catch (exc) {
+      const message = exc instanceof Error ? exc.message : "下载失败，请稍后重试。";
+      setError(`下载 ${scene.item_id} 失败：${message}`);
+    } finally {
+      setDownloading(null);
+    }
   };
 
   const importToPlatform = async (scene: SceneCard) => {
@@ -359,13 +377,23 @@ export function ImagerySearchPanel({
                         >
                           <Eye className="size-3" /> 预览
                         </Button>
-                        <a
-                          href={absoluteUrl(scene.download_url)}
-                          download={`${scene.item_id}.tif`}
-                          className="flex h-7 flex-1 items-center justify-center gap-1 rounded-md border border-border bg-card text-[11px] transition-colors hover:bg-card/60"
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-7 flex-1 text-[11px]"
+                          disabled={downloading === scene.key}
+                          onClick={() => downloadTif(scene)}
                         >
-                          <Download className="size-3" /> 下载 TIF
-                        </a>
+                          {downloading === scene.key ? (
+                            <>
+                              <Loader2 className="size-3 animate-spin" /> 合成中…
+                            </>
+                          ) : (
+                            <>
+                              <Download className="size-3" /> 下载 TIF
+                            </>
+                          )}
+                        </Button>
                         <Button
                           variant="secondary"
                           size="sm"

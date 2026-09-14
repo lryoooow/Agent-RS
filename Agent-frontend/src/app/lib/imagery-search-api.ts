@@ -86,3 +86,30 @@ export async function importScene(
 export function absoluteUrl(path: string): string {
   return path.startsWith("http") ? path : `${window.location.origin}${path}`;
 }
+
+// 下载场景 TIF：fetch → blob → 保存。
+// 不用 <a href> 直跳：首次下载需服务端远程合成（可达数十秒），anchor 导航
+// 零反馈零错误呈现，用户只会觉得"点了没反应"；fetch 版本可给 loading、
+// 错误与超时（180s，合成是重活），scene.tif 有磁盘缓存所以二次下载很快。
+export async function downloadSceneTif(
+  sceneKey: string,
+  itemId: string,
+  options?: { signal?: AbortSignal },
+): Promise<{ filename: string; sizeBytes: number }> {
+  const response = await fetch(absoluteUrl(`/api/scenes/${sceneKey}/download`), {
+    credentials: "include",
+    signal: options?.signal ?? AbortSignal.timeout(180_000),
+  });
+  if (!response.ok) throw new Error(await readApiError(response));
+  const blob = await response.blob();
+  const filename = `${itemId}.tif`;
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30_000);
+  return { filename, sizeBytes: blob.size };
+}
