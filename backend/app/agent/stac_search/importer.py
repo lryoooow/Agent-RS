@@ -14,6 +14,7 @@ import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
+from app.services.imagery_persist import _extract_metadata, _file_sha256, _persist_imagery_record
 from app.agent.stac_search.raster import SceneRasterError, compose_scene_tif, render_scene_preview
 from app.core.paths import imagery_root, scenes_root
 
@@ -30,10 +31,6 @@ def _user_scene_dir(user_id: str, key: str) -> Path:
 
 async def import_scene_as_imagery(record, user_id: str) -> dict:
     """把 SceneRecord 合成并注册为平台影像，返回 {imagery_id, ...}。"""
-    # 延迟导入：这三个助手在 API 路由模块里，而路由又依赖 agent 层——
-    # 模块级导入会形成 tool_registry → importer → routes → ai_service 的环。
-    from app.api.routes.imagery import _extract_metadata, _file_sha256, _persist_imagery_record
-
     staged = _user_scene_dir(user_id, record.key) / "scene.tif"
     compose_meta: dict = {}
     try:

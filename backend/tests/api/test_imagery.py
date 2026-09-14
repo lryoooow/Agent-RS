@@ -341,12 +341,17 @@ def make_minio_client(
     store = _FakeObjectStore()
     db = _FakeImageryDB()
     monkeypatch.setattr("app.api.routes.imagery.get_object_store", lambda: store)
+    monkeypatch.setattr("app.services.imagery_persist.get_object_store", lambda: store)
     monkeypatch.setattr("app.api.routes.imagery.object_store_for", lambda b: store)
     if with_db:
         monkeypatch.setattr("app.api.routes.imagery.fetch_optional_pool", lambda: _wrap(_FakePool()))
         monkeypatch.setattr("app.api.routes.imagery.db_insert_imagery", db.insert)
+        # 持久化逻辑下沉后，patch 面向服务模块
+        monkeypatch.setattr("app.services.imagery_persist.fetch_optional_pool", lambda: _wrap(_FakePool()))
+        monkeypatch.setattr("app.services.imagery_persist.db_insert_imagery", db.insert)
         monkeypatch.setattr("app.api.routes.imagery.db_get_imagery", db.get)
         monkeypatch.setattr("app.api.routes.imagery.db_delete_imagery", db.delete)
+        monkeypatch.setattr("app.services.imagery_persist.db_delete_imagery", db.delete)
         monkeypatch.setattr("app.api.routes.imagery.db_list_imagery", db.list)
     else:
         monkeypatch.setattr("app.api.routes.imagery.fetch_optional_pool", lambda: _wrap(None))

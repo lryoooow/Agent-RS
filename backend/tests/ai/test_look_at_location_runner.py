@@ -21,12 +21,10 @@ async def test_look_at_location_success_sets_map_target(monkeypatch: pytest.Monk
     monkeypatch.setattr("app.agent.tools.look_at_location.runner.forward_geocode", fake_forward)
 
     args = LookAtLocationArguments(query="深圳南山")
-    with turn_scope() as state:
+    with turn_scope() as state:  # 通道改经 metadata（引擎包装层转移），runner 不再写状态
         result = await run_look_at_location(args)
         # autogen 链路：写入回合状态，编排层 mid-stream 取走发 map_control。
-        assert state.map_target is not None
-        assert state.map_target["center"] == [113.9, 22.5]
-        assert state.map_target["bbox"] == [[113.8, 22.4], [114.0, 22.6]]
+        assert state.map_target is None, "runner 不得直接写编排状态"
 
     # legacy 链路：map_target 在 metadata，runtime 取走发事件。
     assert result.error is None

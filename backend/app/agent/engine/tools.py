@@ -106,6 +106,11 @@ class RemoteSensingTool(BaseTool[BaseModel, str]):
 
         result = await run_prepared_tool(prepared)
         self._record(state, arguments, result)
+        # 对话控图：产物经 result.metadata 回流（业务 runner 不写编排状态），
+        # 这里转移到回合状态，service 层 mid-stream 取走发 map_control 事件。
+        map_target = getattr(result, "metadata", None) or {}
+        if isinstance(map_target, dict) and map_target.get("map_target") and state is not None:
+            state.map_target = dict(map_target["map_target"])
 
         if result.error:
             return (
