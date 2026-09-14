@@ -138,9 +138,15 @@ export function ImagerySearchPanel({
 
   return (
     <>
-      {/* 左侧：检索条件（NASA EarthData 的左栏筛选形态） */}
-      <Sheet open={open} onOpenChange={onOpenChange}>
-        <SheetContent side="left" className="flex w-[340px] flex-col gap-0 bg-sidebar p-0 sm:max-w-[340px]">
+      {/* 左侧：检索条件（NASA EarthData 的左栏筛选形态）。
+          非模态（中央地图保持可交互）+ 阻止"点外部即关闭"：左右两栏共享开关，
+          互点与点地图都会被另一栏判为外部交互而误关；关闭走右上角 X / ESC。 */}
+      <Sheet open={open} onOpenChange={onOpenChange} modal={false}>
+        <SheetContent
+          side="left"
+          className="flex w-[340px] flex-col gap-0 bg-sidebar p-0 sm:max-w-[340px]"
+          onInteractOutside={(e) => e.preventDefault()}
+        >
           <SheetHeader className="border-b border-border px-4 py-3">
             <SheetTitle className="flex items-center gap-2" style={{ fontFamily: "var(--font-display)" }}>
               <Satellite className="size-4 text-primary" />
@@ -284,9 +290,13 @@ export function ImagerySearchPanel({
         </SheetContent>
       </Sheet>
 
-      {/* 右侧：结果列表（与左侧同时开合，中央留给主地图 → 三栏形态） */}
-      <Sheet open={open} onOpenChange={onOpenChange}>
-        <SheetContent side="right" className="flex w-[400px] flex-col gap-0 bg-sidebar p-0 sm:max-w-[400px]">
+      {/* 右侧：结果列表（与左侧同时开合，中央留给主地图 → 三栏形态）。 */}
+      <Sheet open={open} onOpenChange={onOpenChange} modal={false}>
+        <SheetContent
+          side="right"
+          className="flex w-[400px] flex-col gap-0 bg-sidebar p-0 sm:max-w-[400px]"
+          onInteractOutside={(e) => e.preventDefault()}
+        >
           <SheetHeader className="border-b border-border px-4 py-3">
             <SheetTitle className="flex items-center gap-2" style={{ fontFamily: "var(--font-display)" }}>
               <Search className="size-4 text-primary" />
