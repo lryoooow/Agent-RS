@@ -1,6 +1,8 @@
 from contextlib import asynccontextmanager
 
 import logging
+import time
+import uuid
 
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
@@ -14,7 +16,7 @@ from app.agent.errors import AIError
 from app.agent.geocode import aclose_geocode_client
 from app.agent.persistence import drain_persistence_tasks
 from app.agent.tool_jobs import start_tool_job_worker, stop_tool_job_worker
-from app.auth import reset_current_user_id, set_current_user_id
+from app.auth import get_current_user_id, reset_current_user_id, set_current_user_id
 from app.auth.session import AuthSessionUnavailable, get_session_user
 from app.db.pool import close_db_pool, fetch_optional_pool, init_db_pool
 from app.documents.task_registry import recover_document_jobs, shutdown_tasks
@@ -116,6 +118,11 @@ def create_app() -> FastAPI:
 
     @app.middleware("http")
     async def bind_current_user(request, call_next):
+        # P3 可观测性：请求 ID（透传或生成）+ 完成日志（method/path/status/
+        # duration/user）。工具审计日志（tool.invoke）自此可与 HTTP 流量按
+        # request_id 关联；替代 uvicorn 噪声 access log 的关键信息。
+        request_id = request.headers.get("x-request-id") or uuid.uuid4().hex[:16]
+        started = time.perf_counter()
         content_type = request.headers.get("content-type", "")
         content_length = request.headers.get("content-length")
         try:
@@ -166,7 +173,26 @@ def create_app() -> FastAPI:
             )
             if settings.auth_cookie_secure:
                 response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+            response.headers["X-Request-ID"] = request_id
+            logger.info(
+                "http.request id=%s method=%s path=%s status=%s duration_ms=%d user=%s",
+                request_id,
+                request.method,
+                request.url.path,
+                response.status_code,
+                (time.perf_counter() - started) * 1000,
+                get_current_user_id() or "<anonymous>",
+            )
             return response
+        except Exception:
+            logger.exception(
+                "http.request id=%s method=%s path=%s failed duration_ms=%d",
+                request_id,
+                request.method,
+                request.url.path,
+                (time.perf_counter() - started) * 1000,
+            )
+            raise
         finally:
             reset_current_user_id(context_token)
 
