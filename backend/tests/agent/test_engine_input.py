@@ -70,10 +70,10 @@ async def test_turn_input_converts_roi_to_trusted_segment_arguments(monkeypatch)
     )
     turn = await build_turn_input(request, user_id="u1")
 
-    assert turn.trusted_tool_arguments == {
-        "segment_landcover": {
+    assert turn.trusted_tool_arguments["prepare_map_roi"] == {"bbox": [110.0, 20.0, 111.0, 21.0]}
+    assert turn.trusted_tool_arguments["segment_instances"] == {
+            "imagery_id": "map_roi_pending",
             "bbox": [110.0, 20.0, 111.0, 21.0],
             "bbox_crs": "EPSG:4326",
             "pixel_bbox": None,
-        }
     }

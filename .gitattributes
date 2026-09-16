@@ -1,0 +1,2 @@
+# Unified diff context markers intentionally end in a space on blank context lines.
+ops/*.patch -whitespace

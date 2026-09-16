@@ -49,6 +49,7 @@ function LayerCard({
         </div>
         <button
           onClick={onToggle}
+          aria-label={`${layer.visible ? "隐藏" : "显示"}${layer.name} ${layer.id}`}
           className="grid size-6 place-items-center rounded text-muted-foreground transition-colors hover:text-primary"
         >
           {layer.visible ? <Eye className="size-3.5" /> : <EyeOff className="size-3.5" />}
@@ -56,6 +57,7 @@ function LayerCard({
         {layer.kind !== "imagery" && (
           <button
             onClick={onRemove}
+            aria-label={`移除${layer.name} ${layer.id}`}
             className="grid size-6 place-items-center rounded text-muted-foreground transition-colors hover:text-destructive"
           >
             <Trash2 className="size-3.5" />
@@ -67,6 +69,7 @@ function LayerCard({
         <div className="flex items-center gap-2">
           <span className="font-mono text-[10px] text-muted-foreground">不透明</span>
           <Slider
+            aria-label={`${layer.name}不透明度`}
             value={[Math.round(layer.opacity * 100)]}
             max={100}
             step={1}
@@ -165,7 +168,7 @@ export function RightPanel({
                     <p className="font-mono text-[10px]">上传影像或运行模型后生成</p>
                   </div>
                 ) : (
-                  layers.map((l) => (
+                  [...layers].reverse().map((l) => (
                     <LayerCard
                       key={l.id}
                       layer={l}

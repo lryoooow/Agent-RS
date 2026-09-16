@@ -127,6 +127,20 @@ function layerFromResult(
           ? result.classes.map((c) => ({ label: `${c.label || c.name} ${fmt(c.percentage)}%`, color: c.color }))
           : LANDCOVER_CLASSES,
       };
+    case "instance_segmentation":
+      return {
+        ...base,
+        id: `sam3-${result.imagery_id}-${result.concepts.join("-")}`,
+        name: "SAM3 实例分割",
+        sublabel: `${result.instance_count} 个实例 · ${result.concepts.join(" / ")}`,
+        kind: "segmentation",
+        opacity: 0.72,
+        color: KIND_COLOR.segmentation,
+        legend: Object.entries(result.counts).map(([concept, count]) => ({
+          label: `${concept} ${count}`,
+          color: KIND_COLOR.segmentation,
+        })),
+      };
   }
 }
 
@@ -145,7 +159,11 @@ export function layersFromTurns(
     // 报告结果是可下载文档、不是地图图层，跳过（无 result_url/bounds）。
     if (turn.geospatialResult.type === "report" || turn.geospatialResult.type === "scene_search") continue;
     const layer = layerFromResult(turn.geospatialResult);
-    byId.set(layer.id, layer); // 后出现覆盖先出现
+    if (turn.geospatialResult.type !== "preview" && layer.url) {
+      layer.id += `-${encodeURIComponent(layer.url.split("/").pop()!)}`;
+    }
+    byId.delete(layer.id);
+    byId.set(layer.id, layer);
   }
   const layers = [...byId.values()]
     .map((layer) => {
@@ -162,7 +180,7 @@ export function layersFromTurns(
 
   // imagery 类置底（先渲染，作为其它结果图层的底图）。
   return layers.sort((a, b) => {
-    const rank = (l: RSLayer) => (l.kind === "imagery" ? 1 : 0);
+    const rank = (l: RSLayer) => (l.kind === "imagery" ? 0 : 1);
     return rank(a) - rank(b);
   });
 }

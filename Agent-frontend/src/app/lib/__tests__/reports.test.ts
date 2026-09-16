@@ -77,7 +77,7 @@ describe("reportsFromTurns", () => {
     const turns: ChatTurn[] = [{ id: "t1", role: "assistant", content: "", toolResult: tool }];
     const r = reportsFromTurns(turns);
     expect(r[0].kind).toBe("影像质检");
-    expect(r[0].stats.find((s) => s.label === "尺寸")?.value).toBe("2048 × 1024");
+    expect(r[0].stats.find((s) => s.label === "分析网格")?.value).toBe("2048 × 1024");
     expect(r[0].stats.find((s) => s.label === "坐标系")?.value).toBe("EPSG:32650");
   });
 

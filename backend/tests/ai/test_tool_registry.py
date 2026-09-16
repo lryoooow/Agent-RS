@@ -35,7 +35,8 @@ def test_web_search_is_registered_as_shared_tool() -> None:
     assert "calculate_spectral_index" in names
     assert "render_band_composite" in names
     assert "detect_objects" in names
-    assert "segment_landcover" in names
+    assert "segment_instances" in names
+    assert "segment_landcover" not in names
     assert "cloud_shadow_mask" in names
     assert "extract_water_mask" in names
     assert "clip_reproject_raster" in names

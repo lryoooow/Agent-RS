@@ -6,6 +6,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
+from app.agent.rag.relevance import semantic_similarity
 from app.agent.rag.formatter import format_retrieved_blocks
 from app.agent.rag.mmr import mmr_select
 from app.agent.rerank import get_rerank_service
@@ -43,6 +44,13 @@ async def retrieve_rag_context(
         )
     trace["candidates"] = len(chunks)
     trace["recall_ms"] = int((time.perf_counter() - started) * 1000)
+    threshold = settings.rag_min_similarity
+    qualified = [c for c in chunks if semantic_similarity(c, embedding) >= threshold]
+    trace["relevance_rejected"] = len(chunks) - len(qualified)
+    trace["min_similarity"] = threshold
+    chunks = qualified
+    if not chunks:
+        return RAGResult(context=None, retrieved_chunks=0, trace=trace)
     started = time.perf_counter()
     chunks = await get_rerank_service().rerank(
         query=query,
@@ -61,6 +69,14 @@ async def retrieve_rag_context(
         trace["mmr_selected"] = len(chunks)
     else:
         chunks = chunks[: settings.rerank_top_n or settings.rag_retrieval_limit]
+    graph_context = ""
+    if settings.knowledge_graph_enabled and user_id:
+        try:
+            from app.knowledge.service import guidance
+            graph_context, count = await guidance(user_id, chunks)
+            trace["graph_relations"] = count
+        except Exception:
+            trace["graph_unavailable"] = True
     # 上下文链接：给每个锚点块补回相邻块（±radius），修复"命中孤立块、跨块论述被切断"。
     # 仅当开启且有归属用户时执行；失败不影响主链路（降级为纯锚点块）。
     if settings.rag_context_expansion_enabled and user_id:
@@ -75,11 +91,32 @@ async def retrieve_rag_context(
         except Exception:
             trace["expansion_error"] = True
     retrieved_chunks = sum(1 for chunk in chunks if str(chunk.get("content") or "").strip())
+    documents = format_retrieved_blocks(chunks, title="document") or ""
+    budget = max(0, settings.ai_context_max_rag_chars)
+    graph = _limit_context(graph_context, min(1500, budget // 3))
+    context = _limit_context(documents, budget - len(graph)) + graph
+    trace["source_context_chars"] = len(documents) + len(graph_context)
+    trace["context_chars"] = len(context)
     return RAGResult(
-        context=format_retrieved_blocks(chunks, title="document"),
+        context=context or None,
         retrieved_chunks=retrieved_chunks,
         trace=trace,
     )
+
+
+def _limit_context(text: str, budget: int) -> str:
+    if budget <= 0:
+        return ""
+    if len(text) <= budget:
+        return text
+    suffix = "\n（后续相关片段已省略）\n"
+    if budget < len(suffix):
+        return ""
+    prefix = text[:budget-len(suffix)]
+    boundary = prefix.rfind("\n")
+    if boundary > len(prefix) // 2:
+        prefix = prefix[:boundary]
+    return prefix + suffix
 
 
 async def _expand_context(

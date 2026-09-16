@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from contextlib import aclosing
 from dataclasses import dataclass
 from typing import Any, AsyncIterator
 
-from app.agent.config import resolve_ai_config
+from app.agent.config import resolve_ai_config, ResolvedAIConfig
+from app.agent.roi_buildings import is_direct_building_request
 from app.agent.engine import complete_turn, stream_turn_events
 from app.agent.errors import AIError, map_provider_error
 from app.agent.persistence import (
@@ -26,6 +28,7 @@ from app.agent.stream import (
     sse_event,
 )
 from app.agent.thinking_summary import ThinkingSummaryTracker
+from app.auth import conversation_scope
 from app.core.logging import log_event
 from app.schemas.chat import ChatRequest, ChatResponse
 
@@ -53,11 +56,12 @@ class AIService:
         setup = await self._prepare_chat_execution(request)
         persistence = setup.persistence
         try:
-            turn = await complete_turn(
-                request=setup.context_request,
-                user_id=persistence.user_id,
-                config=setup.config,
-            )
+            with conversation_scope(persistence.conversation_id):
+                turn = await complete_turn(
+                    request=setup.context_request,
+                    user_id=persistence.user_id,
+                    config=setup.config,
+                )
         except Exception as exc:
             await mark_assistant_failed(persistence, exc)
             raise map_provider_error(exc) from exc
@@ -74,6 +78,7 @@ class AIService:
             retrieved_chunks=turn.retrieved_chunks,
             rag_trace=turn.rag_trace,
             agent_trace=self._agent_trace_payload(turn.trace),
+            active_imagery_id=getattr(turn, "active_imagery_id", None),
             geospatial_result=turn.geospatial_result,
             tool_result=turn.tool_result,
         )
@@ -82,6 +87,7 @@ class AIService:
             content=result.content,
             usage=turn.usage or {},
             finish_reason=finish_reason,
+            active_imagery_id=getattr(turn, "active_imagery_id", None),
             geospatial_result=turn.geospatial_result,
             tool_result=turn.tool_result,
         )
@@ -120,33 +126,35 @@ class AIService:
             summary = ThinkingSummaryTracker()
             if summary_data := summary.advance("context"):
                 yield sse_event("thinking_summary", summary_data)
-            async for kind, payload in stream_turn_events(
-                request=setup.context_request,
-                user_id=persistence.user_id,
-                config=setup.config,
-            ):
-                if kind == "status":
-                    yield agent_status_event(
-                        payload.stage,
-                        label=payload.label,
-                        **payload.metadata,
-                        elapsed_ms=payload.elapsed_ms,
-                    )
-                    if summary_data := summary.advance_for_agent_event(payload.stage):
-                        yield sse_event("thinking_summary", summary_data)
-                elif kind == "delta":
-                    if not answering_announced:
-                        yield analysis_status_event("preparing")
-                        yield analysis_status_event("answering")
-                        if summary_data := summary.advance("answer"):
-                            yield sse_event("thinking_summary", summary_data)
-                        answering_announced = True
-                    parts.append(payload)
-                    yield sse_event("delta", {"content": payload})
-                elif kind == "map_control":
-                    yield sse_event("map_control", payload)
-                elif kind == "final":
-                    turn = payload
+            with conversation_scope(persistence.conversation_id):
+                async with aclosing(stream_turn_events(
+                    request=setup.context_request,
+                    user_id=persistence.user_id,
+                    config=setup.config,
+                )) as events:
+                    async for kind, payload in events:
+                        if kind == "status":
+                            yield agent_status_event(
+                                payload.stage,
+                                label=payload.label,
+                                **payload.metadata,
+                                elapsed_ms=payload.elapsed_ms,
+                            )
+                            if summary_data := summary.advance_for_agent_event(payload.stage):
+                                yield sse_event("thinking_summary", summary_data)
+                        elif kind == "delta":
+                            if not answering_announced:
+                                yield analysis_status_event("preparing")
+                                yield analysis_status_event("answering")
+                                if summary_data := summary.advance("answer"):
+                                    yield sse_event("thinking_summary", summary_data)
+                                answering_announced = True
+                            parts.append(payload)
+                            yield sse_event("delta", {"content": payload})
+                        elif kind == "map_control":
+                            yield sse_event("map_control", payload)
+                        elif kind == "final":
+                            turn = payload
 
             if turn is None:
                 raise RuntimeError("AutoGen 编排没有产出最终结果")
@@ -167,6 +175,8 @@ class AIService:
                 "retrieved_chunks": turn.retrieved_chunks,
                 "rag_trace": turn.rag_trace,
             }
+            if getattr(turn, "active_imagery_id", None):
+                done_payload["active_imagery_id"] = turn.active_imagery_id
             if turn.usage:
                 done_payload["usage"] = turn.usage
             if turn.map_target:
@@ -210,7 +220,8 @@ class AIService:
         *,
         create_streaming_assistant: bool = False,
     ) -> ChatExecutionSetup:
-        config = resolve_ai_config(
+        config = ResolvedAIConfig(provider='local', base_url='', api_key='', model='SAM3',
+            timeout_seconds=0, max_retries=0, trust_env_proxy=False) if is_direct_building_request(request) else resolve_ai_config(
             request_model=request.model,
             provider_config=request.provider_config,
             thinking_strength=request.thinking_strength,

@@ -92,7 +92,7 @@ AutoGen 结构化路由 Agent（无影像用户走快车道直达主 Agent）
 | 影像质检 | 尺寸、波段、坐标系、范围与像素统计 |
 | 光谱分析 | NDVI、NDWI、MNDWI、NDBI、BSI、EVI、SAVI、MSAVI、GNDVI、NDMI、NBR |
 | 栅格处理 | 真/假彩色合成、云影掩膜、水体掩膜、裁剪、重投影 |
-| 深度学习 | PP-YOLOE-R 旋转框目标检测、U-Net/LandCover.ai 地物分割、ROI 地物分类 |
+| 深度学习 | SAM3 开放词汇实例分割、YOLO11s-OBB 旋转框目标检测、ROI 目标提取 |
 | 文档能力 | PDF、Word、PPT、Excel 解析，影像与扫描件 OCR，分析报告生成 |
 | 多用户 | 开放注册、用户数据隔离、PBKDF2-SHA256 密码哈希、30 天会话 |
 
@@ -190,10 +190,9 @@ AGENT_MODEL_INFO={"vision":false,"function_calling":true,"json_output":true,"str
 ```bash
 docker build -t rs-tools-mcp:0.1.0 docker/rs_tools
 docker build -t rs-detect-mcp:0.1.0 docker/rs_detect
-docker build -t rs-segment-mcp:0.1.0 docker/rs_segment
 ```
 
-默认通过 `RS_*_MCP_USE_DOCKER=true` 使用容器。检测和分割镜像体积较大；NVIDIA GPU 可显著加速，未配置 GPU 时按镜像能力回退 CPU。
+光谱工具与目标检测通过 `RS_*_MCP_USE_DOCKER=true` 使用容器。开放词汇提取与分割由独立的 SAM3 GPU 服务提供，部署见 `ops/agent-rs-sam3.service`。
 
 ## 思考信息安全边界
 

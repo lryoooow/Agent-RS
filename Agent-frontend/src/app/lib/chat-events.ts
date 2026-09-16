@@ -123,6 +123,7 @@ export function createStreamHandlers(
             data.agent_trace && typeof data.agent_trace === "object"
               ? (data.agent_trace as Record<string, unknown>)
               : undefined,
+          selectedImageryId: typeof data.active_imagery_id === "string" ? data.active_imagery_id : undefined,
           geospatialResult,
           toolResult,
           }),
@@ -149,6 +150,7 @@ export function appendAssistantResponse(setTurns: SetTurns, data: ChatResponse) 
       retrievedChunks: data.retrieved_chunks,
       ragTrace: data.rag_trace,
       agentTrace: data.agent_trace,
+      selectedImageryId: typeof data.active_imagery_id === "string" ? data.active_imagery_id : undefined,
       geospatialResult,
       toolResult,
     },
@@ -233,7 +235,8 @@ export function parseGeospatialResult(value: unknown): GeospatialResult | undefi
     candidate.type !== "spectral_index" &&
     candidate.type !== "composite" &&
     candidate.type !== "detection" &&
-    candidate.type !== "segmentation"
+    candidate.type !== "segmentation" &&
+    candidate.type !== "instance_segmentation"
   ) {
     return undefined;
   }
@@ -267,6 +270,11 @@ export function parseGeospatialResult(value: unknown): GeospatialResult | undefi
     return {
       type: "detection",
       ...base,
+      model_name: typeof candidate.model_name === "string" ? candidate.model_name : null,
+      device: typeof candidate.device === "string" ? candidate.device : null,
+      bands_used: Array.isArray(candidate.bands_used) && candidate.bands_used.every((b) => typeof b === "number") ? candidate.bands_used : null,
+      vector_url: typeof candidate.vector_url === "string" ? candidate.vector_url : null,
+      detections_url: typeof candidate.detections_url === "string" ? candidate.detections_url : null,
       detection_count: typeof candidate.detection_count === "number" ? candidate.detection_count : 0,
       score_threshold: typeof candidate.score_threshold === "number" ? candidate.score_threshold : 0,
       classes: parseDetectionClasses(candidate.classes),
@@ -276,9 +284,37 @@ export function parseGeospatialResult(value: unknown): GeospatialResult | undefi
   if (candidate.type === "segmentation") {
     return {
       type: "segmentation",
+      target_class: candidate.target_class === "building" ? "building" : "all",
+      raster_url: typeof candidate.raster_url === "string" ? candidate.raster_url : null,
+      building_mask_url: typeof candidate.building_mask_url === "string" ? candidate.building_mask_url : null,
       ...base,
       total_pixels: typeof candidate.total_pixels === "number" ? candidate.total_pixels : 0,
       classes: parseSegmentationClasses(candidate.classes),
+      execution: isExecution(candidate.execution) ? candidate.execution : undefined,
+    };
+  }
+  if (candidate.type === "instance_segmentation") {
+    const rawCounts = candidate.counts && typeof candidate.counts === "object"
+      ? (candidate.counts as Record<string, unknown>)
+      : {};
+    const counts = Object.fromEntries(
+      Object.entries(rawCounts).filter((entry): entry is [string, number] => typeof entry[1] === "number"),
+    );
+    return {
+      type: "instance_segmentation",
+      ...base,
+      model_name: typeof candidate.model_name === "string" ? candidate.model_name : "SAM3",
+      device: typeof candidate.device === "string" ? candidate.device : null,
+      concepts: Array.isArray(candidate.concepts) ? candidate.concepts.filter((item): item is string => typeof item === "string") : [],
+      instance_count: typeof candidate.instance_count === "number" ? candidate.instance_count : 0,
+      counts,
+      union_pixels: typeof candidate.union_pixels === "number" ? candidate.union_pixels : 0,
+      area_m2: typeof candidate.area_m2 === "number" ? candidate.area_m2 : null,
+      mask_url: typeof candidate.mask_url === "string" ? candidate.mask_url : null,
+      instance_raster_url: typeof candidate.instance_raster_url === "string" ? candidate.instance_raster_url : null,
+      vector_url: typeof candidate.vector_url === "string" ? candidate.vector_url : null,
+      instances_url: typeof candidate.instances_url === "string" ? candidate.instances_url : null,
+      metrics_url: typeof candidate.metrics_url === "string" ? candidate.metrics_url : null,
       execution: isExecution(candidate.execution) ? candidate.execution : undefined,
     };
   }
@@ -328,6 +364,11 @@ export function parseToolResult(value: unknown): ToolResult | undefined {
   if (pixelSize != null && !isPixelSize(pixelSize)) return undefined;
   return {
     type: "raster_inspect",
+    source_grid: parseRasterGrid(candidate.source_grid),
+    analysis_grid: parseRasterGrid(candidate.analysis_grid),
+    resampled: candidate.resampled === true,
+    bounds_wgs84: isBounds(candidate.bounds_wgs84) ? candidate.bounds_wgs84 : null,
+    center_wgs84: isPixelSize(candidate.center_wgs84) ? candidate.center_wgs84 : null,
     imagery_id: candidate.imagery_id,
     width: candidate.width,
     height: candidate.height,
@@ -344,6 +385,15 @@ export function parseToolResult(value: unknown): ToolResult | undefined {
     per_band_stats: parseBandStats(candidate.per_band_stats),
     execution: isExecution(candidate.execution) ? candidate.execution : undefined,
   };
+}
+
+function parseRasterGrid(value: unknown) {
+  if (!value || typeof value !== "object") return null;
+  const grid = value as Record<string, unknown>;
+  if (typeof grid.width !== "number" || typeof grid.height !== "number") return null;
+  return { width: grid.width, height: grid.height,
+    pixel_size: isPixelSize(grid.pixel_size) ? grid.pixel_size : null,
+    crs: typeof grid.crs === "string" ? grid.crs : null };
 }
 
 function isBounds(value: unknown): value is [number, number, number, number] {

@@ -97,6 +97,7 @@ def test_shared_tools_do_not_spawn_agents() -> None:
         "generate_report",
         "search_imagery",
         "fetch_scene",
+        "prepare_map_roi",
     }
     spec_names = {spec.name for spec in domain_specs()}
     assert spec_names.isdisjoint({"report_agent", "navigation_agent", "search_agent"})

@@ -59,8 +59,8 @@ export async function getDocumentJob(jobId: string): Promise<DocumentJob> {
   return (await response.json()) as DocumentJob;
 }
 
-export async function listDocumentChunks(documentId: string): Promise<DocumentChunk[]> {
-  const response = await apiFetch(`/documents/${documentId}/chunks?limit=50`, {});
+export async function listDocumentChunks(documentId: string, offset = 0, limit = 50): Promise<DocumentChunk[]> {
+  const response = await apiFetch(`/documents/${documentId}/chunks?limit=${limit}&offset=${offset}`, {});
   const payload = (await response.json().catch(() => null)) as { chunks?: DocumentChunk[] } | null;
   return payload?.chunks ?? [];
 }

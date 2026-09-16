@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { syncRasterOverlays } from "../lib/raster-layers";
+import { createSatelliteStyle, LABELS_STORAGE_KEY, readLabelsPreference, setReferenceVisibility } from "../lib/map-style";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
 import type { Map as MapLibreMap } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
@@ -25,33 +27,6 @@ const DEFAULT_ZOOM = 10;
 const PRIMARY_COLOR = "#2bb8c2";
 const DARK_BG = "#0a0e14";
 
-const SAT_STYLE: maplibregl.StyleSpecification = {
-  version: 8,
-  glyphs: "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",
-  sources: {
-    esri: {
-      type: "raster",
-      tiles: [
-        "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-      ],
-      tileSize: 256,
-      attribution: "Imagery © Esri, Maxar, Earthstar Geographics",
-    },
-    esriRef: {
-      type: "raster",
-      tiles: [
-        "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}",
-      ],
-      tileSize: 256,
-    },
-  },
-  layers: [
-    { id: "bg", type: "background", paint: { "background-color": "#0a0e14" } },
-    { id: "esri", type: "raster", source: "esri" },
-    { id: "esriRef", type: "raster", source: "esriRef", layout: { visibility: "none" } },
-  ],
-};
-
 function absoluteUrl(url: string) {
   if (!url) return url;
   return url.startsWith("http") ? url : `${window.location.origin}${url}`;
@@ -60,6 +35,7 @@ function absoluteUrl(url: string) {
 export function MapView({
   mapRef: externalMapRef,
   layers,
+  activeImageryId,
   roi,
   onSelectRegion,
   onClearRegion,
@@ -68,6 +44,7 @@ export function MapView({
 }: {
   mapRef?: React.MutableRefObject<MapLibreMap | null>;
   layers: RSLayer[];
+  activeImageryId?: string | null;
   roi: Roi | null;
   onSelectRegion: (roi: Roi) => void;
   onClearRegion: () => void;
@@ -82,7 +59,7 @@ export function MapView({
   const [ready, setReady] = useState(false);
   const [coords, setCoords] = useState<[number, number]>(DEFAULT_CENTER);
   const [zoom, setZoom] = useState(DEFAULT_ZOOM);
-  const [labels, setLabels] = useState(false);
+  const [labels, setLabels] = useState(readLabelsPreference);
   const searchMarkerRef = useRef<maplibregl.Marker | null>(null);
   const [searchText, setSearchText] = useState("");
   const [searching, setSearching] = useState(false);
@@ -185,12 +162,12 @@ export function MapView({
   };
 
   // 带地理坐标的图层走 image source 叠加；无坐标的走缩略图兜底。
-  const geoLayers = layers.filter(
+  const geoLayers = useMemo(() => layers.filter(
     (l): l is RSLayer & { bounds: [number, number, number, number] } =>
       l.visible && Array.isArray(l.bounds) && l.bounds.length === 4 && !!l.url,
-  );
+  ), [layers]);
   const thumbnailLayers = layers.filter(
-    (l) => l.visible && (!Array.isArray(l.bounds) || l.bounds.length !== 4) && !!l.url,
+    (l) => l.imageryId === activeImageryId && l.visible && (!Array.isArray(l.bounds) || l.bounds.length !== 4) && !!l.url,
   );
 
   // init map
@@ -198,16 +175,20 @@ export function MapView({
     if (!ref.current || mapRef.current) return;
     const map = new maplibregl.Map({
       container: ref.current,
-      style: SAT_STYLE,
+      style: createSatelliteStyle(readLabelsPreference()),
       center: DEFAULT_CENTER,
       zoom: DEFAULT_ZOOM,
       attributionControl: false,
     });
-    map.on("mousemove", (e) => setCoords([e.lngLat.lng, e.lngLat.lat]));
+    map.on("move", () => {
+      const center = map.getCenter();
+      setCoords([center.lng, center.lat]);
+    });
     map.on("zoom", () => setZoom(map.getZoom()));
     // 比例尺（左下，公制）；深色样式由全局 CSS 覆盖。
     const scaleCtrl = new maplibregl.ScaleControl({ maxWidth: 120, unit: "metric" });
     map.addControl(scaleCtrl, "bottom-left");
+    map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-right");
     scaleCtrlRef.current = scaleCtrl;
     map.on("load", () => {
       setReady(true);
@@ -247,7 +228,8 @@ export function MapView({
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !ready) return;
-    map.setLayoutProperty("esriRef", "visibility", labels ? "visible" : "none");
+    setReferenceVisibility(map, labels);
+    try { localStorage.setItem(LABELS_STORAGE_KEY, String(labels)); } catch { /* Private mode may disable storage. */ }
   }, [labels, ready]);
 
   // 框选态下禁用地图拖拽平移，避免与画框冲突。
@@ -299,6 +281,7 @@ export function MapView({
           filter: ["==", ["get", "kind"], "label"],
           layout: {
             "text-field": ["get", "label"],
+            "text-font": ["Noto Sans Regular"],
             "text-size": 10,
             "text-offset": [0.6, 0.6],
             "text-anchor": "top-left",
@@ -525,64 +508,17 @@ export function MapView({
     const map = mapRef.current;
     if (!map || !ready) return;
 
-    const wantLayerIds = new Set(geoLayers.map((l) => `rs-img-${l.id}`));
-    const wantSourceIds = new Set(geoLayers.map((l) => `rs-src-${l.id}`));
-
-    // 清理不再需要的旧图层/源（id 前缀 rs-）。
-    const style = map.getStyle();
-    (style.layers ?? []).forEach((l) => {
-      if (l.id.startsWith("rs-img-") && !wantLayerIds.has(l.id) && map.getLayer(l.id)) {
-        map.removeLayer(l.id);
-      }
-    });
-    Object.keys(style.sources ?? {}).forEach((id) => {
-      if (id.startsWith("rs-src-") && !wantSourceIds.has(id) && map.getSource(id)) {
-        map.removeSource(id);
-      }
-    });
-
-    // 按 layers 顺序添加（imagery 在前作为底图）。
-    for (const layer of geoLayers) {
-      const srcId = `rs-src-${layer.id}`;
-      const layerId = `rs-img-${layer.id}`;
-      const [west, south, east, north] = layer.bounds;
-      try {
-        if (!map.getSource(srcId)) {
-          map.addSource(srcId, {
-            type: "image",
-            url: absoluteUrl(layer.url!),
-            coordinates: [
-              [west, north],
-              [east, north],
-              [east, south],
-              [west, south],
-            ],
-          });
-        }
-        if (!map.getLayer(layerId)) {
-          map.addLayer({
-            id: layerId,
-            type: "raster",
-            source: srcId,
-            paint: { "raster-opacity": layer.opacity, "raster-fade-duration": 200 },
-          });
-        } else {
-          map.setPaintProperty(layerId, "raster-opacity", layer.opacity);
-        }
-      } catch (err) {
-        console.error(`[MapView] failed to add layer ${layerId}`, err);
-      }
-    }
+    syncRasterOverlays(map, geoLayers, absoluteUrl);
 
     // 首次出现某影像时 fitBounds 一次（之后不再打断用户视图）。
-    const focus = geoLayers[geoLayers.length - 1];
+    const focus = geoLayers.find((l) => l.imageryId === activeImageryId && l.kind === "imagery") ?? (!activeImageryId ? geoLayers[geoLayers.length - 1] : undefined);
     if (focus && fittedRef.current !== focus.imageryId) {
       const [west, south, east, north] = focus.bounds;
       map.fitBounds([west, south, east, north], { padding: 48, duration: 700 });
       fittedRef.current = focus.imageryId;
     }
     if (geoLayers.length === 0) fittedRef.current = null;
-  }, [geoLayers, ready]);
+  }, [geoLayers, ready, activeImageryId]);
 
   // 卷帘对比：懒实例化第二张地图（仅 swipe 开启时创建、关闭即销毁）。
   // 第二张图渲染「底图 + 除最上结果图层外的所有 geo 图层」，主图渲染全部图层；
@@ -596,7 +532,7 @@ export function MapView({
     const compareLayers = geoLayers.slice(0, -1); // 去掉最上面那个结果图层
     const second = new maplibregl.Map({
       container: ref2.current,
-      style: SAT_STYLE,
+      style: createSatelliteStyle(labels),
       center: primary.getCenter(),
       zoom: primary.getZoom(),
       bearing: primary.getBearing(),
@@ -606,27 +542,7 @@ export function MapView({
     });
 
     second.on("load", () => {
-      second.setLayoutProperty("esriRef", "visibility", labels ? "visible" : "none");
-      for (const layer of compareLayers) {
-        const [west, south, east, north] = layer.bounds;
-        const srcId = `rs2-src-${layer.id}`;
-        const layerId = `rs2-img-${layer.id}`;
-        try {
-          second.addSource(srcId, {
-            type: "image",
-            url: absoluteUrl(layer.url!),
-            coordinates: [[west, north], [east, north], [east, south], [west, south]],
-          });
-          second.addLayer({
-            id: layerId,
-            type: "raster",
-            source: srcId,
-            paint: { "raster-opacity": layer.opacity },
-          });
-        } catch (err) {
-          console.error(`[MapView/swipe] failed to add ${layerId}`, err);
-        }
-      }
+      syncRasterOverlays(second, compareLayers, absoluteUrl);
     });
 
     // 主图移动 → 同步第二图相机。
@@ -789,7 +705,7 @@ export function MapView({
       <div className="pointer-events-none absolute inset-0 shadow-[inset_0_0_140px_rgba(0,0,0,0.5)]" />
 
       {/* top-center readout */}
-      <div className="pointer-events-none absolute left-1/2 top-[116px] -translate-x-1/2">
+      <div data-testid="map-center-readout" title="当前地图视角中心（非影像中心）" className="pointer-events-none absolute left-1/2 top-[116px] -translate-x-1/2">
         <div className="flex items-center gap-2 rounded-full border border-border bg-card/80 px-3.5 py-1.5 font-mono text-[11px] tracking-tight text-foreground backdrop-blur-md">
           <span className="size-1.5 rounded-full bg-primary" />
           <span className="text-muted-foreground">LAT</span>
@@ -803,7 +719,7 @@ export function MapView({
       </div>
 
       {/* bottom-center control cluster */}
-      <div className="absolute bottom-4 left-1/2 flex -translate-x-1/2 items-center gap-2">
+      <div className="absolute bottom-9 left-1/2 z-[15] flex w-max max-w-[calc(100vw-2rem)] -translate-x-1/2 flex-wrap items-center justify-center gap-2 whitespace-nowrap">
         <div className="flex items-center overflow-hidden rounded-full border border-border bg-card/80 backdrop-blur-md">
           <button
             onClick={() => mapRef.current?.zoomOut({ duration: 250 })}
@@ -824,6 +740,9 @@ export function MapView({
 
         <button
           onClick={() => setLabels((v) => !v)}
+          aria-label="地名道路"
+          aria-pressed={labels}
+          title="显示或隐藏地名、街道、河流与地标；放大可查看详细名称"
           className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 font-mono text-[11px] backdrop-blur-md transition-colors ${
             labels
               ? "border-primary/50 bg-primary/10 text-primary"
@@ -831,7 +750,7 @@ export function MapView({
           }`}
         >
           {labels ? <Eye className="size-3.5" /> : <EyeOff className="size-3.5" />}
-          标注
+          地名道路
         </button>
         {/* 经纬网开关 */}
         <button
@@ -864,7 +783,7 @@ export function MapView({
         <button
           onClick={() => {
             const map = mapRef.current;
-            const focus = geoLayers[geoLayers.length - 1];
+            const focus = geoLayers.find((l) => l.imageryId === activeImageryId && l.kind === "imagery") ?? (!activeImageryId ? geoLayers[geoLayers.length - 1] : undefined);
             if (map && focus) {
               const [west, south, east, north] = focus.bounds;
               map.fitBounds([west, south, east, north], { padding: 48, duration: 700 });
@@ -896,7 +815,7 @@ export function MapView({
           <SquareDashedMousePointer className="size-3.5" />
           {selectMode ? "框选中" : "框选"}
         </button>
-        {hasRoi && hasImagery && onClassifyRegion && (
+        {hasRoi && onClassifyRegion && (
           <button
             onClick={onClassifyRegion}
             className="flex items-center gap-1.5 rounded-full border border-primary/45 bg-primary/10 px-3 py-1.5 font-mono text-[11px] text-primary backdrop-blur-md transition-colors hover:bg-primary/20"

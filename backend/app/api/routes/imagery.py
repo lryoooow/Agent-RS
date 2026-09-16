@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from app.api.errors import api_error
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
@@ -35,11 +35,18 @@ from app.db.repositories.imagery import (
 )
 from app.db.repositories._pg.imagery import ImageryOwnershipConflict
 from app.storage.object_store import get_object_store, object_store_for
+from app.api.deps import require_authenticated_user
+from app.agent.roi_buildings import BuildingReadiness, RoiBuildingRequest, building_readiness
 
 router = APIRouter(prefix="/imagery", tags=["imagery"])
 logger = logging.getLogger(__name__)
 
 IMAGERY_ID_PATTERN = re.compile(r"^[a-f0-9]{12}$")
+
+
+@router.post('/roi-buildings/readiness', response_model=BuildingReadiness)
+async def roi_building_readiness(request: RoiBuildingRequest, user_id: str = Depends(require_authenticated_user)):
+    return await building_readiness(request, user_id=user_id)
 
 
 class ImageryMetadata(BaseModel):
@@ -55,9 +62,16 @@ class ImageryMetadata(BaseModel):
     band_descriptions: list[str | None] | None = None
     band_roles: dict[str, int] | None = None
     band_roles_source: str | None = None
+    color_interpretations: list[str] | None = None
+    alpha_bands: list[int] | None = None
     sensor: str | None = None
     acquired_at: str | None = None
     preview_url: str | None = None
+    source_origin: str | None = None
+    native_resolution_m: float | None = None
+    source_grid: dict[str, Any] | None = None
+    analysis_grid: dict[str, Any] | None = None
+    resampled: bool = False
     working_width: int = 0
     working_height: int = 0
     compressed: bool = False
@@ -156,13 +170,22 @@ def _create_working_tif(source_path: Path, working_path: Path, settings) -> dict
             profile["predictor"] = 2
         elif np.issubdtype(dtype, np.floating):
             profile["predictor"] = 3
+        colorinterp = src.colorinterp
+        descriptions = src.descriptions
+        tags = src.tags()
 
     with rasterio.open(working_path, "w", **profile) as dst:
         dst.write(data)
+        dst.colorinterp = colorinterp
+        dst.descriptions = descriptions
+        dst.update_tags(**tags)
 
+    from app.services.raster_semantics import grid_context
+    grids = grid_context(working_path)
     source_size = source_path.stat().st_size
     working_size = working_path.stat().st_size
     return {
+        **grids,
         "working_width": working_width,
         "working_height": working_height,
         "compressed": bool(resampled or working_size < source_size),
@@ -186,36 +209,8 @@ def _stretch_to_byte(values):
 
 
 def _generate_preview(source_path: Path, output_path: Path, max_dimension: int) -> None:
-    import numpy as np
-    import rasterio
-    from PIL import Image
-    from rasterio.enums import Resampling
-
-    with rasterio.open(source_path) as src:
-        preview_width, preview_height, _ = _rescaled_shape(
-            src.width,
-            src.height,
-            max_dimension,
-        )
-        if src.count >= 4:
-            bands = [3, 2, 1]
-        elif src.count >= 3:
-            bands = [1, 2, 3]
-        else:
-            bands = [1]
-        data = src.read(
-            bands,
-            out_shape=(len(bands), preview_height, preview_width),
-            resampling=Resampling.bilinear,
-        ).astype(np.float32)
-
-    if len(bands) == 1:
-        gray = _stretch_to_byte(data[0])
-        image = Image.fromarray(gray, mode="L").convert("RGBA")
-    else:
-        rgb = np.dstack([_stretch_to_byte(channel) for channel in data[:3]])
-        image = Image.fromarray(rgb, mode="RGB").convert("RGBA")
-    image.save(output_path, optimize=True)
+    from app.services.raster_preview import generate_preview
+    generate_preview(source_path, output_path, max_dimension)
 
 
 async def _write_upload_to_temp(file: UploadFile, max_bytes: int, suffix: str) -> Path:
@@ -252,7 +247,7 @@ def _read_metadata(meta_file: Path) -> dict[str, Any] | None:
 
 def _metadata_response(entry: Path, meta: dict[str, Any]) -> ImageryMetadata:
     filename = str(meta.get("filename") or meta.get("original_filename") or "source.tif")
-    payload = {key: value for key, value in meta.items() if key != "filename"}
+    payload = {key: value for key, value in meta.items() if key not in {"filename", "imagery_id"}}
     return ImageryMetadata(imagery_id=entry.name, filename=filename, **payload)
 
 
@@ -385,7 +380,7 @@ async def upload_imagery(file: UploadFile = File(...)) -> ImageryMetadata:
         meta["working_width"],
         meta["working_height"],
     )
-    payload = {key: value for key, value in meta.items() if key != "filename"}
+    payload = {key: value for key, value in meta.items() if key not in {"filename", "imagery_id"}}
     return ImageryMetadata(imagery_id=imagery_id, filename=file.filename or "", **payload)
 
 
@@ -420,7 +415,7 @@ async def list_imagery() -> list[ImageryMetadata]:
                 if not meta:
                     continue
                 filename = str(meta.get("filename") or "source.tif")
-                payload = {k: v for k, v in meta.items() if k != "filename"}
+                payload = {k: v for k, v in meta.items() if k not in {"filename", "imagery_id"}}
                 merged[row["imagery_id"]] = ImageryMetadata(
                     imagery_id=row["imagery_id"], filename=filename, **payload
                 )
@@ -479,7 +474,7 @@ async def _load_owned_meta_db_first(imagery_id: str) -> dict[str, Any]:
 async def get_imagery(imagery_id: str) -> ImageryMetadata:
     meta = await _load_owned_meta_db_first(imagery_id)
     filename = str(meta.get("filename") or "source.tif")
-    payload = {k: v for k, v in meta.items() if k != "filename"}
+    payload = {k: v for k, v in meta.items() if k not in {"filename", "imagery_id"}}
     return ImageryMetadata(imagery_id=imagery_id, filename=filename, **payload)
 
 
@@ -520,6 +515,10 @@ async def _ensure_owned_for_mutation(imagery_id: str, dest_dir: Path) -> None:
 
 
 def _result_media_type(filename: str) -> str:
+    if filename.endswith(".geojson"):
+        return "application/geo+json"
+    if filename.endswith(".json"):
+        return "application/json"
     if filename.endswith(".png"):
         return "image/png"
     if filename.endswith(".docx"):

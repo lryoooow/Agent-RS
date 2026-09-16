@@ -72,12 +72,14 @@ function tasksFromTrace(turn: ChatTurn): QueueTask[] {
 
 // 工具名 → 中文任务名（与后端 TOOL_RUNNING_LABELS 对齐；前端展示用，不做路由）。
 const TOOL_TASK_LABELS: Record<string, string> = {
+  map_roi_image: "获取选区地图影像",
+  prepare_map_roi: "获取选区地图影像",
   web_search: "联网搜索",
   calculate_ndvi: "计算 NDVI",
   calculate_spectral_index: "计算光谱指数",
   render_band_composite: "渲染波段组合",
   raster_inspect: "影像质检",
-  segment_landcover: "地物分类",
+  segment_instances: "SAM3 实例分割",
   detect_objects: "目标检测",
   cloud_shadow_mask: "云/阴影掩膜",
   extract_water_mask: "水体提取",

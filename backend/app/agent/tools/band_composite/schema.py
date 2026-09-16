@@ -6,14 +6,21 @@ from pydantic import BaseModel, Field, model_validator
 CompositeMode = Literal["true_color", "false_color", "custom"]
 
 
-def required_bands_for_composite(mode: str, bands: list[int] | None) -> dict[str, int]:
+def required_bands_for_composite(mode: str, bands: list[int] | None, roles: dict[str, int] | None = None) -> dict[str, int]:
+    roles = roles or {}
     if mode == "true_color":
-        return {"red": 3, "green": 2, "blue": 1}
+        names = ("red", "green", "blue")
+        if not all(name in roles for name in names):
+            raise ValueError("未确定完整 RGB 波段映射，请提供原始波段定义或明确的 custom 波段组合。")
+        return {name: roles[name] for name in names}
     if mode == "false_color":
-        return {"nir": 4, "red": 3, "green": 2}
+        names = ("nir", "red", "green")
+        if not all(name in roles for name in names):
+            raise ValueError("假彩色需要已确认的近红外、红、绿波段；不能把 Alpha 当作近红外。")
+        return {name: roles[name] for name in names}
     if bands is None:
         raise ValueError("custom mode requires bands")
-    return {"red": bands[0], "green": bands[1], "blue": bands[2]}
+    return {"channel_r": bands[0], "channel_g": bands[1], "channel_b": bands[2]}
 
 
 class BandCompositeArguments(BaseModel):

@@ -124,7 +124,8 @@ def compose_scene_tif(
     - Landsat 转真反射率（float32），S2 保持原始 DN。
     """
     import rasterio
-    from rasterio import windows
+    from rasterio.vrt import WarpedVRT
+    from rasterio.enums import Resampling
     from rasterio.transform import from_bounds
     from rasterio.warp import transform_bounds
 
@@ -147,21 +148,24 @@ def compose_scene_tif(
                 else:
                     left, bottom, right, top = base.bounds
                 # 输出分辨率不超过基准波段的 native 分辨率。
-                native_span = max(base.width, base.height)
+                left, bottom, right, top = max(left, base.bounds.left), max(bottom, base.bounds.bottom), min(right, base.bounds.right), min(top, base.bounds.top)
+                if left >= right or bottom >= top:
+                    raise SceneRasterError("所选范围与场景不相交")
+                native_size = list(base.res)
+                native_span = max((right-left)/abs(base.transform.a), (top-bottom)/abs(base.transform.e))
                 scale = min(1.0, max_pixels / max(native_span, 1))
                 out_width = max(1, min(int((right - left) / abs(base.transform.a) * scale) or 1, max_pixels))
                 out_height = max(1, min(int((top - bottom) / abs(base.transform.e) * scale) or 1, max_pixels))
-                dtype = base.dtypes[0]
+                transform = from_bounds(left, bottom, right, top, out_width, out_height)
 
                 bands: list[np.ndarray] = []
                 for role in roles:
                     href = base_href if role == "red" else _band_href(record, role)
                     with rasterio.open(_open_path(href)) as src:
-                        window = windows.from_bounds(left, bottom, right, top, src.transform)
-                        window = window.round_lengths().round_offsets().intersection(
-                            windows.Window(0, 0, src.width, src.height)
-                        )
-                        data = src.read(1, window=window, out_shape=(out_height, out_width))
+                        with WarpedVRT(src, crs=crs, transform=transform, width=out_width, height=out_height,
+                                       src_nodata=src.nodata if src.nodata is not None else 0,
+                                       nodata=float("nan"), dtype="float32", resampling=Resampling.bilinear) as aligned:
+                            data = aligned.read(1)
                     bands.append(_apply_reflectance(record, data))
         except SceneRasterError:
             raise
@@ -184,6 +188,7 @@ def compose_scene_tif(
         "blockxsize": 512,
         "blockysize": 512,
         "compress": "deflate",
+        "nodata": float("nan"),
     }
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with rasterio.open(out_path, "w", **profile) as dst:
@@ -191,11 +196,13 @@ def compose_scene_tif(
             dst.write(data, index)
             dst.set_band_description(index, role)
         dst.update_tags(
+            NATIVE_PIXEL_SIZE=",".join(map(str, native_size)),
             SENSOR=record.satellite,
             ACQUISITIONDATE=record.datetime,
         )
 
     return {
+        "native_pixel_size": native_size,
         "band_roles": record.band_roles,
         "band_roles_source": "stac_assets",
         "sensor": record.satellite,

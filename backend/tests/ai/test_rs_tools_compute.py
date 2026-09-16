@@ -30,7 +30,7 @@ def _write_tif(path: Path, data: np.ndarray) -> None:
         dst.write(data)
 
 
-def test_raster_inspect_reports_band_capabilities(tmp_path: Path) -> None:
+def test_raster_inspect_does_not_infer_nir_from_band_count(tmp_path: Path) -> None:
     input_path = tmp_path / "input.tif"
     data = np.ones((4, 2, 2), dtype=np.uint16)
     _write_tif(input_path, data)
@@ -38,7 +38,7 @@ def test_raster_inspect_reports_band_capabilities(tmp_path: Path) -> None:
     result = inspect(str(input_path))
 
     assert result["band_count"] == 4
-    assert result["capabilities"]["has_nir"] is True
+    assert result["capabilities"]["has_nir"] is False
     assert result["capabilities"]["has_swir"] is False
     assert len(result["per_band_stats"]) == 4
 
@@ -197,7 +197,7 @@ def test_band_composite_writes_png(tmp_path: Path) -> None:
     )
     _write_tif(input_path, data)
 
-    result = render(input_path=str(input_path), output_dir=str(output_dir), mode="false_color")
+    result = render(input_path=str(input_path), output_dir=str(output_dir), mode="false_color", bands=[4, 3, 2])
 
     assert result["bands_used"] == [4, 3, 2]
-    assert (output_dir / "composite_false_color.png").exists()
+    assert (output_dir / result["output_png"]).exists()

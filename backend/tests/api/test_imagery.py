@@ -194,6 +194,22 @@ def test_imagery_list_skips_broken_metadata(monkeypatch, tmp_path: Path) -> None
     assert response.json() == []
 
 
+def test_imported_metadata_id_does_not_break_list_or_detail(monkeypatch, tmp_path: Path) -> None:
+    client = make_client(monkeypatch, tmp_path)
+    image_id = '94e758f38ede'
+    image_dir = tmp_path / 'imagery' / image_id
+    image_dir.mkdir(parents=True)
+    (image_dir / 'metadata.json').write_text(json.dumps({
+        'imagery_id': image_id, 'filename': 'map.tif', 'source_origin': 'map_roi',
+        'owner_user_id': get_settings().default_user_id,
+    }), encoding='utf-8')
+    listing = client.get('/api/imagery')
+    detail = client.get('/api/imagery/' + image_id)
+    assert listing.status_code == detail.status_code == 200
+    assert listing.json()[0]['imagery_id'] == detail.json()['imagery_id'] == image_id
+    assert detail.json()['source_origin'] == 'map_roi'
+
+
 def test_imagery_delete_removes_directory(monkeypatch, tmp_path: Path) -> None:
     client = make_client(monkeypatch, tmp_path)
     upload = client.post(

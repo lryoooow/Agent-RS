@@ -96,6 +96,19 @@ function entryFromGeospatial(turn: ChatTurn, r: GeospatialResult): ReportEntry |
         ],
         execution: r.execution,
       };
+    case "instance_segmentation":
+      return {
+        ...base,
+        kind: "SAM3 开放词汇实例分割",
+        title: `SAM3 分割 · ${r.instance_count} 个实例`,
+        stats: [
+          { label: "实例总数", value: String(r.instance_count) },
+          { label: "掩膜像素", value: String(r.union_pixels) },
+          ...(r.area_m2 != null ? [{ label: "估算面积（m²）", value: fmt(r.area_m2) }] : []),
+          ...Object.entries(r.counts).map(([concept, count]) => ({ label: concept, value: String(count) })),
+        ],
+        execution: r.execution,
+      };
   }
 }
 
@@ -107,7 +120,9 @@ function entryFromToolResult(turn: ChatTurn, r: RasterInspectResult): ReportEntr
     kind: "影像质检",
     title: "影像质检",
     stats: [
-      { label: "尺寸", value: `${r.width} × ${r.height}` },
+      { label: "分析网格", value: `${r.width} × ${r.height}` },
+      ...(r.source_grid ? [{ label: "原图网格", value: `${r.source_grid.width} × ${r.source_grid.height}` }] : []),
+      ...(r.resampled ? [{ label: "网格说明", value: "平台降采样，覆盖范围不变" }] : []),
       { label: "波段数", value: String(r.band_count) },
       { label: "坐标系", value: r.crs ?? "无" },
       { label: "数据类型", value: r.dtype ?? "N/A" },

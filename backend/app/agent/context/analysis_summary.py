@@ -31,7 +31,16 @@ def _summarize_segmentation(geo: dict[str, Any]) -> str:
         pct = _fmt_pct(item.get("percentage"))
         parts.append(f"{label} {pct}" if pct else str(label))
     body = "；".join(parts) if parts else "未识别到地物类别"
-    return f"地物分类（LandCover.ai 四类）：{body}"
+    return f"历史地物分类结果（旧格式）：{body}"
+
+
+def _summarize_instance_segmentation(geo: dict[str, Any]) -> str:
+    counts = geo.get("counts") or {}
+    detail = "、".join(f"{concept}×{count}" for concept, count in counts.items()) if isinstance(counts, dict) else ""
+    total = int(geo.get("instance_count") or 0)
+    area = geo.get("area_m2")
+    area_text = f"，掩膜估算面积 {area:.2f} m²" if isinstance(area, (int, float)) else ""
+    return f"SAM3 开放词汇实例分割：共 {total} 个实例" + (f"（{detail}）" if detail else "") + area_text
 
 
 def _summarize_detection(geo: dict[str, Any]) -> str:
@@ -81,7 +90,9 @@ def _summarize_entry(entry: dict[str, Any]) -> str | None:
     if isinstance(geo, dict):
         imagery_id = geo.get("imagery_id")
         geo_type = geo.get("type")
-        if geo_type == "segmentation":
+        if geo_type == "instance_segmentation":
+            summary = _summarize_instance_segmentation(geo)
+        elif geo_type == "segmentation":
             summary = _summarize_segmentation(geo)
         elif geo_type == "detection":
             summary = _summarize_detection(geo)

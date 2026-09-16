@@ -18,7 +18,7 @@ type Auth = ReturnType<typeof useAuth>;
 
 // 账户面板：登录 / 注册 / 登出。复用 useAuth（封装 auth-api 的 me/login/register/logout）。
 // DB 关闭时后端走默认用户，auth.user 仍可能为"未认证"的默认身份——按钮显示「默认用户」。
-export function AuthDialog({ auth }: { auth: Auth }) {
+export function AuthDialog({ auth, compact = false }: { auth: Auth; compact?: boolean }) {
   const [open, setOpen] = useState(false);
   const authed = auth.user?.authenticated === true;
   const buttonLabel = authed ? auth.user?.name || auth.user?.email || "账户" : "登录";
@@ -29,10 +29,11 @@ export function AuthDialog({ auth }: { auth: Auth }) {
         <Button
           variant="outline"
           size="sm"
-          className="h-8 gap-1.5 border-border bg-card/60 text-[12px]"
+          className="h-9 gap-1.5 border-border bg-card/60 text-[13px]"
+          aria-label={buttonLabel}
         >
           <User className="size-3.5" />
-          <span className="max-w-[120px] truncate">{buttonLabel}</span>
+          <span className={compact ? "hidden max-w-[88px] truncate sm:inline" : "max-w-[120px] truncate"}>{buttonLabel}</span>
         </Button>
       </DialogTrigger>
       <DialogContent className="bg-card sm:max-w-md">

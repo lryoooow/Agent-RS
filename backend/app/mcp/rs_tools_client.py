@@ -26,6 +26,7 @@ class RSToolsMCPClient:
         cpus: float = 2.0,
         network: str = "none",
         gpus: str | None = None,
+        accelerator: str = "nvidia",
     ) -> None:
         self.image = image
         self.container_imagery_root = container_imagery_root.rstrip("/")
@@ -34,6 +35,7 @@ class RSToolsMCPClient:
         self.cpus = cpus
         self.network = network
         self.gpus = gpus
+        self.accelerator = accelerator
 
     def host_to_container(self, host_path: Path, *, mount_root: Path) -> str:
         rel = host_path.resolve().relative_to(mount_root.resolve())
@@ -58,6 +60,7 @@ class RSToolsMCPClient:
             "docker",
             "run",
             "--rm",
+            "--pull=never",
             "-i",
             "--network",
             self.network,
@@ -66,7 +69,9 @@ class RSToolsMCPClient:
             "--cpus",
             str(self.cpus),
         ]
-        if self.gpus:
+        if self.accelerator == "hygon":
+            command.extend(["--device=/dev/kfd", "--device=/dev/mkfd", "--device=/dev/dri", "-v", "/opt/hyhal:/opt/hyhal:ro"])
+        elif self.accelerator == "nvidia" and self.gpus:
             command.extend(["--gpus", self.gpus])
         command.extend(
             [

@@ -6,6 +6,7 @@
 
 import asyncio
 import logging
+import re
 from collections import OrderedDict
 from typing import NamedTuple
 
@@ -16,6 +17,7 @@ logger = logging.getLogger(__name__)
 # Nominatim 请求需要 User-Agent（服务条款要求）
 USER_AGENT = "Agent-RS/1.0 (Remote Sensing AI Agent)"
 NOMINATIM_BASE_URL = "https://nominatim.openstreetmap.org"
+PHOTON_BASE_URL = "https://photon.komoot.io"
 def _request_timeout() -> float:
     from app.core.settings import get_settings
 
@@ -172,8 +174,8 @@ def _zoom_for_bbox(bbox: list[str] | None) -> int:
 async def forward_geocode(query: str) -> dict | None:
     """正向地理编码：地名 → {display_name, center:[lon,lat], bbox?, zoom}。
 
-    供「对话控图」用：用户说"带我去深圳南山"→ 解析坐标让地图跳转。
-    复用 Nominatim /search（与前端浏览器原直连同端点），独立 LRU + 共享客户端/限流。
+    供「对话控图」和影像检索共用。Photon 是主服务，Nominatim 是备用；
+    任一公共服务暂时不可达时，另一条链路仍可完成定位。
     """
     q = (query or "").strip()
     if not q:
@@ -183,19 +185,144 @@ async def forward_geocode(query: str) -> dict | None:
     if cached is not None:
         _FORWARD_CACHE.move_to_end(key)
         return cached
+    result = await _forward_geocode_photon(q)
+    if result is None:
+        result = await _forward_geocode_nominatim(q)
+    if result is None:
+        logger.warning("All forward geocoders failed or returned no result: %s", q)
+        return None
+    _FORWARD_CACHE[key] = result
+    _FORWARD_CACHE.move_to_end(key)
+    while len(_FORWARD_CACHE) > GEOCODE_CACHE_MAX_SIZE:
+        _FORWARD_CACHE.popitem(last=False)
+    return result
+
+
+def _display_name_from_photon(properties: dict, fallback: str) -> str:
+    parts: list[str] = []
+    for field in ("name", "district", "city", "county", "state", "country"):
+        value = str(properties.get(field) or "").strip()
+        if value and value not in parts:
+            parts.append(value)
+    return "，".join(parts) or fallback
+
+
+async def _forward_geocode_photon(query: str) -> dict | None:
+    features: list[dict] = []
+    try:
+        for provider_query in _photon_query_variants(query):
+            resp = await _get_client().get(
+                f"{PHOTON_BASE_URL}/api/",
+                params={"q": provider_query, "limit": 6},
+            )
+            resp.raise_for_status()
+            payload = resp.json()
+            batch = payload.get("features") if isinstance(payload, dict) else None
+            if isinstance(batch, list):
+                features.extend(item for item in batch if isinstance(item, dict))
+            if any(_photon_place_type(item) in {"city", "district", "county", "state"} for item in features):
+                break
+        if not features:
+            return None
+        feature = max(features, key=lambda item: _photon_rank(item, query))
+        geometry = feature.get("geometry") if isinstance(feature, dict) else None
+        coords = geometry.get("coordinates") if isinstance(geometry, dict) else None
+        if not isinstance(coords, list) or len(coords) < 2:
+            return None
+        lon, lat = float(coords[0]), float(coords[1])
+        properties = feature.get("properties") or {}
+        if not isinstance(properties, dict):
+            properties = {}
+    except Exception:
+        logger.warning("Photon forward geocode failed: %s", query, exc_info=True)
+        return None
+
+    result: dict = {
+        "display_name": _display_name_from_photon(properties, query),
+        "center": [lon, lat],
+        "provider": "photon",
+    }
+    place_type = str(properties.get("type") or properties.get("osm_value") or "").lower()
+    if place_type in _POINT_PLACE_ZOOM:
+        result["zoom"] = _POINT_PLACE_ZOOM[place_type]
+        return result
+
+    extent = properties.get("extent")
+    if isinstance(extent, list) and len(extent) == 4:
+        try:
+            west, y1, east, y2 = (float(value) for value in extent)
+            south, north = sorted((y1, y2))
+            if west < east and south < north:
+                result["bbox"] = [[west, south], [east, north]]
+                result["zoom"] = _zoom_for_map_bbox(west, south, east, north)
+                return result
+        except (TypeError, ValueError):
+            pass
+    result["zoom"] = 11
+    return result
+
+
+def _photon_query_variants(query: str) -> list[str]:
+    compact = "".join(query.split())
+    variants: list[str] = []
+    province_tail = re.search(r"(?:省|自治区|特别行政区)(.+)$", compact)
+    if province_tail:
+        variants.append(province_tail.group(1))
+    variants.append(query)
+    if re.fullmatch(r"[\u3400-\u9fff]{4,8}", compact) and not compact.endswith(("省", "市", "区", "县", "州", "盟")):
+        for split in range(2, len(compact) - 1):
+            variants.append(f"{compact[split:]}区 {compact[:split]}市")
+    return list(dict.fromkeys(variants))
+
+
+def _photon_place_type(feature: dict) -> str:
+    properties = feature.get("properties") or {}
+    return str(properties.get("type") or properties.get("osm_value") or "").lower() if isinstance(properties, dict) else ""
+
+
+def _photon_rank(feature: dict, query: str) -> tuple[int, int]:
+    properties = feature.get("properties") or {}
+    if not isinstance(properties, dict):
+        return (0, 0)
+    place_type = _photon_place_type(feature)
+    type_score = {
+        "city": 120,
+        "district": 115,
+        "county": 110,
+        "state": 105,
+        "town": 100,
+        "village": 95,
+        "river": 90,
+        "street": 85,
+        "other": 60,
+        "locality": 35,
+        "house": 10,
+    }.get(place_type, 50)
+    compact_query = re.sub(r"[\s省市区县州盟自治区特别行政]", "", query)
+    match_score = 0
+    for field, weight in (("name", 50), ("city", 30), ("district", 25), ("state", 15)):
+        value = re.sub(r"[\s省市区县州盟自治区特别行政]", "", str(properties.get(field) or ""))
+        if value and (value in compact_query or compact_query in value):
+            match_score += weight
+    return (type_score + match_score, -len(str(properties.get("name") or "")))
+
+
+async def _forward_geocode_nominatim(query: str) -> dict | None:
     try:
         resp = await _get_client().get(
             f"{NOMINATIM_BASE_URL}/search",
-            params={"q": q, "format": "json", "limit": 1, "accept-language": "zh-CN"},
+            params={"q": query, "format": "json", "limit": 1, "accept-language": "zh-CN"},
         )
         resp.raise_for_status()
         items = resp.json()
     except Exception:
-        logger.warning("forward_geocode failed", exc_info=True)
+        logger.warning("Nominatim forward geocode failed: %s", query, exc_info=True)
         return None
-    if not items:
+    if not isinstance(items, list) or not items:
         return None
     item = items[0]
+    if not isinstance(item, dict):
+        return None
     try:
         lat = float(item["lat"])
         lon = float(item["lon"])
@@ -214,8 +341,9 @@ async def forward_geocode(query: str) -> dict | None:
             pass
 
     result: dict = {
-        "display_name": item.get("display_name") or q,
+        "display_name": item.get("display_name") or query,
         "center": [lon, lat],
+        "provider": "nominatim",
     }
     addresstype = str(item.get("addresstype") or "").lower()
     if addresstype in _POINT_PLACE_ZOOM:
@@ -225,11 +353,11 @@ async def forward_geocode(query: str) -> dict | None:
         result["zoom"] = _zoom_for_bbox(bbox)
         if bbox_parsed is not None:
             result["bbox"] = bbox_parsed
-    _FORWARD_CACHE[key] = result
-    _FORWARD_CACHE.move_to_end(key)
-    while len(_FORWARD_CACHE) > GEOCODE_CACHE_MAX_SIZE:
-        _FORWARD_CACHE.popitem(last=False)
     return result
+
+
+def _zoom_for_map_bbox(west: float, south: float, east: float, north: float) -> int:
+    return _zoom_for_bbox([str(south), str(north), str(west), str(east)])
 
 
 def cached_location(

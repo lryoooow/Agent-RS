@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 
 from app.agent.report.builder import ReportError, build_conversation_report
+from app.agent.tool_context import current_analysis_results
 from app.agent.tools.common import execution_metadata
 from app.agent.tools.report.formatter import format_report_context
 from app.agent.tools.report.schema import ReportArguments
@@ -15,17 +16,21 @@ logger = logging.getLogger(__name__)
 async def run_report(args: ReportArguments) -> ToolRunResult:
     """对话工具 generate_report：把本对话真实分析结果汇总成可下载的 Word 报告。
 
-    身份/对话来自请求级 contextvar（user 与 runtime.plan 设置的 conversation），
+    身份/对话来自请求级 contextvar（user 与 AIService 绑定的 conversation），
     不进 runner 签名；报告数据与归属校验全在 build_conversation_report 内完成。
     """
     user_id = get_current_user_id()
     conversation_id = get_current_conversation_id()
+    # A GraphFlow may analyse and report before the assistant message is saved.
+    # These results come only from successful server-side tool executions.
+    current_results = current_analysis_results()
 
     try:
         artifact = await build_conversation_report(
             conversation_id=conversation_id,
             user_id=user_id,
             imagery_id=args.imagery_id,
+            **({"current_analyses": current_results} if current_results else {}),
         )
     except ReportError as exc:
         # 文案对用户安全（不含内部细节）；原始 code 进 logger 便于诊断。

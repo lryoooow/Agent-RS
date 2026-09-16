@@ -41,7 +41,28 @@ from autogen_ext.models.openai import _model_info as autogen_model_info
 from app.agent.config import ResolvedAIConfig, resolve_ai_config, resolve_thinking_budget
 from app.core.settings import get_settings
 
+from app.agent.engine.turn_context import current_turn_state
+
 logger = logging.getLogger(__name__)
+
+
+def available_tools(tools):
+    state = current_turn_state()
+    if state is None:
+        return tools
+    return [tool for tool in tools if state.available(tool.get("name", "") if isinstance(tool, dict) else tool.name)]
+
+
+class BudgetAwareOpenAIClient(OpenAIChatCompletionClient):
+    """Remove exhausted tools from the next provider request, keeping the executor quota as a backstop."""
+
+    async def create(self, messages, *, tools=(), **kwargs):
+        return await super().create(messages, tools=available_tools(tools), **kwargs)
+
+    async def create_stream(self, messages, *, tools=(), **kwargs):
+        async for chunk in super().create_stream(messages, tools=available_tools(tools), **kwargs):
+            yield chunk
+
 
 # OpenAI 兼容端点的保守默认能力集。
 #
@@ -131,7 +152,7 @@ def build_model_client(
     thinking_enabled = not for_routing if enable_thinking is None else enable_thinking
     extra_body = thinking_extra_body(enable=thinking_enabled, strength=config.thinking_strength)
 
-    return OpenAIChatCompletionClient(
+    return BudgetAwareOpenAIClient(
         model=model,
         api_key=config.api_key,
         base_url=config.base_url,

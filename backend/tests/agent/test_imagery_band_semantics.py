@@ -67,8 +67,8 @@ def test_derive_band_roles_landsat_style_red_edge_excluded():
 @pytest.mark.parametrize(
     ("count", "expected_source"),
     [
-        (4, "positional_gf2"),
-        (5, "positional_gf2"),
+        (4, None),
+        (5, None),
         (3, "positional_rgb"),
         (1, "positional_gray"),
     ],
@@ -134,8 +134,8 @@ def test_extract_metadata_falls_back_to_positional(tmp_path):
     _write_tif(tif)  # 无描述、无标签的 4 波段
     meta = _extract_metadata(tif)
     assert meta["band_descriptions"] is None
-    assert meta["band_roles"] == {"blue": 1, "green": 2, "red": 3, "nir": 4}
-    assert meta["band_roles_source"] == "positional_gf2"
+    assert meta["band_roles"] is None
+    assert meta["band_roles_source"] is None
     assert meta["sensor"] is None
     assert meta["acquired_at"] is None
 

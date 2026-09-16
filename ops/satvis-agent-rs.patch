@@ -1,0 +1,1719 @@
+diff --git a/src/components/AboutDialog.vue b/src/components/AboutDialog.vue
+index cf774b4..d11eada 100644
+--- a/src/components/AboutDialog.vue
++++ b/src/components/AboutDialog.vue
+@@ -1,19 +1,25 @@
+ <template>
+-  <UModal v-model:open="open" title="About Satvis" :ui="{ content: 'bg-[#303336]/95 text-[#edffff] divide-neutral-600 max-w-2xl', header: 'p-2 sm:px-3', body: 'p-3 sm:p-3' }">
+-    <UTooltip text="About">
++  <UModal v-model:open="open" :title="text('关于卫星轨道态势', 'About Satvis')" :ui="{ content: 'bg-[#303336]/95 text-[#edffff] divide-neutral-600 max-w-2xl', header: 'p-2 sm:px-3', body: 'p-3 sm:p-3' }">
++    <UTooltip :text="text('关于本轨道态势功能', 'About Satvis')">
+       <!-- A real link that the dialog intercepts, rather than a button. Opening the
+            dialog is what a click does, but /about is the same content as a page, so
+            the href is honest — and it is the only thing in the rendered document
+            that points there. Without it the page is reachable only by typing the
+            url, which for anything crawling the app means not at all. Middle-click
+            and "open in new tab" get the page, as they should. -->
+-      <a class="cesium-button cesium-toolbar-button" href="/about" aria-label="About Satvis" @click.prevent>
++      <a class="cesium-button cesium-toolbar-button" href="/about" :aria-label="text('关于卫星轨道态势', 'About Satvis')" @click.prevent>
+         <UIcon name="lucide:info" />
+       </a>
+     </UTooltip>
+     <template #body>
+       <!-- eslint-disable-next-line vue/no-v-html -->
+-      <div v-if="content" class="about about--dialog" v-html="content"></div>
++      <div v-if="isChinese" class="about about--dialog">
++        <h2>卫星轨道态势</h2>
++        <p>该功能基于 Satvis 与公开轨道根数数据，提供卫星分组检索、实时轨道、地面投影、传感器视场、地面站和过境预测。</p>
++        <p>左上角图标用于选择卫星和调整显示内容；右上角可以返回全球视图、切换语言、查看开源项目或隐藏控制界面。将鼠标悬停在图标上可查看详细说明。</p>
++        <p><a href="https://github.com/Flowm/satvis/" target="_blank" rel="noopener">查看 Satvis 开源项目</a></p>
++      </div>
++      <div v-else-if="content" class="about about--dialog" v-html="content"></div>
+       <div v-else class="about about--dialog">
+         <p v-if="failed">The about page could not be loaded. <a href="/about">Open it directly</a>.</p>
+         <p v-else>Loading…</p>
+@@ -25,9 +31,11 @@
+ <script setup lang="ts">
+ import { ref, watch } from "vue";
+ 
++import { useLocale } from "../composables/useLocale";
+ import "../css/about.css";
+ 
+ const open = ref(false);
++const { isChinese, text } = useLocale();
+ const content = ref("");
+ const failed = ref(false);
+ 
+diff --git a/src/components/BenchmarkPanel.vue b/src/components/BenchmarkPanel.vue
+index 1f6c96d..22e2b8a 100644
+--- a/src/components/BenchmarkPanel.vue
++++ b/src/components/BenchmarkPanel.vue
+@@ -20,8 +20,8 @@
+ <template>
+   <div class="bench" :class="{ 'bench--below-fps': showFps }">
+     <div class="bench__bar">
+-      <span class="bench__title">BENCHMARK</span>
+-      <button type="button" class="bench__x" title="Close" @click="emit('close')">×</button>
++      <span class="bench__title">{{ text("性能基准测试", "BENCHMARK") }}</span>
++      <button type="button" class="bench__x" :title="text('关闭性能面板', 'Close')" :aria-label="text('关闭性能面板', 'Close benchmark panel')" @click="emit('close')">×</button>
+     </div>
+ 
+     <!-- Pinned with the readout it invalidates rather than filed away in the
+@@ -29,8 +29,8 @@
+          all means something switched it back on, and every figure below is the
+          gap between requested frames instead of a frame rate. -->
+     <div v-if="renderOnDemand" class="bench__alert">
+-      render-on-demand is on — these are gaps between requested frames, not a frame rate.
+-      <button type="button" @click="disableRenderOnDemand()">turn off</button>
++      {{ text("按需渲染已开启——当前数值表示请求帧之间的间隔，不是真实帧率。", "render-on-demand is on — these are gaps between requested frames, not a frame rate.") }}
++      <button type="button" @click="disableRenderOnDemand()">{{ text("关闭按需渲染", "turn off") }}</button>
+     </div>
+ 
+     <div class="bench__live">
+@@ -39,27 +39,27 @@
+         <span class="bench__unit">fps</span>
+         <span class="bench__sep">·</span>
+         <span
+-          >frame <b>{{ live.frameMs.toFixed(2) }}</b> ms</span
++          >{{ text("帧耗时", "frame") }} <b>{{ live.frameMs.toFixed(2) }}</b> ms</span
+         >
+         <span class="bench__sep">·</span>
+         <span
+-          >cpu <b>{{ live.cpuMs.toFixed(2) }}</b> ms</span
++          >CPU <b>{{ live.cpuMs.toFixed(2) }}</b> ms</span
+         >
+         <template v-if="live.gpuMs !== undefined">
+           <span class="bench__sep">·</span>
+           <span
+-            >gpu <b>{{ live.gpuMs.toFixed(2) }}</b> ms</span
++            >GPU <b>{{ live.gpuMs.toFixed(2) }}</b> ms</span
+           >
+         </template>
+       </div>
+       <div class="bench__row bench__dim">
+         <!-- The window's low-water mark, and raw: a live instrument, not a report
+              row. The fit is what turns heap into something comparable. -->
+-        p95 {{ live.p95Ms.toFixed(2) }} · worst {{ live.worstMs.toFixed(2) }} · jank {{ live.jankPct.toFixed(0) }}% · heap
++        p95 {{ live.p95Ms.toFixed(2) }} · {{ text("最差", "worst") }} {{ live.worstMs.toFixed(2) }} · {{ text("卡顿", "jank") }} {{ live.jankPct.toFixed(0) }}% · {{ text("堆内存", "heap") }}
+         {{ live.heapMb === undefined ? "n/a" : `${live.heapMb.toFixed(0)} MB` }}
+       </div>
+       <div class="bench__row bench__dim">
+-        {{ live.satellites }} sats · {{ live.components || "no components" }} · ×{{ live.clock }} · {{ live.entities }} entities · {{ live.primitives }} primitives
++        {{ live.satellites }} {{ text("颗卫星", "sats") }} · {{ live.components || text("无显示组件", "no components") }} · ×{{ live.clock }} · {{ live.entities }} {{ text("个实体", "entities") }} · {{ live.primitives }} {{ text("个图元", "primitives") }}
+       </div>
+     </div>
+ 
+@@ -73,16 +73,16 @@
+              away never means forgetting what is about to run. -->
+         <button type="button" class="bench__fold" :aria-expanded="settingsOpen" @click="settingsOpen = !settingsOpen">
+           <span class="bench__chevron">{{ settingsOpen ? "▾" : "▸" }}</span>
+-          settings
++          {{ text("测试设置", "settings") }}
+           <span v-if="!settingsOpen" class="bench__dim">{{ settingsSummary }}</span>
+         </button>
+         <template v-if="settingsOpen">
+           <label class="bench__field">
+-            <span>counts</span>
++            <span>{{ text("卫星数量", "counts") }}</span>
+             <input v-model="countsText" type="text" spellcheck="false" :disabled="running" />
+           </label>
+           <div class="bench__field">
+-            <span>sat comps</span>
++            <span>{{ text("卫星组件", "sat comps") }}</span>
+             <div class="bench__modes">
+               <label v-for="option in MODES" :key="option.value" class="bench__mode" :title="option.hint">
+                 <input v-model="mode" type="radio" :value="option.value" :disabled="running" />
+@@ -94,62 +94,62 @@
+                the sampled trajectory refreshes on a simulation-time schedule, so a
+                faster clock re-propagates the same satellites more often. -->
+           <label class="bench__field">
+-            <span>clock</span>
++            <span>{{ text("时钟倍率", "clock") }}</span>
+             <input v-model="clocksText" type="text" spellcheck="false" :disabled="running" />
+             <span class="bench__dim">×</span>
+           </label>
+           <div class="bench__field">
+-            <span>timing</span>
++            <span>{{ text("采样时长", "timing") }}</span>
+             <div class="bench__inline">
+-              <label>warmup <input v-model.number="warmupMs" type="number" min="0" step="250" :disabled="running" /></label>
+-              <label>sample <input v-model.number="sampleMs" type="number" min="250" step="250" :disabled="running" /></label>
++              <label>{{ text("预热", "warmup") }} <input v-model.number="warmupMs" type="number" min="0" step="250" :disabled="running" /></label>
++              <label>{{ text("采样", "sample") }} <input v-model.number="sampleMs" type="number" min="250" step="250" :disabled="running" /></label>
+               <span class="bench__dim">ms</span>
+             </div>
+           </div>
+           <div class="bench__field">
+-            <span>extras</span>
++            <span>{{ text("附加测试", "extras") }}</span>
+             <div class="bench__inline">
+-              <label><input v-model="withGroundStation" type="checkbox" :disabled="running" /> ground station (pass prediction)</label>
++              <label><input v-model="withGroundStation" type="checkbox" :disabled="running" /> {{ text("地面站（过境预测）", "ground station (pass prediction)") }}</label>
+               <!-- The expensive one. Disabled rather than hidden when it cannot
+                    work, because "not cross-origin isolated" is a fact about how the
+                    page was served that nothing else in the app ever surfaces. -->
+               <label :title="footprintHint">
+                 <input v-model="withFootprint" type="checkbox" :disabled="running || !footprintAvailable" />
+-                accurate memory footprint (measureUAM, ~17 s/step)
++                {{ text("精确内存占用（measureUAM，每步约 17 秒）", "accurate memory footprint (measureUAM, ~17 s/step)") }}
+               </label>
+             </div>
+           </div>
+         </template>
+         <div class="bench__row">
+-          <button type="button" class="bench__run" :disabled="running || plan.length === 0" @click="void start()">Run {{ plan.length }} steps</button>
+-          <button type="button" :disabled="!running" @click="cancel()">Cancel</button>
++          <button type="button" class="bench__run" :disabled="running || plan.length === 0" @click="void start()">{{ text(`运行 ${plan.length} 个步骤`, `Run ${plan.length} steps`) }}</button>
++          <button type="button" :disabled="!running" @click="cancel()">{{ text("取消", "Cancel") }}</button>
+           <span class="bench__dim">≈ {{ estimateText }}</span>
+         </div>
+-        <div class="bench__row bench__dim">{{ status }}</div>
++        <div class="bench__row bench__dim">{{ localizedStatus }}</div>
+       </div>
+ 
+       <!-- Above the tables, not beside the rows: the fits and the propagation
+          deltas are built out of these rows, so a thin sample makes every table
+          below noise and each one would otherwise read as a result. -->
+       <div v-if="thin > 0" class="bench__block bench__warn">
+-        {{ thin }}/{{ rows.length }} steps sampled under {{ MIN_TRUSTWORTHY_FRAMES }} frames — those rows, and everything derived from them, are noise. Keep the tab in front.
++        {{ text(`${thin}/${rows.length} 个步骤的采样少于 ${MIN_TRUSTWORTHY_FRAMES} 帧，这些行及其派生结果不可靠。测试期间请保持此标签页在前台。`, `${thin}/${rows.length} steps sampled under ${MIN_TRUSTWORTHY_FRAMES} frames — those rows, and everything derived from them, are noise. Keep the tab in front.`) }}
+       </div>
+ 
+       <div v-if="rows.length > 0" class="bench__block bench__block--table">
+         <table class="bench__table">
+           <thead>
+             <tr>
+-              <th class="bench__num">sats</th>
+-              <th class="bench__num">vis</th>
+-              <th v-if="clockSwept" class="bench__num">clock</th>
++              <th class="bench__num">{{ text("卫星", "sats") }}</th>
++              <th class="bench__num">{{ text("可见", "vis") }}</th>
++              <th v-if="clockSwept" class="bench__num">{{ text("时钟", "clock") }}</th>
+               <th class="bench__num">fps</th>
+-              <th class="bench__num">frame</th>
++              <th class="bench__num">{{ text("帧耗时", "frame") }}</th>
+               <th class="bench__num">p95</th>
+               <th class="bench__num">cpu</th>
+               <th v-if="gpuColumn" class="bench__num">gpu</th>
+-              <th class="bench__num">build</th>
+-              <th v-if="footprintColumn" class="bench__num">footprint</th>
+-              <th>components</th>
++              <th class="bench__num">{{ text("构建", "build") }}</th>
++              <th v-if="footprintColumn" class="bench__num">{{ text("内存占用", "footprint") }}</th>
++              <th>{{ text("组件", "components") }}</th>
+             </tr>
+           </thead>
+           <tbody>
+@@ -170,7 +170,7 @@
+               <td class="bench__num">{{ row.buildMs.toFixed(0) }}</td>
+               <td v-if="footprintColumn" class="bench__num">{{ row.footprintMb === "" ? "—" : row.footprintMb }}</td>
+               <td>
+-                {{ row.components }}<span v-if="row.drawn" class="bench__warn"> → drew {{ row.drawn }}</span>
++                {{ row.components }}<span v-if="row.drawn" class="bench__warn"> → {{ text(`实际绘制 ${row.drawn}`, `drew ${row.drawn}`) }}</span>
+               </td>
+             </tr>
+           </tbody>
+@@ -178,16 +178,16 @@
+       </div>
+ 
+       <div v-if="fits.length > 0" class="bench__block bench__block--table">
+-        <div class="bench__caption">scaling (main-thread ms per 1,000 satellites; floor is GPU plus vsync)</div>
++        <div class="bench__caption">{{ text("扩展性能（每 1,000 颗卫星的主线程毫秒数；下限包含 GPU 与垂直同步）", "scaling (main-thread ms per 1,000 satellites; floor is GPU plus vsync)") }}</div>
+         <table class="bench__table">
+           <thead>
+             <tr>
+-              <th>series</th>
++              <th>{{ text("测试序列", "series") }}</th>
+               <th class="bench__num">ms/1k</th>
+-              <th class="bench__num">base</th>
++              <th class="bench__num">{{ text("基线", "base") }}</th>
+               <th class="bench__num">r²</th>
+-              <th class="bench__num">floor</th>
+-              <th class="bench__num">sats@60</th>
++              <th class="bench__num">{{ text("下限", "floor") }}</th>
++              <th class="bench__num">{{ text("60fps卫星数", "sats@60") }}</th>
+             </tr>
+           </thead>
+           <tbody>
+@@ -208,15 +208,15 @@
+          footprint and an absolute figure printed here would invite exactly the
+          misreading that sent someone after a leak that did not exist. -->
+       <div v-if="memory.length > 0" class="bench__block bench__block--table">
+-        <div class="bench__caption">memory (heap growth per 1,000 satellites — relative; within 2% of a forced GC when r² holds)</div>
++        <div class="bench__caption">{{ text("内存（每 1,000 颗卫星的堆增长量；相对值）", "memory (heap growth per 1,000 satellites — relative; within 2% of a forced GC when r² holds)") }}</div>
+         <table class="bench__table">
+           <thead>
+             <tr>
+-              <th>series</th>
++              <th>{{ text("测试序列", "series") }}</th>
+               <th class="bench__num">MB/1k</th>
+               <th class="bench__num">KB/sat</th>
+-              <th v-if="footprintColumn" class="bench__num" title="The same slope from absolute footprints, with its own r². Agreement with KB/sat means both can be trusted.">
+-                absolute
++              <th v-if="footprintColumn" class="bench__num" :title="text('由绝对内存占用计算的斜率；与 KB/卫星一致时更可信。', 'The same slope from absolute footprints, with its own r². Agreement with KB/sat means both can be trusted.')">
++                {{ text("绝对值", "absolute") }}
+               </th>
+               <th class="bench__num">r²</th>
+             </tr>
+@@ -243,25 +243,24 @@
+              negative slope that is the tell — so the r² cell turns red and this
+              line says what it means. -->
+         <div v-if="memory.some((fit) => fit.r2 !== undefined && !memoryFitTrustworthy(fit))" class="bench__row bench__bad">
+-          that slope cannot be read — it needs {{ MIN_MEMORY_FIT_POINTS }}+ counts and r² {{ MIN_TRUSTWORTHY_MEMORY_R2 }}, or a garbage collection landed inside the series and its
+-          offset is not common to the rows. Sweep more counts, or re-run.
++          {{ text(`该斜率不可采用：至少需要 ${MIN_MEMORY_FIT_POINTS} 组数量且 r² 达到 ${MIN_TRUSTWORTHY_MEMORY_R2}，或本次序列受垃圾回收干扰。请增加数量梯度或重新运行。`, `that slope cannot be read — it needs ${MIN_MEMORY_FIT_POINTS}+ counts and r² ${MIN_TRUSTWORTHY_MEMORY_R2}, or a garbage collection landed inside the series. Sweep more counts, or re-run.`) }}
+         </div>
+       </div>
+ 
+       <!-- Only when the clock was swept: an empty table here would read as
+          "propagation is free" rather than "nobody asked". -->
+       <div v-if="propagation.length > 0" class="bench__block bench__block--table">
+-        <div class="bench__caption">propagation (clock-tick ms over the same scene at ×1)</div>
++        <div class="bench__caption">{{ text("轨道传播开销（相对同一场景 ×1 时钟的每次 tick 毫秒数）", "propagation (clock-tick ms over the same scene at ×1)") }}</div>
+         <table class="bench__table">
+           <thead>
+             <tr>
+-              <th class="bench__num">sats</th>
+-              <th class="bench__num">clock</th>
++              <th class="bench__num">{{ text("卫星", "sats") }}</th>
++              <th class="bench__num">{{ text("时钟", "clock") }}</th>
+               <th class="bench__num">tick</th>
+               <th class="bench__num">Δ</th>
+               <th class="bench__num">µs/sat</th>
+               <th class="bench__num">cpu</th>
+-              <th>components</th>
++              <th>{{ text("组件", "components") }}</th>
+             </tr>
+           </thead>
+           <tbody>
+@@ -283,17 +282,17 @@
+          measured differently the second time, the app moved under the sweep and
+          every trend above is partly that. -->
+       <div v-if="repeats.length > 0" class="bench__block bench__block--table">
+-        <div class="bench__caption">first step re-run at the end (drift)</div>
++        <div class="bench__caption">{{ text("结束时重跑第一步（漂移检查）", "first step re-run at the end (drift)") }}</div>
+         <table class="bench__table">
+           <thead>
+             <tr>
+-              <th class="bench__num">sats</th>
+-              <th class="bench__num">main 1st</th>
+-              <th class="bench__num">main again</th>
+-              <th class="bench__num">drift</th>
+-              <th class="bench__num">build 1st</th>
+-              <th class="bench__num">build again</th>
+-              <th class="bench__num">drift</th>
++              <th class="bench__num">{{ text("卫星", "sats") }}</th>
++              <th class="bench__num">{{ text("首次主线程", "main 1st") }}</th>
++              <th class="bench__num">{{ text("再次主线程", "main again") }}</th>
++              <th class="bench__num">{{ text("漂移", "drift") }}</th>
++              <th class="bench__num">{{ text("首次构建", "build 1st") }}</th>
++              <th class="bench__num">{{ text("再次构建", "build again") }}</th>
++              <th class="bench__num">{{ text("漂移", "drift") }}</th>
+             </tr>
+           </thead>
+           <tbody>
+@@ -311,10 +310,10 @@
+       </div>
+ 
+       <div class="bench__block bench__row">
+-        <button type="button" :disabled="rows.length === 0" @click="logToConsole()">Log</button>
+-        <button type="button" :disabled="rows.length === 0" @click="void copy('csv')">Copy CSV</button>
+-        <button type="button" :disabled="rows.length === 0" @click="void copy('json')">Copy JSON</button>
+-        <button type="button" :disabled="rows.length === 0" @click="void copy('text')">Copy table</button>
++        <button type="button" :disabled="rows.length === 0" @click="logToConsole()">{{ text("输出日志", "Log") }}</button>
++        <button type="button" :disabled="rows.length === 0" @click="void copy('csv')">{{ text("复制 CSV", "Copy CSV") }}</button>
++        <button type="button" :disabled="rows.length === 0" @click="void copy('json')">{{ text("复制 JSON", "Copy JSON") }}</button>
++        <button type="button" :disabled="rows.length === 0" @click="void copy('text')">{{ text("复制表格", "Copy table") }}</button>
+         <span v-if="copied" class="bench__dim">{{ copied }}</span>
+       </div>
+     </div>
+@@ -326,6 +325,7 @@ import { storeToRefs } from "pinia";
+ import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+ 
+ import { useController } from "../composables/useController";
++import { useLocale } from "../composables/useLocale";
+ import {
+   CUMULATIVE_COMPONENT_SETS,
+   DEFAULT_OPTIONS,
+@@ -368,6 +368,7 @@ import { useSatStore } from "../stores/sat";
+ const emit = defineEmits<{ close: [] }>();
+ 
+ const cc = useController();
++const { isChinese, text } = useLocale();
+ const cesiumStore = useCesiumStore();
+ const satStore = useSatStore();
+ // Both reactive now that the store owns them, which is what lets the warning
+@@ -382,12 +383,12 @@ const bench = installBenchmark(cc);
+ // `current` first and selected: the everyday question is how the components the
+ // user actually has switched on scale, and it is also the only choice that costs
+ // one pass rather than seven or eight.
+-const MODES = [
+-  { value: "current", label: "current", hint: "Only the components currently switched on" },
+-  { value: "isolated", label: "isolated", hint: "Point, plus each other component on its own" },
+-  { value: "cumulative", label: "cumulative", hint: "One component added at a time, on top of the last" },
+-] as const;
+-type Mode = (typeof MODES)[number]["value"];
++type Mode = "current" | "isolated" | "cumulative";
++const MODES = computed(() => [
++  { value: "current" as const, label: text("当前", "current"), hint: text("仅测试当前已开启的显示组件", "Only the components currently switched on") },
++  { value: "isolated" as const, label: text("单项", "isolated"), hint: text("点位加每个组件分别测试", "Point, plus each other component on its own") },
++  { value: "cumulative" as const, label: text("累加", "cumulative"), hint: text("在上一步基础上逐项增加组件", "One component added at a time, on top of the last") },
++]);
+ 
+ const countsText = ref(DEFAULT_SATELLITE_COUNTS.join(", "));
+ // Real time only by default: the clock axis multiplies the step count, and most
+@@ -408,11 +409,24 @@ const withGroundStation = ref(false);
+  */
+ const withFootprint = ref(false);
+ const footprintAvailable = canMeasureFootprint();
+-const footprintHint = footprintAvailable
+-  ? "performance.measureUserAgentSpecificMemory(): an absolute footprint with garbage excluded, against the relative slope the default reports. It resolves only when a collection happens, which is the ~17 s."
+-  : "Unavailable: this page is not cross-origin isolated, so the API is not exposed. pnpm dev and pnpm preview send the headers that enable it; a deployed satvis.space does not.";
++const footprintHint = computed(() =>
++  footprintAvailable
++    ? text("使用 performance.measureUserAgentSpecificMemory() 获取排除垃圾后的绝对内存占用；通常每步约需 17 秒。", "performance.measureUserAgentSpecificMemory(): an absolute footprint with garbage excluded, against the relative slope the default reports. It resolves only when a collection happens, which is the ~17 s.")
++    : text("当前页面不是跨域隔离环境，浏览器未开放精确内存 API。", "Unavailable: this page is not cross-origin isolated, so the API is not exposed."),
++);
+ const running = ref(false);
+ const status = ref("idle");
++const localizedStatus = computed(() => {
++  if (!isChinese.value) return status.value;
++  return status.value
++    .replace(/^idle$/, "空闲")
++    .replace(/^preparing — loading the whole catalog$/, "准备中——正在加载完整卫星目录")
++    .replace(/^running — started from the console$/, "运行中——由控制台启动")
++    .replace(/^cancelling — finishing the current sample$/, "正在取消——等待当前采样结束")
++    .replace(/^cancelled after (\d+) steps$/, "已取消，共完成 $1 个步骤")
++    .replace(/^done — (\d+) steps(?: \(console\))?$/, "已完成，共 $1 个步骤")
++    .replace(/^failed:/, "失败：");
++});
+ const copied = ref("");
+ // Open to begin with: the settings are the first thing anyone touches, and a
+ // panel that opens showing nothing but a Run button hides what it would run.
+@@ -482,17 +496,18 @@ function adoptRunSettings(): void {
+ 
+ /** What the folded settings say, so collapsing them is not the same as losing them. */
+ const settingsSummary = computed(() => {
+-  const parts = [`${counts.value.length} counts`, mode.value];
++  const modeLabel = MODES.value.find((item) => item.value === mode.value)?.label ?? mode.value;
++  const parts = [text(`${counts.value.length} 组数量`, `${counts.value.length} counts`), modeLabel];
+   if (clocks.value.length > 1 || (clocks.value[0] ?? 1) !== 1) {
+-    parts.push(`${clocks.value.length} clocks`);
++    parts.push(text(`${clocks.value.length} 组时钟`, `${clocks.value.length} clocks`));
+   }
+   if (withGroundStation.value) {
+-    parts.push("ground station");
++    parts.push(text("地面站", "ground station"));
+   }
+   if (withFootprint.value) {
+     // Named in the collapsed summary because it is the setting that turns a
+     // four-minute sweep into a fourteen-minute one.
+-    parts.push("footprint");
++    parts.push(text("内存占用", "footprint"));
+   }
+   return `· ${parts.join(" · ")}`;
+ });
+@@ -736,13 +751,13 @@ async function copy(format: "csv" | "json" | "text"): Promise<void> {
+   if (!current) {
+     return;
+   }
+-  const text = format === "csv" ? toCsv(current) : format === "json" ? toJson(current) : formatTable(current);
++  const payload = format === "csv" ? toCsv(current) : format === "json" ? toJson(current) : formatTable(current);
+   try {
+-    await navigator.clipboard.writeText(text);
+-    copied.value = `copied ${format}`;
++    await navigator.clipboard.writeText(payload);
++    copied.value = text(`已复制 ${format.toUpperCase()}`, `copied ${format}`);
+   } catch {
+-    console.log(text);
+-    copied.value = "clipboard refused — logged instead";
++    console.log(payload);
++    copied.value = text("剪贴板写入失败，已输出到控制台", "clipboard refused — logged instead");
+   }
+   setTimeout(() => {
+     copied.value = "";
+diff --git a/src/components/ClockDeck.vue b/src/components/ClockDeck.vue
+index b1e0470..719976e 100644
+--- a/src/components/ClockDeck.vue
++++ b/src/components/ClockDeck.vue
+@@ -8,28 +8,28 @@
+ <template>
+   <div class="deck" :class="{ 'deck--folded': !open }" :style="surfaceStyle">
+     <div ref="cluster" class="cluster">
+-      <button v-if="open" type="button" class="play" :aria-label="playing ? 'Pause' : 'Play'" @click="togglePlaying">
++      <button v-if="open" type="button" class="play" :title="playing ? text('暂停时间', 'Pause time') : text('播放时间', 'Play time')" :aria-label="playing ? text('暂停', 'Pause') : text('播放', 'Play')" @click="togglePlaying">
+         <span class="play__circle">
+           <UIcon :name="playing ? 'lucide:pause' : 'lucide:play'" />
+         </span>
+       </button>
+ 
+-      <button type="button" class="stamp" :aria-label="open ? 'Hide clock controls' : 'Show clock controls'" :aria-expanded="open" @click="toggle">
++      <button type="button" class="stamp" :title="open ? text('收起时间控制', 'Hide clock controls') : text('展开时间控制', 'Show clock controls')" :aria-label="open ? text('收起时间控制', 'Hide clock controls') : text('展开时间控制', 'Show clock controls')" :aria-expanded="open" @click="toggle">
+         <span class="stamp__time">{{ clockLabel(now) }}</span>
+-        <span class="stamp__date">{{ dateLabel(now) }} UTC</span>
+-        <span v-if="!offPresent" class="stamp__live" role="img" aria-label="Live"></span>
++        <span class="stamp__date">{{ localizedDateLabel(now) }} UTC</span>
++        <span v-if="!offPresent" class="stamp__live" role="img" :aria-label="text('实时', 'Live')"></span>
+       </button>
+ 
+       <div class="right">
+         <template v-if="open">
+           <!-- Before the reset, so it holds still as the reset comes and goes. -->
+-          <button type="button" class="mode" :aria-pressed="onLadder" :aria-label="onLadder ? 'Show timeline' : 'Set playback speed'" @click="toggleScale">
++          <button type="button" class="mode" :title="onLadder ? text('切换到时间轴', 'Show timeline') : text('设置播放速度', 'Set playback speed')" :aria-pressed="onLadder" :aria-label="onLadder ? text('显示时间轴', 'Show timeline') : text('设置播放速度', 'Set playback speed')" @click="toggleScale">
+             <span class="mode__circle" :class="{ 'mode__circle--on': onLadder }">
+               <UIcon :name="onLadder ? 'lucide:clock' : 'lucide:gauge'" />
+             </span>
+           </button>
+ 
+-          <button v-if="resettable" type="button" class="reset" :aria-label="onLadder ? 'Back to real time' : 'Back to now'" @click="reset">
++          <button v-if="resettable" type="button" class="reset" :title="onLadder ? text('恢复实时速度', 'Back to real time') : text('返回当前时刻', 'Back to now')" :aria-label="onLadder ? text('恢复实时速度', 'Back to real time') : text('返回当前时刻', 'Back to now')" @click="reset">
+             <span class="reset__circle">
+               <UIcon name="lucide:rotate-ccw" />
+             </span>
+@@ -48,7 +48,7 @@
+           class="ladder"
+           :style="{ '--rung-width': `${CHIP_PX}px`, '--rung-inset': `${CHIP_PX / 2}px` }"
+           role="radiogroup"
+-          aria-label="Playback speed"
++          :aria-label="text('播放速度', 'Playback speed')"
+           @scroll="onLadderScroll"
+           @keydown="onLadderKey"
+           @pointerdown="onLadderDown"
+@@ -64,6 +64,7 @@
+             class="rung"
+             :class="{ 'rung--on': index === rung }"
+             :aria-checked="index === rung"
++            :title="text(`将时间速度设为 ${multiplierLabel(value)}`, `Set playback speed to ${multiplierLabel(value)}`)"
+             :tabindex="index === rung ? 0 : -1"
+             @click="pickRung(index)"
+           >
+@@ -81,7 +82,8 @@
+           class="timeline"
+           role="group"
+           tabindex="0"
+-          aria-label="Timeline"
++          :aria-label="text('时间轴：拖动或使用方向键调整时间', 'Timeline: drag or use arrow keys to change time')"
++          :title="text('拖动时间轴可查看过去或未来的卫星位置', 'Drag the timeline to inspect past or future satellite positions')"
+           @pointerdown="onTimelineDown"
+           @pointermove="onTimelineMove"
+           @pointerup="onTimelineUp"
+@@ -105,6 +107,7 @@
+ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
+ 
+ import { useClockDeckChrome } from "../composables/useClockDeckChrome";
++import { useLocale } from "../composables/useLocale";
+ import { useLadder, useTimeline } from "../composables/useClockScales";
+ import { usePassHighlights } from "../composables/usePassHighlights";
+ import { useViewerClock } from "../composables/useViewerClock";
+@@ -112,8 +115,14 @@ import { arrowStep, Scale, CHIP_PX, clockLabel, dateLabel, LADDER, multiplierLab
+ import { DeviceDetect } from "../modules/util/DeviceDetect";
+ 
+ const clock = useViewerClock();
++const { isChinese, text } = useLocale();
+ const { now, playing, multiplier, rung, offPresent, togglePlaying, goLive } = clock;
+ 
++function localizedDateLabel(value: Date): string {
++  if (!isChinese.value) return dateLabel(value);
++  return new Intl.DateTimeFormat("zh-CN", { timeZone: "UTC", month: "short", day: "numeric", weekday: "short" }).format(value);
++}
++
+ const timeline = ref<HTMLElement>();
+ const { ticks, width: timelineWidth, onDown: onTimelineDown, onMove: onTimelineMove, onUp: onTimelineUp, onKey: onTimelineKey, measure } = useTimeline(clock, timeline);
+ 
+diff --git a/src/components/EntityInfoPanel.vue b/src/components/EntityInfoPanel.vue
+index 76118dd..6816f88 100644
+--- a/src/components/EntityInfoPanel.vue
++++ b/src/components/EntityInfoPanel.vue
+@@ -23,14 +23,14 @@
+               v-model="draftName"
+               class="head__rename"
+               type="text"
+-              placeholder="unnamed"
+-              aria-label="Station name"
++              :placeholder="text('未命名', 'unnamed')"
++              :aria-label="text('地面站名称', 'Station name')"
+               @keydown.enter="commitRename"
+               @keydown.esc="cancelRename"
+               @blur="commitRename"
+             />
+             <span v-else class="head__name">{{ name }}</span>
+-            <UTooltip v-if="canRename" :text="renaming ? 'Done' : 'Rename'">
++            <UTooltip v-if="canRename" :text="renaming ? text('完成重命名', 'Done') : text('重命名地面站', 'Rename')">
+               <!-- Keeps focus in the input, so pressing it commits once through
+                    the click rather than once through the blur and then reopening. -->
+               <UButton
+@@ -38,25 +38,25 @@
+                 variant="ghost"
+                 color="neutral"
+                 size="xs"
+-                :aria-label="renaming ? 'Finish renaming' : 'Rename station'"
++                :aria-label="renaming ? text('完成重命名', 'Finish renaming') : text('重命名地面站', 'Rename station')"
+                 @mousedown.prevent
+                 @click="toggleRename"
+               />
+             </UTooltip>
+             <span class="head__id">{{ satnum ? `#${satnum}` : "" }}</span>
+-            <UTooltip text="Notify for upcoming passes">
+-              <UButton icon="i-lucide-bell" variant="ghost" color="neutral" size="xs" aria-label="Notify for upcoming passes" @click="notifyPasses" />
++            <UTooltip :text="text('为即将到来的过境创建通知', 'Notify for upcoming passes')">
++              <UButton icon="i-lucide-bell" variant="ghost" color="neutral" size="xs" :aria-label="text('过境通知', 'Notify for upcoming passes')" @click="notifyPasses" />
+             </UTooltip>
+-            <UTooltip v-if="canEnterSkyView" text="View the sky from here">
+-              <UButton icon="i-lucide-telescope" variant="ghost" color="neutral" size="xs" aria-label="View the sky from this ground station" @click="enterSkyView" />
++            <UTooltip v-if="canEnterSkyView" :text="text('从该地面站进入天空观察', 'View the sky from here')">
++              <UButton icon="i-lucide-telescope" variant="ghost" color="neutral" size="xs" :aria-label="text('从该地面站观察天空', 'View the sky from this ground station')" @click="enterSkyView" />
+             </UTooltip>
+             <!-- Hidden rather than disabled in the sky view, which owns the camera:
+                  tracking there has no meaning to convey, and a button that silently
+                  did nothing would read as broken. -->
+-            <UTooltip v-if="!inSkyView" :text="isTracked ? 'Stop tracking' : 'Track entity'">
+-              <UButton icon="i-lucide-video" variant="ghost" :color="isTracked ? 'primary' : 'neutral'" size="xs" aria-label="Track entity" @click="toggleTrack" />
++            <UTooltip v-if="!inSkyView" :text="isTracked ? text('停止相机跟踪', 'Stop tracking') : text('让相机跟踪目标', 'Track entity')">
++              <UButton icon="i-lucide-video" variant="ghost" :color="isTracked ? 'primary' : 'neutral'" size="xs" :aria-label="isTracked ? text('停止跟踪', 'Stop tracking') : text('跟踪目标', 'Track entity')" @click="toggleTrack" />
+             </UTooltip>
+-            <UButton icon="i-lucide-x" variant="ghost" color="neutral" size="xs" aria-label="Close" @click="deselect" />
++            <UButton icon="i-lucide-x" variant="ghost" color="neutral" size="xs" :title="text('关闭目标信息', 'Close entity information')" :aria-label="text('关闭', 'Close')" @click="deselect" />
+           </div>
+           <div v-if="chips.length > 0" class="head__chips">
+             <span v-for="chip in chips" :key="chip">{{ chip }}</span>
+@@ -104,11 +104,11 @@
+             <template v-if="!passesPending && hasAnyPasses">
+               <div v-if="nextPass" class="hero" :class="{ 'hero--live': isOngoing }">
+                 <div class="hero__label">
+-                  {{ isOngoing ? "Overhead now" : "Next pass" }}
++                  {{ isOngoing ? text("正在过境", "Overhead now") : text("下一次过境", "Next pass") }}
+                   <span v-if="nextPassSubject">· {{ nextPassSubject }}</span>
+                 </div>
+-                <div class="hero__value">{{ formatCountdown(nowMs, nextPass) }}</div>
+-                <div class="hero__meta">{{ passSummary(nextPass) }}</div>
++                <div class="hero__value">{{ localizedCountdown(nextPass) }}</div>
++                <div class="hero__meta">{{ localizedPassSummary(nextPass) }}</div>
+                 <div v-if="isOngoing" class="hero__progress"><span :style="{ width: `${ongoingFraction * 100}%` }" /></div>
+               </div>
+ 
+@@ -121,7 +121,7 @@
+                  misses — so a control that appears only when there are passes is one
+                  you cannot use to undo the switch that emptied the tab. -->
+             <div class="passes__bar">
+-              <div class="modes" role="group" aria-label="Overpass calculation">
++              <div class="modes" role="group" :aria-label="text('过境计算方式', 'Overpass calculation')">
+                 <button
+                   v-for="option in OVERPASS_MODES"
+                   :key="option.value"
+@@ -134,21 +134,21 @@
+                   {{ option.label }}
+                 </button>
+               </div>
+-              <USwitch v-model="showPastPasses" label="Past" size="xs" />
++              <USwitch v-model="showPastPasses" :label="text('历史', 'Past')" size="xs" />
+             </div>
+ 
+-            <div v-if="passesPending" class="empty">Computing passes…</div>
++            <div v-if="passesPending" class="empty">{{ text("正在计算过境…", "Computing passes…") }}</div>
+             <div v-else-if="!hasAnyPasses" class="empty">{{ emptyPassText }}</div>
+-            <div v-else-if="passRows.length === 0" class="empty">No upcoming passes</div>
++            <div v-else-if="passRows.length === 0" class="empty">{{ text("没有即将发生的过境", "No upcoming passes") }}</div>
+             <table v-else ref="tableEl" class="info-table">
+               <thead>
+                 <tr>
+-                  <th v-if="subjectCount > 1">{{ selection.kind === "groundstation" ? "Satellite" : "Station" }}</th>
+-                  <th>In</th>
+-                  <th>Start</th>
+-                  <th>End</th>
+-                  <th class="num">{{ overpassMode === "swath" ? "Dist" : "El" }}</th>
+-                  <th class="num">{{ overpassMode === "swath" ? "Swath" : "Az" }}</th>
++                  <th v-if="subjectCount > 1">{{ selection.kind === "groundstation" ? text("卫星", "Satellite") : text("地面站", "Station") }}</th>
++                  <th>{{ text("倒计时", "In") }}</th>
++                  <th>{{ text("开始", "Start") }}</th>
++                  <th>{{ text("结束", "End") }}</th>
++                  <th class="num">{{ overpassMode === "swath" ? text("距离", "Dist") : text("仰角", "El") }}</th>
++                  <th class="num">{{ overpassMode === "swath" ? text("幅宽", "Swath") : text("方位", "Az") }}</th>
+                 </tr>
+               </thead>
+               <tbody>
+@@ -159,7 +159,7 @@
+                   :class="{ 'is-next': row.startMs === nextPass?.start, 'is-picked': row.startMs === pickedPassMs }"
+                 >
+                   <td v-if="subjectCount > 1">{{ row.name }}</td>
+-                  <td class="mono">{{ row.countdown }}</td>
++                  <td class="mono">{{ localizeCountdownValue(row.countdown) }}</td>
+                   <td>
+                     <a class="link" @click="cc.setTime(row.startMs)">{{ row.startLabel }}</a>
+                   </td>
+@@ -174,9 +174,9 @@
+ 
+         <template #details>
+           <div class="tab-body__pad">
+-            <table v-if="satelliteInfo.length > 0" class="info-table info-table--facts">
++            <table v-if="displaySatelliteInfo.length > 0" class="info-table info-table--facts">
+               <tbody>
+-                <tr v-for="[label, value] in satelliteInfo" :key="label">
++                <tr v-for="[label, value] in displaySatelliteInfo" :key="label">
+                   <th>{{ label }}</th>
+                   <td class="right">{{ value }}</td>
+                 </tr>
+@@ -184,18 +184,18 @@
+             </table>
+ 
+             <template v-if="links.length > 0">
+-              <div class="section">Links</div>
++              <div class="section">{{ text("相关链接", "Links") }}</div>
+               <div class="links">
+                 <a v-for="link in links" :key="link.label" class="links__item" :href="link.href" :title="link.title" target="_blank" rel="noopener">{{ link.label }}</a>
+               </div>
+             </template>
+ 
+             <template v-if="elements">
+-              <div class="section">{{ elements.kind === "tle" ? "TLE" : "Elements" }} · epoch {{ elements.epoch }}</div>
++              <div class="section">{{ elements.kind === "tle" ? "TLE" : text("轨道根数", "Elements") }} · {{ text("历元", "epoch") }} {{ elements.epoch }}</div>
+               <pre v-if="elements.kind === 'tle'" class="info-code"><code>{{ elements.lines }}</code></pre>
+               <table v-else class="info-table info-table--facts">
+                 <tbody>
+-                  <tr v-for="[label, value] in elements.rows" :key="label">
++                  <tr v-for="[label, value] in displayElementRows" :key="label">
+                     <th>{{ label }}</th>
+                     <td class="right mono">{{ value }}</td>
+                   </tr>
+@@ -216,6 +216,7 @@ import { storeToRefs } from "pinia";
+ import { computed, nextTick, ref, useTemplateRef, watch } from "vue";
+ 
+ import { useController } from "../composables/useController";
++import { useLocale } from "../composables/useLocale";
+ import { useSelectedEntity } from "../composables/useSelectedEntity";
+ import { externalLinks } from "../config/externalLinks";
+ import { ORBIT_CLASS_COLOR, type OrbitClass } from "../config/orbitClass";
+@@ -228,6 +229,7 @@ import PassTimeline from "./PassTimeline.vue";
+ 
+ const cc = useController();
+ const toast = useToast();
++const { isChinese, text, factLabel } = useLocale();
+ 
+ const {
+   selection,
+@@ -258,14 +260,16 @@ const satStore = useSatStore();
+ const { overpassMode } = storeToRefs(satStore);
+ const { sceneMode } = storeToRefs(useCesiumStore());
+ const inSkyView = computed(() => sceneMode.value === SKY_MODE);
+-const OVERPASS_MODES = [
+-  { value: "elevation", label: "Elevation" },
+-  { value: "swath", label: "Swath" },
+-] as const;
++const OVERPASS_MODES = computed(() => [
++  { value: "elevation", label: text("仰角", "Elevation") },
++  { value: "swath", label: text("幅宽", "Swath") },
++] as const);
+ 
+ /** Asks whether a station exists, not what kind of thing is selected: a satellite
+  *  with a station set and an empty window has a different problem. */
+-const emptyPassText = computed(() => (groundStationAvailable.value ? "No passes in the prediction window" : "No ground station set"));
++const emptyPassText = computed(() =>
++  groundStationAvailable.value ? text("预测时间窗内没有过境", "No passes in the prediction window") : text("尚未设置地面站", "No ground station set"),
++);
+ 
+ const satnum = computed(() => (selection.value?.kind === "satellite" ? selection.value.sat.props.satnum : undefined));
+ const links = computed(() => (satnum.value ? externalLinks(satnum.value) : []));
+@@ -280,7 +284,31 @@ const orbitColor = computed(() => (orbitClass.value ? ORBIT_CLASS_COLOR[orbitCla
+ const chips = computed(() => ["Orbit", "Owner", "Status"].map((key) => facts.value.get(key)).filter((value): value is string => value !== undefined));
+ 
+ // The card title already carries the name.
+-const liveRows = computed(() => position.value.filter((row) => row.label !== "Name"));
++const liveRows = computed(() => position.value.filter((row) => row.label !== "Name").map((row) => ({ ...row, label: factLabel(row.label) })));
++const displaySatelliteInfo = computed(() => satelliteInfo.value.map(([label, value]) => [factLabel(label), value] as [string, string]));
++const displayElementRows = computed(() => (elements.value?.kind === "omm" ? elements.value.rows.map(([label, value]) => [factLabel(label), value] as [string, string]) : []));
++
++function localizedCountdown(pass: Pass): string {
++  const value = formatCountdown(nowMs.value, pass);
++  if (!isChinese.value) return value;
++  if (value === "ended") return "已结束";
++  if (value === "ongoing") return "进行中";
++  return value;
++}
++
++function localizeCountdownValue(value: string): string {
++  if (!isChinese.value) return value;
++  return value === "ended" ? "已结束" : value === "ongoing" ? "进行中" : value;
++}
++
++function localizedPassSummary(pass: Pass): string {
++  const value = passSummary(pass);
++  if (!isChinese.value) return value;
++  return value
++    .replace(" min", " 分钟")
++    .replace(" max, apex ", " 最高仰角，顶点方位 ")
++    .replace(" km off track, swath ", " km 偏离轨迹，幅宽 ");
++}
+ 
+ const isOngoing = computed(() => !!nextPass.value && nextPass.value.start <= nowMs.value);
+ const ongoingFraction = computed(() => {
+@@ -299,9 +327,9 @@ const showTimeline = computed(() => selection.value?.kind === "satellite");
+ const tabs = computed(() => {
+   const items: { label: string; slot: string; value: string; badge?: number }[] = [];
+   if (satelliteInfo.value.length > 0 || elements.value) {
+-    items.push({ label: "Details", slot: "details", value: "details" });
++    items.push({ label: text("详情", "Details"), slot: "details", value: "details" });
+   }
+-  items.push({ label: "Passes", slot: "passes", value: "passes", ...(passRows.value.length > 0 ? { badge: passRows.value.length } : {}) });
++  items.push({ label: text("过境", "Passes"), slot: "passes", value: "passes", ...(passRows.value.length > 0 ? { badge: passRows.value.length } : {}) });
+   return items;
+ });
+ 
+@@ -427,16 +455,16 @@ function commitRename(): void {
+ 
+ function notifyForPass(pass: Pass, aheadMin = 5): void {
+   const start = dayjs(pass.start).startOf("second");
+-  cc.pm.notifyAtDate(start.subtract(aheadMin, "minute").toDate(), `${pass.name} pass in ${aheadMin} minutes`);
+-  cc.pm.notifyAtDate(start.toDate(), `${pass.name} pass starting now`);
++  cc.pm.notifyAtDate(start.subtract(aheadMin, "minute").toDate(), text(`${pass.name} 将在 ${aheadMin} 分钟后过境`, `${pass.name} pass in ${aheadMin} minutes`));
++  cc.pm.notifyAtDate(start.toDate(), text(`${pass.name} 现在开始过境`, `${pass.name} pass starting now`));
+ }
+ 
+ function notifyPasses(): void {
+   if (!cc.sats.groundStationAvailable) {
+     toast.add({
+       color: "warning",
+-      title: "Warning",
+-      description: "Ground station required to notify for passes",
++      title: text("提示", "Warning"),
++      description: text("需要先设置地面站才能创建过境通知", "Ground station required to notify for passes"),
+       duration: 3000,
+     });
+     return;
+@@ -450,8 +478,8 @@ function notifyPasses(): void {
+   if (upcoming.length === 0) {
+     toast.add({
+       color: "info",
+-      title: "Info",
+-      description: "No passes available",
++      title: text("提示", "Info"),
++      description: text("当前没有可通知的过境", "No passes available"),
+       duration: 3000,
+     });
+     return;
+@@ -459,8 +487,8 @@ function notifyPasses(): void {
+   upcoming.forEach((pass) => notifyForPass(pass));
+   toast.add({
+     color: "success",
+-    title: "Success",
+-    description: `Notifying for ${upcoming.length} passes`,
++    title: text("已设置", "Success"),
++    description: text(`已为 ${upcoming.length} 次过境创建通知`, `Notifying for ${upcoming.length} passes`),
+     duration: 3000,
+   });
+ }
+diff --git a/src/components/GroundStationList.vue b/src/components/GroundStationList.vue
+index fd9d0c3..d3cd516 100644
+--- a/src/components/GroundStationList.vue
++++ b/src/components/GroundStationList.vue
+@@ -1,6 +1,6 @@
+ <template>
+   <div class="gsList">
+-    <div v-if="stations.length === 0" class="toolbarNote gsList__empty">None yet — pick one on the globe, or use your own position.</div>
++    <div v-if="stations.length === 0" class="toolbarNote gsList__empty">{{ text("尚未设置地面站——可在地球上选点，或使用当前位置。", "None yet — pick one on the globe, or use your own position.") }}</div>
+     <div
+       v-for="(station, index) in stations"
+       :key="index"
+@@ -15,7 +15,8 @@
+         type="button"
+         class="gsList__rank"
+         :class="{ 'gsList__rank--observer': index === observerStation }"
+-        :title="index === observerStation ? 'The sky view stands here' : 'Stand the sky view here'"
++        :title="index === observerStation ? text('当前天空观察位置', 'The sky view stands here') : text('将天空观察位置设在此处', 'Stand the sky view here')"
++        :aria-label="index === observerStation ? text('当前观察地面站', 'Current observer station') : text('设为观察地面站', 'Use as observer station')"
+         :aria-pressed="index === observerStation"
+         @click="satStore.setObserverStation(index)"
+       >
+@@ -28,7 +29,7 @@
+         class="gsList__grip"
+         role="button"
+         tabindex="0"
+-        title="Drag to reorder"
++        :title="text('拖动调整地面站顺序；也可用上下方向键', 'Drag to reorder; arrow keys also work')"
+         @pointerdown="startDrag(index, $event)"
+         @pointermove="moveDrag($event)"
+         @pointerup="endDrag($event)"
+@@ -42,8 +43,8 @@
+         class="gsList__name"
+         type="text"
+         :value="station.name ?? ''"
+-        placeholder="unnamed"
+-        aria-label="Name"
++        :placeholder="text('未命名', 'unnamed')"
++        :aria-label="text('地面站名称', 'Name')"
+         @change="commitName(index, $event)"
+         @keydown.enter="commit"
+         @keydown.esc="abandon($event, station.name ?? '')"
+@@ -53,7 +54,7 @@
+         type="text"
+         inputmode="decimal"
+         :value="station.lat"
+-        aria-label="Latitude"
++        :aria-label="text('纬度', 'Latitude')"
+         @change="commitCoordinate(index, 'lat', $event)"
+         @keydown.enter="commit"
+         @keydown.esc="abandon($event, String(station.lat))"
+@@ -63,19 +64,19 @@
+         type="text"
+         inputmode="decimal"
+         :value="station.lon"
+-        aria-label="Longitude"
++        :aria-label="text('经度', 'Longitude')"
+         @change="commitCoordinate(index, 'lon', $event)"
+         @keydown.enter="commit"
+         @keydown.esc="abandon($event, String(station.lon))"
+       />
+-      <button type="button" class="gsList__remove" title="Remove" @click="removeAt(index)">×</button>
++      <button type="button" class="gsList__remove" :title="text('删除地面站', 'Remove ground station')" :aria-label="text('删除地面站', 'Remove ground station')" @click="removeAt(index)">×</button>
+     </div>
+ 
+     <div class="gsList__actions">
+-      <button type="button" :class="{ 'gsList__action--on': pickMode }" @click="pickMode = !pickMode">Pick on globe</button>
+-      <button type="button" :disabled="locating" @click="void locate()">
++      <button type="button" :title="text('启用后点击地球即可添加地面站', 'Enable, then click the globe to add a station')" :class="{ 'gsList__action--on': pickMode }" @click="pickMode = !pickMode">{{ text("在地球上选点", "Pick on globe") }}</button>
++      <button type="button" :title="text('使用浏览器定位创建地面站', 'Create a station from browser geolocation')" :disabled="locating" @click="void locate()">
+         <span v-if="locating" class="toolbarSpinner gsList__spinner"></span>
+-        My location
++        {{ text("我的位置", "My location") }}
+       </button>
+     </div>
+ 
+@@ -84,7 +85,7 @@
+          the time it matters you have a list to read it against, and above the rows
+          it was the first thing in a panel whose first thing should be the
+          stations. -->
+-    <div class="toolbarNote">The sky view stands at ◉, click a number to move it.</div>
++    <div class="toolbarNote">{{ text("◉ 表示当前天空观察位置；点击编号可切换。", "The sky view stands at ◉, click a number to move it.") }}</div>
+   </div>
+ </template>
+ 
+@@ -94,6 +95,7 @@ import { nextTick, ref } from "vue";
+ 
+ import { useController } from "../composables/useController";
+ import { useGeolocation } from "../composables/useGeolocation";
++import { useLocale } from "../composables/useLocale";
+ import {
+   dragShift,
+   dropIndex,
+@@ -111,6 +113,7 @@ import { useCesiumStore } from "../stores/cesium";
+ import { useSatStore } from "../stores/sat";
+ 
+ const cc = useController();
++const { text } = useLocale();
+ const satStore = useSatStore();
+ const { groundStations: stations, observerStation } = storeToRefs(satStore);
+ const { pickMode } = storeToRefs(useCesiumStore());
+diff --git a/src/components/PassTimeline.vue b/src/components/PassTimeline.vue
+index 58a6824..127453a 100644
+--- a/src/components/PassTimeline.vue
++++ b/src/components/PassTimeline.vue
+@@ -29,7 +29,7 @@
+     </div>
+     <div class="timeline__legend">
+       <span v-for="band in BANDS" :key="band.band"><i :class="`timeline__pass--${band.band}`" />{{ band.label }}</span>
+-      <span v-if="layout.beyond > 0" class="timeline__more">+{{ layout.beyond }} past {{ layout.horizonLabel }}</span>
++      <span v-if="layout.beyond > 0" class="timeline__more">{{ text(`另有 ${layout.beyond} 次超过 ${layout.horizonLabel}`, `+${layout.beyond} past ${layout.horizonLabel}`) }}</span>
+     </div>
+   </div>
+ </template>
+@@ -37,6 +37,7 @@
+ <script setup lang="ts">
+ import { computed } from "vue";
+ 
++import { useLocale } from "../composables/useLocale";
+ import { formatCountdown, passSummary, type Pass } from "../modules/PassPredictor";
+ import { passTimelineLayout } from "../modules/util/passTimeline";
+ 
+@@ -51,6 +52,7 @@ const props = defineProps<{
+ }>();
+ 
+ const emit = defineEmits<{ pick: [startMs: number] }>();
++const { isChinese, text } = useLocale();
+ 
+ const layout = computed(() => passTimelineLayout(props.passes, props.nowMs));
+ 
+@@ -61,9 +63,9 @@ const layout = computed(() => passTimelineLayout(props.passes, props.nowMs));
+ const BANDS = computed(() =>
+   props.mode === "swath"
+     ? ([
+-        { band: "high", label: "near centre" },
+-        { band: "mid", label: "mid" },
+-        { band: "low", label: "edge" },
++        { band: "high", label: text("近中心线", "near centre") },
++        { band: "mid", label: text("中部", "mid") },
++        { band: "low", label: text("边缘", "edge") },
+       ] as const)
+     : ([
+         { band: "high", label: "≥45°" },
+@@ -81,7 +83,16 @@ function titleOf(startMs: number): string {
+     return "";
+   }
+   const subject = pass.groundStationName ?? pass.name;
+-  return `${subject ? `${subject} · ` : ""}in ${formatCountdown(props.nowMs, pass)} · ${passSummary(pass)}`;
++  const countdown = formatCountdown(props.nowMs, pass);
++  const timing = isChinese.value ? (countdown === "ended" ? "已结束" : countdown === "ongoing" ? "进行中" : `${countdown} 后`) : `in ${countdown}`;
++  let summary = passSummary(pass);
++  if (isChinese.value) {
++    summary = summary
++      .replace(" min", " 分钟")
++      .replace(" max, apex ", " 最高仰角，顶点方位 ")
++      .replace(" km off track, swath ", " km 偏离轨迹，幅宽 ");
++  }
++  return `${subject ? `${subject} · ` : ""}${timing} · ${summary}`;
+ }
+ </script>
+ 
+diff --git a/src/components/SatelliteBrowser.vue b/src/components/SatelliteBrowser.vue
+index a90b6e7..2bd1562 100644
+--- a/src/components/SatelliteBrowser.vue
++++ b/src/components/SatelliteBrowser.vue
+@@ -1,7 +1,7 @@
+ <template>
+   <div class="satellite-browser">
+     <!-- Bound to enabledTags by the tag value-key, so one click takes a whole group. -->
+-    <div class="toolbarTitle">Satellite groups</div>
++    <div class="toolbarTitle">{{ text("卫星分组", "Satellite groups") }}</div>
+     <div class="browser-quickselect">
+       <USelectMenu
+         :model-value="enabledTags"
+@@ -10,8 +10,8 @@
+         value-key="value"
+         label-key="label"
+         multiple
+-        :search-input="{ placeholder: 'Filter groups' }"
+-        placeholder="Select groups"
++        :search-input="{ placeholder: text('筛选分组', 'Filter groups') }"
++        :placeholder="text('选择卫星分组', 'Select satellite groups')"
+         class="w-full"
+       />
+     </div>
+@@ -19,14 +19,14 @@
+     <div class="browser-search">
+       <UInput
+         :model-value="searchQuery"
+-        placeholder="Search satellites"
++        :placeholder="text('搜索卫星名称或编号', 'Search satellite name or number')"
+         icon="i-lucide-search"
+         :ui="{ base: 'w-full' }"
+         class="w-full"
+         @update:model-value="setSearchQuery(String($event))"
+       >
+         <template v-if="searchQuery" #trailing>
+-          <button type="button" class="browser-search-clear" aria-label="Clear search" @click="clearSearch">
++          <button type="button" class="browser-search-clear" :title="text('清空卫星搜索', 'Clear satellite search')" :aria-label="text('清空搜索', 'Clear search')" @click="clearSearch">
+             <UIcon name="lucide:x" />
+           </button>
+         </template>
+@@ -34,8 +34,8 @@
+     </div>
+ 
+     <!-- Virtualized, and the only element here that scrolls. -->
+-    <div v-if="isLoading" class="browser-empty">Loading satellites…</div>
+-    <div v-else-if="rows.length === 0" class="browser-empty">No matches</div>
++    <div v-if="isLoading" class="browser-empty">{{ text("正在加载卫星目录…", "Loading satellite catalogue…") }}</div>
++    <div v-else-if="rows.length === 0" class="browser-empty">{{ text("没有匹配的卫星", "No matching satellites") }}</div>
+     <div v-else ref="scrollEl" class="browser-list" :style="{ height: listHeight }">
+       <div class="browser-list-inner" :style="{ height: `${totalSize}px` }">
+         <div v-for="virtualRow in virtualRows" :key="virtualRow.row.id" class="browser-list-row" :style="{ transform: `translateY(${virtualRow.start}px)` }">
+@@ -45,8 +45,8 @@
+     </div>
+ 
+     <div class="browser-summary">
+-      <span>{{ groupCount }} group{{ groupCount === 1 ? "" : "s" }} · {{ activeSatCount }} satellite{{ activeSatCount === 1 ? "" : "s" }} active</span>
+-      <button v-if="hasActiveSelection" type="button" class="browser-clear" @click="clearAll">Clear all</button>
++      <span>{{ isChinese ? `${groupCount} 个分组 · 已启用 ${activeSatCount} 颗卫星` : `${groupCount} groups · ${activeSatCount} satellites enabled` }}</span>
++      <button v-if="hasActiveSelection" type="button" class="browser-clear" @click="clearAll">{{ text("全部清除", "Clear all") }}</button>
+     </div>
+   </div>
+ </template>
+@@ -56,12 +56,14 @@ import { useVirtualizer } from "@tanstack/vue-virtual";
+ import { computed, ref } from "vue";
+ 
+ import { useController } from "../composables/useController";
++import { useLocale } from "../composables/useLocale";
+ import { type BrowserRow, useSatelliteBrowser } from "../composables/useSatelliteBrowser";
+ 
+ const ROW_HEIGHT = 28;
+ 
+ // The catalog, not the controller: it is all this panel needs from the globe.
+ const { catalog } = useController().sats;
++const { isChinese, text, groupLabel } = useLocale();
+ 
+ const {
+   searchQuery,
+@@ -81,7 +83,7 @@ const {
+   clearAll,
+ } = useSatelliteBrowser(catalog);
+ 
+-const groupItems = computed(() => availableGroups.value.toSorted((a, b) => a.tag.localeCompare(b.tag)).map((g) => ({ label: `${g.tag} (${g.count})`, value: g.tag })));
++const groupItems = computed(() => availableGroups.value.toSorted((a, b) => a.tag.localeCompare(b.tag)).map((g) => ({ label: `${groupLabel(g.tag)} (${g.count})`, value: g.tag })));
+ 
+ // Surfaces come from Nuxt UI's dark palette (`dark` class on #app) with the
+ // neutral-gray alias set in vite.config.ts, so no per-component color
+diff --git a/src/components/SatelliteBrowserRow.vue b/src/components/SatelliteBrowserRow.vue
+index c86376c..3b7a97a 100644
+--- a/src/components/SatelliteBrowserRow.vue
++++ b/src/components/SatelliteBrowserRow.vue
+@@ -1,6 +1,6 @@
+ <template>
+   <div v-if="row.kind === 'group'" class="browser-row browser-row--group">
+-    <button type="button" class="browser-chevron" :aria-label="row.expanded ? 'Collapse group' : 'Expand group'" @click="emit('toggle-expand', row.tag)">
++    <button type="button" class="browser-chevron" :title="row.expanded ? text('收起卫星分组', 'Collapse group') : text('展开卫星分组', 'Expand group')" :aria-label="row.expanded ? text('收起分组', 'Collapse group') : text('展开分组', 'Expand group')" @click="emit('toggle-expand', row.tag)">
+       <UIcon :name="row.expanded ? 'lucide:chevron-down' : 'lucide:chevron-right'" />
+     </button>
+     <input
+@@ -8,17 +8,17 @@
+       class="browser-checkbox"
+       type="checkbox"
+       :checked="row.state === 'all'"
+-      :aria-label="`Toggle group ${row.tag}`"
++      :aria-label="text(`启用或停用分组 ${groupLabel(row.tag)}`, `Toggle group ${row.tag}`)"
+       @click.stop="emit('toggle-group', row.tag)"
+     />
+-    <span class="browser-label browser-label--group" @click="emit('toggle-expand', row.tag)">{{ row.tag }}</span>
+-    <span class="browser-badge">{{ row.activeCount }}/{{ row.count }}</span>
++    <span class="browser-label browser-label--group" :title="groupLabel(row.tag)" @click="emit('toggle-expand', row.tag)">{{ groupLabel(row.tag) }}</span>
++    <span class="browser-badge" :title="text('已启用数量 / 分组总数', 'Enabled / total in group')">{{ row.activeCount }}/{{ row.count }}</span>
+   </div>
+ 
+   <div v-else class="browser-row browser-row--sat">
+-    <input class="browser-checkbox" type="checkbox" :checked="row.checked" :aria-label="`Toggle ${row.name}`" @click.stop="emit('toggle-sat', row.name)" />
+-    <span class="browser-label browser-label--sat" @click="emit('toggle-sat', row.name)">{{ row.name }}</span>
+-    <span class="browser-orbit" :style="{ color: ORBIT_CLASS_COLOR[row.orbitClass] }" :title="`${row.orbitClass} — the colour this satellite's point is drawn in`">{{
++    <input class="browser-checkbox" type="checkbox" :checked="row.checked" :aria-label="text(`启用或停用卫星 ${row.name}`, `Toggle ${row.name}`)" @click.stop="emit('toggle-sat', row.name)" />
++    <span class="browser-label browser-label--sat" :title="text('点击显示或隐藏该卫星', 'Click to show or hide this satellite')" @click="emit('toggle-sat', row.name)">{{ row.name }}</span>
++    <span class="browser-orbit" :style="{ color: ORBIT_CLASS_COLOR[row.orbitClass] }" :title="text(`${row.orbitClass} 轨道类型及点位颜色`, `${row.orbitClass} — the colour this satellite's point is drawn in`)">{{
+       row.orbitClass
+     }}</span>
+     <span class="browser-satnum">{{ row.satnum }}</span>
+@@ -30,9 +30,11 @@
+ import { onMounted, ref, watch } from "vue";
+ 
+ import type { BrowserRow } from "../composables/useSatelliteBrowser";
++import { useLocale } from "../composables/useLocale";
+ import { ORBIT_CLASS_COLOR } from "../config/orbitClass";
+ 
+ const props = defineProps<{ row: BrowserRow }>();
++const { text, groupLabel } = useLocale();
+ const emit = defineEmits<{
+   "toggle-group": [tag: string];
+   "toggle-sat": [name: string];
+diff --git a/src/components/Satvis.vue b/src/components/Satvis.vue
+index 2fd2b82..f0044b8 100644
+--- a/src/components/Satvis.vue
++++ b/src/components/Satvis.vue
+@@ -2,38 +2,38 @@
+   <div class="cesium">
+     <div v-show="showUI" id="toolbarLeft">
+       <div class="toolbarButtons">
+-        <UTooltip text="Satellite selection">
+-          <button type="button" class="cesium-button cesium-toolbar-button" :class="{ 'toolbarButton--open': menu.cat }" @click="toggleMenu('cat')">
++        <UTooltip :text="text('卫星选择：按分组查找并显示卫星', 'Satellite catalogue: find and show satellites by group')">
++          <button type="button" class="cesium-button cesium-toolbar-button" :aria-label="text('卫星选择', 'Satellite catalogue')" :class="{ 'toolbarButton--open': menu.cat }" @click="toggleMenu('cat')">
+             <UIcon name="lucide:satellite" />
+           </button>
+         </UTooltip>
+-        <UTooltip text="Satellite components">
+-          <button type="button" class="cesium-button cesium-toolbar-button" :class="{ 'toolbarButton--open': menu.sat }" @click="toggleMenu('sat')">
++        <UTooltip :text="text('卫星组件：控制轨道、标签与传感器视场', 'Satellite components: control orbits, labels and sensor fields of view')">
++          <button type="button" class="cesium-button cesium-toolbar-button" :aria-label="text('卫星组件', 'Satellite components')" :class="{ 'toolbarButton--open': menu.sat }" @click="toggleMenu('sat')">
+             <UIcon name="lucide:orbit" />
+           </button>
+         </UTooltip>
+-        <UTooltip text="Ground station">
+-          <button type="button" class="cesium-button cesium-toolbar-button" :class="{ 'toolbarButton--open': menu.gs }" @click="toggleMenu('gs')">
++        <UTooltip :text="text('地面站：设置观测位置并计算过境', 'Ground stations: set observation sites and calculate passes')">
++          <button type="button" class="cesium-button cesium-toolbar-button" :aria-label="text('地面站', 'Ground stations')" :class="{ 'toolbarButton--open': menu.gs }" @click="toggleMenu('gs')">
+             <UIcon name="lucide:map-pin" />
+           </button>
+         </UTooltip>
+-        <UTooltip text="Map">
+-          <button type="button" class="cesium-button cesium-toolbar-button" :class="{ 'toolbarButton--open': menu.map }" @click="toggleMenu('map')">
++        <UTooltip :text="text('地图图层：切换底图、地形与三维表面', 'Map layers: switch basemaps, terrain and 3D surfaces')">
++          <button type="button" class="cesium-button cesium-toolbar-button" :aria-label="text('地图图层', 'Map layers')" :class="{ 'toolbarButton--open': menu.map }" @click="toggleMenu('map')">
+             <UIcon name="lucide:layers" />
+           </button>
+         </UTooltip>
+-        <UTooltip text="View">
+-          <button type="button" class="cesium-button cesium-toolbar-button" :class="{ 'toolbarButton--open': menu.view }" @click="toggleMenu('view')">
++        <UTooltip :text="text('观察视角：切换二维、三维和天空观察', 'Viewpoint: switch between 2D, 3D and sky views')">
++          <button type="button" class="cesium-button cesium-toolbar-button" :aria-label="text('观察视角', 'Viewpoint')" :class="{ 'toolbarButton--open': menu.view }" @click="toggleMenu('view')">
+             <UIcon name="lucide:telescope" />
+           </button>
+         </UTooltip>
+-        <UTooltip v-if="cc.minimalUI" text="Mobile">
+-          <button type="button" class="cesium-button cesium-toolbar-button" :class="{ 'toolbarButton--open': menu.ios }" @click="toggleMenu('ios')">
++        <UTooltip v-if="cc.minimalUI" :text="text('移动设备控制', 'Mobile controls')">
++          <button type="button" class="cesium-button cesium-toolbar-button" :aria-label="text('移动设备控制', 'Mobile controls')" :class="{ 'toolbarButton--open': menu.ios }" @click="toggleMenu('ios')">
+             <UIcon name="lucide:smartphone" />
+           </button>
+         </UTooltip>
+-        <UTooltip text="Render">
+-          <button type="button" class="cesium-button cesium-toolbar-button" :class="{ 'toolbarButton--open': menu.render }" @click="toggleMenu('render')">
++        <UTooltip :text="text('渲染设置：调整画质、特效与性能', 'Rendering: adjust quality, effects and performance')">
++          <button type="button" class="cesium-button cesium-toolbar-button" :aria-label="text('渲染设置', 'Rendering settings')" :class="{ 'toolbarButton--open': menu.render }" @click="toggleMenu('render')">
+             <UIcon name="lucide:gauge" />
+           </button>
+         </UTooltip>
+@@ -50,11 +50,11 @@
+       <div v-show="menu.sat" class="toolbarSwitches">
+         <!-- "Components", not "elements": an element set is the GP data a
+              satellite is built from, and this panel is about what is drawn. -->
+-        <div class="toolbarTitle">Satellite components</div>
++        <div class="toolbarTitle">{{ text("卫星显示组件", "Satellite components") }}</div>
+         <label v-for="componentName in cc.sats.availableComponents" :key="componentName" class="toolbarSwitch">
+           <input v-model="enabledComponents" type="checkbox" :value="componentName" />
+           <span class="slider"></span>
+-          {{ componentName }}
++          {{ optionLabel(componentName) }}
+         </label>
+         <!--
+         <label class="toolbarSwitch">
+@@ -64,7 +64,7 @@
+         -->
+       </div>
+       <div v-show="menu.gs" class="toolbarSwitches">
+-        <div class="toolbarTitle">Ground station</div>
++        <div class="toolbarTitle">{{ text("地面站", "Ground station") }}</div>
+         <ground-station-list />
+       </div>
+       <div v-show="menu.map" class="toolbarSwitches">
+@@ -78,20 +78,20 @@
+              describes. Dimmed, and still live: the selection is still the user's,
+              it simply is not being drawn while the globe is hidden. The Terrain
+              group below is the one exception, and says why. -->
+-        <div class="toolbarTitle" :class="{ 'toolbarTitle--inert': inert.includes('layers') }">Basemap</div>
++        <div class="toolbarTitle" :class="{ 'toolbarTitle--inert': inert.includes('layers') }">{{ text("基础底图", "Basemap") }}</div>
+         <label v-for="name in cc.baseLayers" :key="name" class="toolbarSwitch" :class="{ 'toolbarSwitch--inert': inert.includes('layers') }">
+           <input type="radio" name="basemap" :value="name" :checked="baseLayer === name" @change="setBaseLayer(name)" />
+           <span class="slider"></span>
+-          {{ name }}
++          {{ optionLabel(name) }}
+         </label>
+-        <div class="toolbarTitle" :class="{ 'toolbarTitle--inert': inert.includes('layers') }">Overlays</div>
++        <div class="toolbarTitle" :class="{ 'toolbarTitle--inert': inert.includes('layers') }">{{ text("叠加图层", "Overlays") }}</div>
+         <label v-for="name in cc.overlayLayers" :key="name" class="toolbarSwitch" :class="{ 'toolbarSwitch--inert': inert.includes('layers') }">
+           <input type="checkbox" :checked="hasOverlay(name)" @change="toggleOverlay(name, ($event.target as HTMLInputElement).checked)" />
+           <span class="slider"></span>
+-          {{ name }}
++          {{ optionLabel(name) }}
+         </label>
+         <div v-if="inertReason('layers')" class="toolbarNote">{{ inertReason("layers") }}</div>
+-        <div class="toolbarTitle" :class="{ 'toolbarTitle--inert': inert.includes('terrain') }">Terrain</div>
++        <div class="toolbarTitle" :class="{ 'toolbarTitle--inert': inert.includes('terrain') }">{{ text("地形", "Terrain") }}</div>
+         <!-- `:checked` against what the globe is using rather than `v-model` against
+              the store: while a surface model imposes a terrain, the stored choice is
+              not the terrain being drawn, and a radio's dot is the app saying what
+@@ -101,17 +101,17 @@
+         <label v-for="name in cc.terrainProviderNames" :key="name" class="toolbarSwitch" :class="{ 'toolbarSwitch--inert': inert.includes('terrain') }">
+           <input type="radio" name="terrain" :value="name" :checked="activeTerrain === name" :disabled="terrainImposed" @change="terrainProvider = name" />
+           <span class="slider"></span>
+-          {{ name }}
++          {{ optionLabel(name) }}
+         </label>
+         <!-- Dimming says a group is not describing the picture; this says what is.
+              Without it the Terrain group is the confusing case: the selected row is
+              not what is in force, and nothing on screen names what is. -->
+         <div v-if="inertReason('terrain')" class="toolbarNote">{{ inertReason("terrain") }}</div>
+-        <div class="toolbarTitle">Surface</div>
++        <div class="toolbarTitle">{{ text("三维表面", "Surface") }}</div>
+         <label v-for="name in SURFACE_MODELS" :key="name" class="toolbarSwitch">
+           <input v-model="surfaceModel" type="radio" :value="name" />
+           <span class="slider"></span>
+-          {{ name }}
++          {{ optionLabel(name) }}
+         </label>
+         <!-- Only for the model actually selected: the note explains why nothing
+              happened, and is noise against a model nobody asked for. -->
+@@ -125,38 +125,38 @@
+              non-builtin ones are optional assets, and a radio that selects a sky
+              nobody can load is worse than one that is absent. The url vocabulary
+              is not narrowed with it — `?stars=` still accepts every name. -->
+-        <div class="toolbarTitle">Star map</div>
++        <div class="toolbarTitle">{{ text("星空背景", "Star map") }}</div>
+         <label v-for="name in starMapOptions" :key="name" class="toolbarSwitch">
+           <input v-model="starMap" type="radio" :value="name" />
+           <span class="slider"></span>
+-          {{ name }}
++          {{ optionLabel(name) }}
+         </label>
+       </div>
+       <!-- Where you look from and with what, as against the Map panel's what you
+            are looking at. -->
+       <div v-show="menu.view" class="toolbarSwitches">
+-        <div class="toolbarTitle">View</div>
++        <div class="toolbarTitle">{{ text("场景视图", "View") }}</div>
+         <label v-for="name in cc.sceneModes" :key="name" class="toolbarSwitch">
+           <input v-model="sceneMode" type="radio" :value="name" />
+           <span class="slider"></span>
+-          {{ name }}
++          {{ optionLabel(name) }}
+         </label>
+         <!-- Under the mode it belongs to, the same way the map panel's notes sit
+              under the selection they explain: the keys work whether or not this
+              says so, but nothing else in the app would say it. Hidden in
+              minimalUI — the iOS and iframe case — where there is no keyboard to
+              press and the panel is the smaller for it. -->
+-        <div v-if="inSkyView && !cc.minimalUI" class="toolbarNote">WASD walks the observer, Q and E change height.</div>
+-        <div class="toolbarTitle">Camera</div>
++        <div v-if="inSkyView && !cc.minimalUI" class="toolbarNote">{{ text("使用 WASD 移动观察者，Q/E 调整高度。", "WASD walks the observer, Q and E change height.") }}</div>
++        <div class="toolbarTitle">{{ text("相机参考系", "Camera") }}</div>
+         <label v-for="name in cc.cameraModes" :key="name" class="toolbarSwitch">
+           <input v-model="cameraMode" type="radio" :value="name" />
+           <span class="slider"></span>
+-          {{ name }}
++          {{ optionLabel(name) }}
+         </label>
+         <!-- Only in the sky view, which is the only place an aim exists to hand
+              over, and only where the sensor could work at all. -->
+         <template v-if="inSkyView && compassOffered">
+-          <div class="toolbarTitle">Aiming</div>
++          <div class="toolbarTitle">{{ text("瞄准方式", "Aiming") }}</div>
+           <label class="toolbarSwitch">
+             <input type="checkbox" :checked="compassActive" :disabled="compassPending" @change="onCompassToggle" />
+             <!-- The spinner stands in for the slider rather than joining it: both
+@@ -164,12 +164,12 @@
+                  answer to "what is this control doing". -->
+             <span v-if="compassPending" class="toolbarSpinner"></span>
+             <span v-else class="slider"></span>
+-            Use compass
++            {{ text("使用设备指南针", "Use compass") }}
+           </label>
+         </template>
+       </div>
+       <div v-show="menu.ios" class="toolbarSwitches">
+-        <div class="toolbarTitle">Mobile</div>
++        <div class="toolbarTitle">{{ text("移动设备", "Mobile") }}</div>
+         <label class="toolbarSwitch">
+           <input v-model="cc.viewer.scene.useWebVR" type="checkbox" />
+           <span class="slider"></span>
+@@ -178,19 +178,19 @@
+         <label class="toolbarSwitch">
+           <input v-model="cc.viewer.clock.shouldAnimate" type="checkbox" />
+           <span class="slider"></span>
+-          Play
++          {{ text("播放", "Play") }}
+         </label>
+         <label class="toolbarSwitch">
+           <input type="button" @click="cc.viewer.clockViewModel.multiplier *= 2" />
+-          Increase play speed
++          {{ text("提高播放速度", "Increase play speed") }}
+         </label>
+         <label class="toolbarSwitch">
+           <input type="button" @click="cc.viewer.clockViewModel.multiplier /= 2" />
+-          Decrease play speed
++          {{ text("降低播放速度", "Decrease play speed") }}
+         </label>
+         <label class="toolbarSwitch">
+           <input type="button" @click="reload" />
+-          Reload
++          {{ text("重新加载", "Reload") }}
+         </label>
+       </div>
+       <!-- Everything about how the globe is drawn, and what that costs. Four
+@@ -198,7 +198,7 @@
+            decide it — what is in the scene, how many pixels it is drawn into,
+            and what each edge pixel costs. -->
+       <div v-show="menu.render" class="toolbarSwitches">
+-        <div class="toolbarTitle">Measurement</div>
++        <div class="toolbarTitle">{{ text("性能监测", "Measurement") }}</div>
+         <label class="toolbarSwitch">
+           <input v-model="showFps" type="checkbox" />
+           <span class="slider"></span>
+@@ -210,7 +210,7 @@
+         <label class="toolbarSwitch">
+           <input v-model="showBenchmark" type="checkbox" />
+           <span class="slider"></span>
+-          Benchmark
++          {{ text("性能基准测试", "Benchmark") }}
+         </label>
+         <!-- Not a measurement itself, but the setting that decides whether there
+              is one to be had: with render-on-demand on, the gap between frames
+@@ -218,18 +218,18 @@
+         <label class="toolbarSwitch">
+           <input v-model="requestRenderMode" type="checkbox" />
+           <span class="slider"></span>
+-          RequestRender
++          {{ text("按需渲染", "RequestRender") }}
+         </label>
+-        <div class="toolbarTitle">Scene effects</div>
++        <div class="toolbarTitle">{{ text("场景特效", "Scene effects") }}</div>
+         <label class="toolbarSwitch">
+           <input v-model="cc.viewer.scene.fog.enabled" type="checkbox" />
+           <span class="slider"></span>
+-          Fog
++          {{ text("雾效", "Fog") }}
+         </label>
+         <label class="toolbarSwitch">
+           <input v-model="cc.viewer.scene.globe.enableLighting" type="checkbox" />
+           <span class="slider"></span>
+-          Lighting
++          {{ text("太阳光照", "Lighting") }}
+         </label>
+         <label class="toolbarSwitch">
+           <input v-model="cc.viewer.scene.highDynamicRange" type="checkbox" />
+@@ -239,34 +239,44 @@
+         <label class="toolbarSwitch">
+           <input v-model="cc.viewer.scene.globe.showGroundAtmosphere" type="checkbox" />
+           <span class="slider"></span>
+-          Atmosphere
++          {{ text("大气效果", "Atmosphere") }}
+         </label>
+         <!-- The two halves of the same trade, in the order they multiply. Both
+              are ladders rather than switches because both costs are smooth —
+              see src/config/rendering.ts. -->
+-        <div class="toolbarTitle">Pixel ratio</div>
++        <div class="toolbarTitle">{{ text("像素比例", "Pixel ratio") }}</div>
+         <label v-for="ratio in pixelRatioOptions" :key="ratio" class="toolbarSwitch">
+           <input v-model="pixelRatio" type="radio" :value="ratio" />
+           <span class="slider"></span>
+-          {{ ratio === "native" ? `${devicePixelRatio.toFixed(1)}x (Native)` : `${Number(ratio).toFixed(1)}x` }}
++          {{ ratio === "native" ? `${devicePixelRatio.toFixed(1)}x (${text("原生", "Native")})` : `${Number(ratio).toFixed(1)}x` }}
+         </label>
+-        <div class="toolbarTitle">Antialiasing (MSAA)</div>
++        <div class="toolbarTitle">{{ text("抗锯齿（MSAA）", "Antialiasing (MSAA)") }}</div>
+         <label v-for="rate in MSAA_RATES" :key="rate" class="toolbarSwitch">
+           <input v-model="msaa" type="radio" :value="rate" />
+           <span class="slider"></span>
+-          {{ rate === "off" ? "Off" : `${rate}x` }}
++          {{ rate === "off" ? text("关闭", "Off") : `${rate}x` }}
+         </label>
+       </div>
+     </div>
+     <div id="toolbarRight">
++      <UTooltip v-if="showUI" :text="text('返回全球视图：停止跟踪并重新居中地球', 'Global view: stop tracking and recenter Earth')">
++        <button type="button" class="cesium-button cesium-toolbar-button" :aria-label="text('返回全球视图', 'Return to global view')" @click="homeView">
++          <UIcon name="lucide:globe-2" />
++        </button>
++      </UTooltip>
++      <UTooltip v-if="showUI" :text="text('界面语言：点击切换为 English', 'Interface language: switch to Chinese')">
++        <button type="button" class="cesium-button cesium-toolbar-button" :aria-label="text('切换为英文', 'Switch to Chinese')" @click="toggleLocale">
++          <span class="toolbarLanguage">{{ isChinese ? "中" : "EN" }}</span>
++        </button>
++      </UTooltip>
+       <about-dialog v-if="showUI" />
+-      <UTooltip v-if="showUI" text="Github">
+-        <a class="cesium-button cesium-toolbar-button" href="https://github.com/Flowm/satvis/" target="_blank" rel="noopener">
++      <UTooltip v-if="showUI" :text="text('查看 Satvis 开源项目', 'View the Satvis open-source project')">
++        <a class="cesium-button cesium-toolbar-button" href="https://github.com/Flowm/satvis/" target="_blank" rel="noopener" :aria-label="text('查看 Satvis 开源项目', 'View Satvis on GitHub')">
+           <UIcon name="fa6-brands:github" />
+         </a>
+       </UTooltip>
+-      <UTooltip text="Toggle UI">
+-        <button type="button" class="cesium-button cesium-toolbar-button" @click="toggleUI">
++      <UTooltip :text="text('显示或隐藏所有轨道控制组件', 'Show or hide all orbit controls')">
++        <button type="button" class="cesium-button cesium-toolbar-button" :aria-label="text('显示或隐藏界面', 'Show or hide interface')" @click="toggleUI">
+           <UIcon name="lucide:eye" />
+         </button>
+       </UTooltip>
+@@ -285,9 +295,10 @@
+ 
+ <script setup lang="ts">
+ import { storeToRefs } from "pinia";
+-import { computed, defineAsyncComponent, onMounted, reactive, ref } from "vue";
++import { computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, reactive, ref, watch } from "vue";
+ 
+ import { useController } from "../composables/useController";
++import { useLocale } from "../composables/useLocale";
+ import { compassAvailable, useSkyCompass } from "../composables/useSkyCompass";
+ import { layerProvider } from "../config/layers";
+ import { MSAA_RATES, pixelRatiosFor } from "../config/rendering";
+@@ -311,6 +322,7 @@ type MenuKey = "cat" | "sat" | "gs" | "map" | "view" | "ios" | "render";
+ const BenchmarkPanel = defineAsyncComponent(() => import("./BenchmarkPanel.vue"));
+ 
+ const cc = useController();
++const { isChinese, text, optionLabel, toggleLocale } = useLocale();
+ 
+ const menu = reactive<Record<MenuKey, boolean>>({
+   cat: false,
+@@ -321,7 +333,9 @@ const menu = reactive<Record<MenuKey, boolean>>({
+   ios: false,
+   render: false,
+ });
+-const showUI = ref(true);
++const fullEmbedUI = new URLSearchParams(window.location.search).get("ui") === "full";
++const showUI = ref(fullEmbedUI || !DeviceDetect.inIframe());
++let containerObserver: ResizeObserver | undefined;
+ 
+ const cesiumStore = useCesiumStore();
+ const { layers, terrainProvider, surfaceModel, starMap, sceneMode, cameraMode, pixelRatio, msaa, showFps, showBenchmark, requestRenderMode } = storeToRefs(cesiumStore);
+@@ -365,9 +379,14 @@ function inertReason(group: MapGroup): string {
+   }
+   const forced = effects.value.terrain;
+   if (group === "terrain" && forced) {
++    if (isChinese.value) {
++      return forced === terrainProvider.value
++        ? `${optionLabel(surfaceModel.value)}需要${optionLabel(forced)}`
++        : `${optionLabel(surfaceModel.value)}需要${optionLabel(forced)}；关闭后恢复${optionLabel(terrainProvider.value)}`;
++    }
+     return forced === terrainProvider.value ? `${surfaceModel.value} needs ${forced}` : `${surfaceModel.value} needs ${forced}, ${terrainProvider.value} returns`;
+   }
+-  return `Hidden by ${surfaceModel.value}`;
++  return isChinese.value ? `已被${optionLabel(surfaceModel.value)}隐藏` : `Hidden by ${surfaceModel.value}`;
+ }
+ 
+ // Named rather than merely flagged: "nothing happened" is the question this
+@@ -378,6 +397,9 @@ const surfaceUnavailable = computed(() => {
+   if (surfaceModel.value === "None" || !effects.value.unavailable.includes(surfaceModel.value as SurfaceModelName)) {
+     return "";
+   }
++  if (isChinese.value) {
++    return surfaceModel.value === "GooglePhotorealistic" ? "仅在天空观察视图中可用" : "仅在三维地球或天空观察视图中可用";
++  }
+   return viewModeNote(surfaceModel.value);
+ });
+ 
+@@ -433,9 +455,42 @@ async function onCompassToggle(event: Event): Promise<void> {
+ }
+ 
+ onMounted(() => {
+-  showUI.value = !DeviceDetect.inIframe();
++  cc.showUI = showUI.value;
++  if (fullEmbedUI) {
++    void nextTick(() => {
++      requestAnimationFrame(() => {
++        cc.viewer.resize();
++        if (!cc.sats.trackedSatellite) cc.setDefaultView();
++        cc.viewer.scene.requestRender();
++      });
++    });
++    containerObserver = new ResizeObserver(() => cc.viewer.resize());
++    containerObserver.observe(cc.viewer.container);
++  }
++  localizeCesiumChrome();
+ });
+ 
++onUnmounted(() => containerObserver?.disconnect());
++
++function localizeCesiumChrome(): void {
++  const fullscreen = cc.viewer.container.querySelector<HTMLElement>(".cesium-fullscreenButton");
++  if (fullscreen) {
++    const label = text("切换全屏显示", "Toggle full screen");
++    fullscreen.title = label;
++    fullscreen.setAttribute("aria-label", label);
++  }
++}
++
++watch(isChinese, () => nextTick(localizeCesiumChrome));
++
++function homeView() {
++  satStore.trackedSatellite = "";
++  cc.viewer.trackedEntity = undefined;
++  cc.viewer.resize();
++  cc.setDefaultView();
++  cc.viewer.scene.requestRender();
++}
++
+ function toggleMenu(name: MenuKey) {
+   const oldState = menu[name];
+   (Object.keys(menu) as MenuKey[]).forEach((k) => {
+diff --git a/src/components/SkyHud.vue b/src/components/SkyHud.vue
+index e5e21df..7cabdd2 100644
+--- a/src/components/SkyHud.vue
++++ b/src/components/SkyHud.vue
+@@ -54,7 +54,7 @@
+     <!-- North is not known until the phone has been flat once, and until then the
+          sky is aimed from an arbitrary zero. The toast that says so on enabling is
+          dismissable; this is not, and it goes the instant calibration latches. -->
+-    <div v-if="compassActive && !calibrated" class="sky-hud__warn">Hold the phone flat to set north</div>
++    <div v-if="compassActive && !calibrated" class="sky-hud__warn">{{ text("请将手机平放以校准北向", "Hold the phone flat to set north") }}</div>
+ 
+     <div v-if="locked" class="sky-hud__card">
+       <div class="sky-hud__name">{{ locked.name }}</div>
+@@ -64,7 +64,7 @@
+           <dd>{{ fact[1] }}</dd>
+         </template>
+       </dl>
+-      <div class="sky-hud__hint">Tap to open</div>
++      <div class="sky-hud__hint">{{ text("点击查看详情", "Tap to open") }}</div>
+     </div>
+   </div>
+ </template>
+@@ -74,6 +74,7 @@ import { storeToRefs } from "pinia";
+ import { computed, onUnmounted, watch } from "vue";
+ 
+ import { useController } from "../composables/useController";
++import { useLocale } from "../composables/useLocale";
+ import { useSkyCompass } from "../composables/useSkyCompass";
+ import { useSkyHud, type TapeTick } from "../composables/useSkyHud";
+ import { SKY_MODE } from "../config/viewModes";
+@@ -96,6 +97,7 @@ const ELEVATION_RULE_X = 46;
+ const TAPE_LENGTH = 12;
+ 
+ const cc = useController();
++const { text } = useLocale();
+ const { compass, elevation, locked, trace, calibrated, settled, start, stop } = useSkyHud(cc);
+ const { active: compassActive } = useSkyCompass(cc);
+ 
+@@ -108,10 +110,10 @@ const facts = computed<[string, string][]>(() => {
+     return [];
+   }
+   return [
+-    ["Elevation", `${target.elevation.toFixed(1)}°`],
+-    ["Azimuth", `${target.azimuth.toFixed(1)}° ${compassPoint(target.azimuth)}`],
+-    ["Range", `${Math.round(target.rangeKm).toLocaleString()} km`],
+-    ["Altitude", `${Math.round(target.altitudeKm).toLocaleString()} km`],
++    [text("仰角", "Elevation"), `${target.elevation.toFixed(1)}°`],
++    [text("方位角", "Azimuth"), `${target.azimuth.toFixed(1)}° ${compassPoint(target.azimuth)}`],
++    [text("距离", "Range"), `${Math.round(target.rangeKm).toLocaleString()} km`],
++    [text("高度", "Altitude"), `${Math.round(target.altitudeKm).toLocaleString()} km`],
+   ];
+ });
+ 
+diff --git a/src/composables/useSkyCompass.ts b/src/composables/useSkyCompass.ts
+index 4cd3484..d5390af 100644
+--- a/src/composables/useSkyCompass.ts
++++ b/src/composables/useSkyCompass.ts
+@@ -12,6 +12,7 @@ import { readonly, type Ref, ref } from "vue";
+ 
+ import type { CesiumController } from "../modules/CesiumController";
+ import type { CompassOutcome } from "../modules/SkyInteraction";
++import { useLocale } from "./useLocale";
+ import { useToastProxy } from "./useToastProxy";
+ 
+ /**
+@@ -30,7 +31,15 @@ const FAILURES: Record<string, string> = {
+   no_heading: "This device reports orientation but cannot tell where north is, so the sky would be aimed at an arbitrary bearing.",
+ };
+ 
++const FAILURES_ZH: Record<string, string> = {
++  unsupported: "当前浏览器无法提供设备方向信息。",
++  denied: "运动与方向权限已被拒绝，可在浏览器的网站设置中重新开启。",
++  silent: "已获得方向权限，但设备没有返回传感器读数。",
++  no_heading: "设备能够返回姿态，但无法确定北向，因此不能可靠瞄准天空。",
++};
++
+ export function useSkyCompass(cc: CesiumController): { active: Readonly<Ref<boolean>>; pending: Readonly<Ref<boolean>>; toggle: () => Promise<void> } {
++  const { isChinese, text } = useLocale();
+   // The control is not the only thing that can switch the compass off — a drag
+   // takes the aim back, and the view closing stops the sensor — so it listens as
+   // well as writes, and there is no second "and now tell the control" call for a
+@@ -79,10 +88,10 @@ export function useSkyCompass(cc: CesiumController): { active: Readonly<Ref<bool
+       // heading worth believing only while the screen is near horizontal, so
+       // north is not known until the phone has been flat once. The HUD says so
+       // too, for as long as it lasts.
+-      const calibration = outcome === "aiming-uncalibrated" ? "Hold the phone flat for a moment to set north. " : "";
++      const calibration = outcome === "aiming-uncalibrated" ? text("请将手机平放片刻以校准北向。", "Hold the phone flat for a moment to set north. ") : "";
+       useToastProxy().add({
+-        title: "Aiming by compass",
+-        description: `${calibration}Drag at any time to turn the compass off.`,
++        title: text("正在使用指南针瞄准", "Aiming by compass"),
++        description: `${calibration}${text("随时拖动视图即可关闭指南针控制。", "Drag at any time to turn the compass off.")}`,
+         color: "info",
+       });
+       return;
+@@ -94,8 +103,10 @@ export function useSkyCompass(cc: CesiumController): { active: Readonly<Ref<bool
+       return;
+     }
+     useToastProxy().add({
+-      title: "Compass aiming unavailable",
+-      description: FAILURES[outcome.replace("-", "_")] ?? "The device's orientation is not usable for aiming.",
++      title: text("指南针瞄准不可用", "Compass aiming unavailable"),
++      description: isChinese.value
++        ? (FAILURES_ZH[outcome.replace("-", "_")] ?? "设备方向信息不能用于瞄准。")
++        : (FAILURES[outcome.replace("-", "_")] ?? "The device's orientation is not usable for aiming."),
+       color: "warning",
+     });
+   }
+diff --git a/src/css/main.css b/src/css/main.css
+index 761814b..053d6e6 100644
+--- a/src/css/main.css
++++ b/src/css/main.css
+@@ -250,6 +250,15 @@ input:checked + .slider::before {
+   display: inline-flex;
+ }
+ 
++.toolbarLanguage {
++  display: inline-flex;
++  align-items: center;
++  justify-content: center;
++  min-width: 24px;
++  font: 600 12px/1 "Inter", "Noto Sans SC", sans-serif;
++  letter-spacing: -0.02em;
++}
++
+ /* Cesium's ion logo at 80%. Its guide allows placement and presentation to be
+    adjusted while the logo stays prominent, and the line's width is what the deck's
+    breakpoints are measured against.
+diff --git a/src/modules/SatelliteComponentCollection.ts b/src/modules/SatelliteComponentCollection.ts
+index 69a9c47..76f3ef1 100644
+--- a/src/modules/SatelliteComponentCollection.ts
++++ b/src/modules/SatelliteComponentCollection.ts
+@@ -1,5 +1,6 @@
+ import {
+   ArcType,
++  BillboardGraphics,
+   BoundingSphere,
+   CallbackProperty,
+   Cartesian2,
+@@ -22,13 +23,13 @@ import {
+   ModelGraphics,
+   NearFarScalar,
+   PathGraphics,
+-  PointGraphics,
+   PolylineColorAppearance,
+   PolylineGeometry,
+   PolylineGlowMaterialProperty,
+   PolylineGraphics,
+   SceneMode,
+   VelocityOrientationProperty,
++  VerticalOrigin,
+ } from "@cesium/engine";
+ import type { Viewer } from "@cesium/widgets";
+ import CesiumSensorVolumes from "cesium-sensor-volumes";
+@@ -66,6 +67,25 @@ const GROUND_STATION_LINK = "Ground station link";
+ // these are shared instances, the same way Cesium shares its own Color constants.
+ const POINT_COLOR = Object.fromEntries(Object.entries(ORBIT_CLASS_COLOR).map(([orbitClass, hex]) => [orbitClass, Color.fromCssColorString(hex)])) as Record<OrbitClass, Color>;
+ 
++// A single monochrome texture is shared by every satellite billboard. Cesium
++// stores it once in the billboard atlas and applies the orbit-class colour as a
++// tint, so showing a large constellation does not allocate one image per
++// satellite. The dark outline and separated solar-cell panels keep the shape
++// readable over both daylight imagery and the night sky.
++const SATELLITE_ICON = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(`
++  <svg xmlns="http://www.w3.org/2000/svg" width="36" height="24" viewBox="0 0 36 24">
++    <g fill="#fff" stroke="#111827" stroke-width="1.4" stroke-linejoin="round">
++      <path d="M1 7h11v10H1zM24 7h11v10H24z"/>
++      <rect x="13" y="4" width="10" height="16" rx="4"/>
++      <path d="M16.5 4V1.8h3V4M18 1.8V.6" fill="none" stroke-linecap="round"/>
++    </g>
++    <g stroke="#111827" stroke-width="1" opacity=".9">
++      <path d="M4.7 7v10M8.3 7v10M27.7 7v10M31.3 7v10M1 12h11M24 12h11"/>
++    </g>
++    <circle cx="18" cy="12" r="1.7" fill="#111827"/>
++  </svg>
++`)}`;
++
+ /**
+  * `BoundingSphereState.PENDING`. Written out rather than imported: the enum is
+  * exported from the engine's JavaScript but not from its type declarations. See
+@@ -459,19 +479,20 @@ export class SatelliteComponentCollection {
+ 
+   // Coloured by orbit regime, matching the badge the satellite browser shows on
+   // the same satellite's row — so the menu reads as the legend for the globe.
+-  //
+-  // Small on purpose: a whole constellation at 6 px merges into a sheet that
+-  // hides the globe under it. 5 px still leaves the globe legible under a full
+-  // Starlink activation, and the outline is what keeps a point visible against
+-  // bright imagery rather than its size.
++  // The icon scales from about 12 px in the full-globe view to 22 px up close:
++  // visibly a satellite without turning a large constellation into a solid
++  // texture that hides the Earth.
+   createPoint(): void {
+-    const point = new PointGraphics({
+-      pixelSize: 5,
++    const billboard = new BillboardGraphics({
++      image: SATELLITE_ICON,
+       color: POINT_COLOR[this.props.orbitClass],
+-      outlineColor: Color.DIMGREY,
+-      outlineWidth: 1,
++      verticalOrigin: VerticalOrigin.CENTER,
++      horizontalOrigin: HorizontalOrigin.CENTER,
++      scaleByDistance: new NearFarScalar(1e6, 0.62, 8e7, 0.34),
++      translucencyByDistance: new NearFarScalar(6e7, 1.0, 8e7, 0.35),
++      distanceDisplayCondition: new DistanceDisplayCondition(2000, 8e7),
+     });
+-    this.createCesiumSatelliteEntity("Point", "point", point);
++    this.createCesiumSatelliteEntity("Point", "billboard", billboard);
+   }
+ 
+   createModel(): void {

@@ -24,6 +24,7 @@ from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator
 
 from app.core.settings import get_settings
+from app.auth import get_current_conversation_id
 from app.db.errors import is_missing_schema_error
 from app.db.pool import fetch_optional_pool
 from app.db.repositories.tool_job import (
@@ -79,6 +80,7 @@ async def begin_tool_job(
                 arguments=arguments,
                 imagery_id=imagery_id or None,
                 user_id=user_id,
+                conversation_id=get_current_conversation_id(),
             )
             await mark_job_running(conn, job_id=job_id)
         return job_id

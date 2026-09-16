@@ -11,7 +11,7 @@ import { buildChatRequestBody } from "../lib/chat-request";
 import { createReport } from "../lib/reports-api";
 import { readStreamResponse } from "../lib/sse";
 import { toModelHistory, uid } from "../lib/turns";
-import { roiContextLine, type Roi } from "../lib/roi";
+import { type Roi } from "../lib/roi";
 import type {
   ChatResponse,
   ChatTurn,
@@ -30,6 +30,7 @@ type ChatControllerSettings = {
   model?: string | null;
   providerConfig?: ProviderConfig | null;
   roi?: Roi | null;
+  analysisSource?: "current_map" | "selected_imagery";
   getMapContext?: () => MapContext | null;
   thinkingStrength?: ThinkingStrength | null;
   tavilyApiKey?: string | null;
@@ -44,12 +45,23 @@ export function useChatController({
   model,
   providerConfig,
   roi,
+  analysisSource,
   getMapContext,
   thinkingStrength,
   tavilyApiKey,
   onMapControl,
 }: ChatControllerSettings) {
   const [turns, setTurns] = useState<ChatTurn[]>([]);
+  const turnsRef = useRef(turns);
+  turnsRef.current = turns;
+  const [activeImageryId, setActiveImageryIdState] = useState<string | null>(null);
+  const activeImageryRef = useRef<string | null>(null);
+  const requestEpoch = useRef(0);
+  const busyRef = useRef(false);
+  function selectImagery(id: string | null) {
+    activeImageryRef.current = id;
+    setActiveImageryIdState(id);
+  }
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [activeStream, setActiveStream] = useState(false);
@@ -64,6 +76,8 @@ export function useChatController({
   // 用 ref 持有最新 ROI，避免 sendMessage 闭包读到过期值（与 conversationId 同样的 stale closure 防护）。
   const roiRef = useRef<Roi | null>(roi ?? null);
   roiRef.current = roi ?? null;
+  const analysisSourceRef = useRef(analysisSource);
+  analysisSourceRef.current = analysisSource;
 
   useEffect(() => {
     return () => {
@@ -78,7 +92,9 @@ export function useChatController({
 
   async function sendMessage(text: string) {
     const trimmed = text.trim();
-    if (!trimmed || loading) return;
+    if (!trimmed || busyRef.current) return;
+    busyRef.current = true;
+    const epoch = ++requestEpoch.current;
 
     // 从 ref 读取「此刻」的会话 id，而非闭包里可能过期的 state：
     // startSession 先 resetConversation()（异步清空 state）再 setTimeout 调本函数，
@@ -88,17 +104,17 @@ export function useChatController({
     const assistantId = uid();
     const shouldStream = streamEnabled;
     const baseMessages = activeConversationId
-      ? [...latestGeospatialContext(turns), { role: "user" as const, content: trimmed }]
-      : toModelHistory(turns, trimmed);
-    // 若用户框选了分析聚焦区，在最新用户消息前注入一条 system 提示（解读聚焦，工具仍全图计算）。
-    // 从 ref 读取避免过期；意图仍由后端 LLM 判定，这里只加上下文、不做关键词路由。
+      ? [{ role: "user" as const, content: trimmed }]
+      : toModelHistory(turnsRef.current, trimmed);
+    // 当前影像与 ROI 通过结构化字段传输，由服务端验证后加入上下文。
     const activeRoi = roiRef.current;
-    const requestMessages = activeRoi
-      ? injectRoiContext(baseMessages, activeRoi)
-      : baseMessages;
+    const requestMessages = baseMessages;
 
     // 提取地图上下文（如果提供了 getMapContext 函数）
     const metadata: Record<string, unknown> = {};
+    const activeImageryId = activeImageryRef.current;
+    metadata.active_imagery_id = activeImageryId;
+    if (activeRoi && analysisSourceRef.current) metadata.analysis_source = analysisSourceRef.current;
     if (getMapContext) {
       const mapCtx = getMapContext();
       if (mapCtx) {
@@ -151,21 +167,30 @@ export function useChatController({
       if (shouldStream) {
         await readStreamResponse(
           res,
-          createStreamHandlers(setTurns, assistantId, setConversationId, onMapControl),
+          createStreamHandlers(
+            (update) => { if (epoch === requestEpoch.current) setTurns(update); },
+            assistantId,
+            (id) => { if (epoch === requestEpoch.current) setConversationId(id); },
+            (target) => { if (epoch === requestEpoch.current) onMapControl?.(target); },
+          ),
         );
         return;
       }
 
       const data = (await res.json()) as ChatResponse;
+      if (epoch !== requestEpoch.current) return;
       if (data.conversation_id) setConversationId(data.conversation_id);
       appendAssistantResponse(setTurns, data);
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return;
-      applyRequestError(setTurns, assistantId, shouldStream, err);
+      if (epoch === requestEpoch.current) applyRequestError(setTurns, assistantId, shouldStream, err);
     } finally {
-      abortRef.current = null;
-      setActiveStream(false);
-      setLoading(false);
+      if (epoch === requestEpoch.current) {
+        abortRef.current = null;
+        busyRef.current = false;
+        setActiveStream(false);
+        setLoading(false);
+      }
     }
   }
 
@@ -183,6 +208,10 @@ export function useChatController({
 
   function resetConversation() {
     abortRef.current?.abort();
+    ++requestEpoch.current;
+    busyRef.current = false;
+    setLoading(false);
+    turnsRef.current = [];
     setActiveStream(false);
     setTurns([]);
     setConversationId(null);
@@ -193,10 +222,10 @@ export function useChatController({
   }
 
   function addGeospatialResult(content: string, geospatialResult: GeospatialResult) {
-    setTurns((prev) => [
-      ...prev,
-      { id: uid(), role: "system", content, geospatialResult },
-    ]);
+    if (geospatialResult.type === "preview") selectImagery(geospatialResult.imagery_id);
+    const next: ChatTurn[] = [...turnsRef.current, { id: uid(), role: geospatialResult.type === "report" ? "assistant" : "system", content, geospatialResult }];
+    turnsRef.current = next;
+    setTurns(next);
   }
 
   // 结果卡片"生成 Word 报告"按钮：调后端 /reports（服务端读本对话持久化结果），
@@ -208,12 +237,14 @@ export function useChatController({
       return;
     }
     if (reportPending) return;
+    const epoch = requestEpoch.current;
     setReportPending(true);
     try {
       const artifact = await createReport({
         conversationId: activeConversationId,
         imageryId,
       });
+      if (epoch !== requestEpoch.current) return;
       addGeospatialResult("分析报告已生成", {
         type: "report",
         imagery_id: artifact.imagery_id,
@@ -222,7 +253,7 @@ export function useChatController({
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      addSystemNote(`报告生成失败：${message}`);
+      if (epoch === requestEpoch.current) addSystemNote(`报告生成失败：${message}`);
     } finally {
       setReportPending(false);
     }
@@ -236,10 +267,11 @@ export function useChatController({
     messages: { role: string; content: string; metadata?: Record<string, unknown> | null }[],
   ) {
     abortRef.current?.abort();
+    ++requestEpoch.current;
+    busyRef.current = false;
     setActiveStream(false);
     setLoading(false);
-    setTurns(
-      messages.map((m) => {
+    const restored = messages.map((m) => {
         const meta = m.metadata ?? undefined;
         const geospatialResult = meta ? parseGeospatialResult(meta.geospatial_result) : undefined;
         const toolResult = meta ? parseToolResult(meta.tool_result) : undefined;
@@ -247,16 +279,26 @@ export function useChatController({
           id: uid(),
           role: (m.role === "assistant" || m.role === "system" ? m.role : "user") as ChatTurn["role"],
           content: m.content,
+          restored: true,
           geospatialResult,
           toolResult,
         };
-      }),
-    );
+      });
+    turnsRef.current = restored;
+    setTurns(restored);
+    const lastSelection = [...messages].reverse().find((m) => "active_imagery_id" in (m.metadata ?? {}) || parseGeospatialResult(m.metadata?.geospatial_result)?.type === "preview");
+    const previewSelection = lastSelection ? parseGeospatialResult(lastSelection.metadata?.geospatial_result) : undefined;
+    const restoredSelection = lastSelection && "active_imagery_id" in (lastSelection.metadata ?? {})
+      ? (typeof lastSelection.metadata?.active_imagery_id === "string" ? lastSelection.metadata.active_imagery_id : null)
+      : previewSelection?.type === "preview" ? previewSelection.imagery_id : null;
+    selectImagery(lastSelection ? restoredSelection : latestGeospatialContext(restored));
     setConversationId(nextConversationId);
   }
 
   return {
     turns,
+    activeImageryId,
+    selectImagery,
     input,
     loading,
     activeStream,
@@ -279,29 +321,7 @@ function latestGeospatialContext(turns: ChatTurn[]) {
   const turn = [...turns].reverse().find(
     (item): item is ChatTurn & {
       geospatialResult: Exclude<GeospatialResult, GeospatialSceneSearchResult>;
-    } => !!item.geospatialResult && item.geospatialResult.type !== "scene_search",
+    } => !!item.geospatialResult && item.geospatialResult.type !== "scene_search" && item.geospatialResult.type !== "report",
   );
-  if (!turn) return [];
-  const result = turn.geospatialResult;
-  return [
-    {
-      role: "system" as const,
-      content: `当前上传影像：ID=${result.imagery_id}，图层类型=${result.type}。如用户要求计算 NDVI 或其他遥感工具，优先使用该 imagery_id。`,
-    },
-  ];
-}
-
-// 把 ROI 聚焦提示作为 system 消息插到「最后一条用户消息之前」，让模型在解读当前问题时聚焦该区域。
-function injectRoiContext(
-  messages: { role: "user" | "assistant" | "system"; content: string }[],
-  roi: Roi,
-) {
-  const line = { role: "system" as const, content: roiContextLine(roi) };
-  const lastUserIdx = messages.map((m) => m.role).lastIndexOf("user");
-  if (lastUserIdx < 0) return [...messages, line];
-  return [
-    ...messages.slice(0, lastUserIdx),
-    line,
-    ...messages.slice(lastUserIdx),
-  ];
+  return turn?.geospatialResult.imagery_id ?? null;
 }

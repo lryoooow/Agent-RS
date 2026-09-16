@@ -12,6 +12,7 @@ from app.agent.tool_registry import TOOLS
 
 
 EXPECTED_TOOLS = {
+    "prepare_map_roi",
     "raster_inspect",
     "calculate_ndvi",
     "calculate_spectral_index",
@@ -19,7 +20,7 @@ EXPECTED_TOOLS = {
     "cloud_shadow_mask",
     "extract_water_mask",
     "clip_reproject_raster",
-    "segment_landcover",
+    "segment_instances",
     "detect_objects",
     "parse_document",
     "ocr_recognize",
@@ -31,6 +32,7 @@ EXPECTED_TOOLS = {
 }
 
 VALID_ARGS = {
+    "prepare_map_roi": {"bbox": [113.9, 22.4, 114.3, 22.7]},
     "raster_inspect": {"imagery_id": "94e758f38ede"},
     "calculate_ndvi": {"imagery_id": "94e758f38ede"},
     "calculate_spectral_index": {"imagery_id": "94e758f38ede", "index_type": "ndwi"},
@@ -38,7 +40,7 @@ VALID_ARGS = {
     "cloud_shadow_mask": {"imagery_id": "94e758f38ede"},
     "extract_water_mask": {"imagery_id": "94e758f38ede"},
     "clip_reproject_raster": {"imagery_id": "94e758f38ede", "dst_crs": "EPSG:4326"},
-    "segment_landcover": {"imagery_id": "94e758f38ede"},
+    "segment_instances": {"imagery_id": "94e758f38ede", "concepts": ["building"]},
     "detect_objects": {"imagery_id": "94e758f38ede"},
     "parse_document": {"document_id": "11111111-1111-1111-1111-111111111111"},
     "ocr_recognize": {"imagery_id": "94e758f38ede"},
@@ -72,7 +74,7 @@ def test_domain_tools_each_have_exactly_one_agent_owner() -> None:
 def test_shared_scope_is_exactly_the_platform_capabilities() -> None:
     """共享工具 = 联网检索 + 地图定位 + 报告生成，其余都是领域工具。"""
     shared = {tool.name for tool in TOOLS.values() if tool.scope == "shared"}
-    assert shared == {"web_search", "look_at_location", "generate_report", "search_imagery", "fetch_scene"}
+    assert shared == {"prepare_map_roi", "web_search", "look_at_location", "generate_report", "search_imagery", "fetch_scene"}
 
 
 def test_resource_guards_are_derived_from_registry() -> None:

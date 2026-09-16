@@ -7,7 +7,7 @@ export function uid() {
 export function toModelHistory(turns: ChatTurn[], nextUserMessage: string): ChatMessage[] {
   return [
     ...turns
-      .filter((turn) => !turn.error)
+      .filter((turn) => !turn.error && turn.role !== "system")
       .map((turn) => ({ role: turn.role, content: turn.content })),
     { role: "user", content: nextUserMessage },
   ];

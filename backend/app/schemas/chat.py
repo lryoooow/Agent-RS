@@ -1,6 +1,6 @@
 import json
 import math
-from typing import Literal
+from typing import Any, Literal
 from urllib.parse import urlsplit
 
 from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
@@ -153,7 +153,7 @@ class RasterCapabilities(BaseModel):
 
 
 class ToolExecutionInfo(BaseModel):
-    mode: Literal["docker_mcp", "local_subprocess", "local_fallback", "failed"]
+    mode: Literal["docker_mcp", "local_service", "local_subprocess", "local_fallback", "failed"]
     fallback_used: bool = False
     error_code: str | None = None
 
@@ -215,6 +215,11 @@ class GeospatialDetectionResult(BaseModel):
     imagery_id: str
     result_url: str
     bounds: tuple[float, float, float, float] | None = None
+    model_name: str | None = None
+    device: str | None = None
+    bands_used: list[int] | None = None
+    vector_url: str | None = None
+    detections_url: str | None = None
     detection_count: int = 0
     score_threshold: float = 0.5
     classes: list[DetectionClassInfo] = Field(default_factory=list)
@@ -225,6 +230,7 @@ class SegmentationClassInfo(BaseModel):
     name: str
     label: str
     pixel_count: int
+    area_m2: float | None = None
     percentage: float
     color: str
 
@@ -235,11 +241,40 @@ class GeospatialSegmentationResult(BaseModel):
     result_url: str
     bounds: tuple[float, float, float, float] | None = None
     total_pixels: int = 0
+    target_class: Literal["all", "building"] = "all"
+    raster_url: str | None = None
+    building_mask_url: str | None = None
     classes: list[SegmentationClassInfo] = Field(default_factory=list)
     execution: ToolExecutionInfo | None = None
 
 
+class GeospatialInstanceSegmentationResult(BaseModel):
+    type: Literal["instance_segmentation"]
+    imagery_id: str
+    result_url: str
+    bounds: tuple[float, float, float, float] | None = None
+    model_name: str = "SAM3"
+    device: str | None = None
+    concepts: list[str] = Field(default_factory=list)
+    instance_count: int = 0
+    counts: dict[str, int] = Field(default_factory=dict)
+    union_pixels: int = 0
+    area_m2: float | None = None
+    mask_url: str | None = None
+    instance_raster_url: str | None = None
+    vector_url: str | None = None
+    instances_url: str | None = None
+    metrics_url: str | None = None
+    execution: ToolExecutionInfo | None = None
+
+
 class RasterInspectResult(BaseModel):
+    source_grid: dict[str, Any] | None = None
+    analysis_grid: dict[str, Any] | None = None
+    resampled: bool = False
+    band_roles: dict[str, int] | None = None
+    band_roles_source: str | None = None
+    alpha_statistics: list[dict[str, Any]] | None = None
     type: Literal["raster_inspect"]
     imagery_id: str
     width: int
@@ -247,6 +282,8 @@ class RasterInspectResult(BaseModel):
     band_count: int
     crs: str | None = None
     bounds: tuple[float, float, float, float] | None = None
+    bounds_wgs84: tuple[float, float, float, float] | None = None
+    center_wgs84: tuple[float, float] | None = None
     dtype: str | None = None
     pixel_size: tuple[float, float] | None = None
     nodata: float | int | str | None = None
@@ -269,6 +306,7 @@ GeospatialResult = (
     | GeospatialCompositeResult
     | GeospatialDetectionResult
     | GeospatialSegmentationResult
+    | GeospatialInstanceSegmentationResult
     | GeospatialReportResult
 )
 ToolResult = RasterInspectResult
@@ -285,6 +323,7 @@ class ChatResponse(BaseModel):
     assistant_message_id: str | None = None
     retrieved_chunks: int = 0
     rag_trace: dict | None = None
+    active_imagery_id: str | None = None
     agent_trace: dict | None = None
     geospatial_result: GeospatialResult | None = None
     tool_result: ToolResult | None = None

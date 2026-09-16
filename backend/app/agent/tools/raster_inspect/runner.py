@@ -14,6 +14,7 @@ from app.agent.tools.raster_inspect.formatter import format_raster_inspect_conte
 from app.agent.tools.raster_inspect.schema import RasterInspectArguments
 from app.agent.types import AgentArtifact, ToolRunResult
 from app.core.settings import get_settings
+from app.services.raster_semantics import grid_context, band_semantics
 from app.mcp.client import MCPCallError
 from app.mcp.rs_tools_client import RSToolsMCPClient
 
@@ -39,6 +40,13 @@ async def run_raster_inspect(args: RasterInspectArguments) -> ToolRunResult:
         logger.exception("Raster inspect unexpected error: %s", exc)
         return _error_result("影像质检失败，请稍后重试或检查影像与服务状态。", "unexpected_error")
 
+    result.update(await asyncio.to_thread(grid_context, source_path))
+    semantics = await asyncio.to_thread(band_semantics, source_path)
+    result["band_roles"] = semantics.get("band_roles")
+    result["band_roles_source"] = semantics.get("band_roles_source")
+    # This is the same resolver used by inventory, preview and inference.
+    roles = semantics.get("band_roles") or {}
+    result["capabilities"] = {f"has_{role}": role in roles for role in ("blue", "green", "red", "nir", "swir")}
     tool_result = _tool_result(args.imagery_id, result)
     return ToolRunResult(
         tool_context=format_raster_inspect_context(args.imagery_id, result),
@@ -73,12 +81,15 @@ def _tool_result(imagery_id: str, result: dict) -> dict:
     pixel_size = result.get("pixel_size")
     return {
         "type": "raster_inspect",
+        **{key: result.get(key) for key in ("source_grid", "analysis_grid", "resampled", "band_roles", "band_roles_source", "alpha_statistics")},
         "imagery_id": imagery_id,
         "width": int(result.get("width") or 0),
         "height": int(result.get("height") or 0),
         "band_count": int(result.get("band_count") or 0),
         "crs": result.get("crs"),
         "bounds": tuple(bounds) if isinstance(bounds, list) and len(bounds) == 4 else None,
+        "bounds_wgs84": result.get("bounds_wgs84"),
+        "center_wgs84": result.get("center_wgs84"),
         "dtype": result.get("dtype"),
         "pixel_size": tuple(pixel_size) if isinstance(pixel_size, list) and len(pixel_size) == 2 else None,
         "nodata": result.get("nodata"),

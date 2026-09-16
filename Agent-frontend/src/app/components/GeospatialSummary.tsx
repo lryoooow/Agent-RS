@@ -3,6 +3,7 @@ import { useState, type ReactNode } from "react";
 import type {
   GeospatialCompositeResult,
   GeospatialDetectionResult,
+  GeospatialInstanceSegmentationResult,
   GeospatialNdviResult,
   GeospatialReportResult,
   GeospatialResult,
@@ -27,7 +28,7 @@ export function GeospatialSummary({
   onGenerateReport?: (imageryId: string) => void;
   reportPending?: boolean;
   // 影像检索卡片：预览定位 / 导入平台的回调（由 App 注入，经 AgentChat 穿线）。
-  onScenePreview?: (bbox: number[]) => void;
+  onScenePreview?: (scene: SceneCardInfo) => void;
   onSceneImport?: (sceneKey: string) => Promise<string | null>;
 }) {
   if (result.type === "report") {
@@ -56,6 +57,9 @@ export function GeospatialSummary({
   }
   if (result.type === "segmentation") {
     return <SegmentationRow result={result} footer={reportButton} />;
+  }
+  if (result.type === "instance_segmentation") {
+    return <InstanceSegmentationRow result={result} footer={reportButton} />;
   }
   return <IndexRow result={result} footer={reportButton} />;
 }
@@ -172,6 +176,12 @@ function DetectionRow({ result, footer }: { result: GeospatialDetectionResult; f
           ))}
         </div>
       )}
+      {result.model_name && <div className="mt-1.5 text-[11px] text-muted-foreground">{result.model_name} · RGB {result.bands_used?.join(" / ")}</div>}
+      <div className="mt-2 flex flex-wrap gap-3 text-primary">
+        {result.vector_url?.startsWith(`/api/imagery/${result.imagery_id}/results/`) && <a href={result.vector_url} download className="underline">下载检测矢量</a>}
+        {result.detections_url?.startsWith(`/api/imagery/${result.imagery_id}/results/`) && <a href={result.detections_url} download className="underline">下载检测明细</a>}
+        <a href="/open-source/index.html" target="_blank" rel="noreferrer" className="text-muted-foreground underline">开源许可</a>
+      </div>
       {footer}
     </div>
   );
@@ -182,7 +192,7 @@ function SegmentationRow({ result, footer }: { result: GeospatialSegmentationRes
     <div className="mt-2 rounded-lg border border-border bg-background/50 p-2.5 text-[12px]">
       <div className="flex items-center gap-2">
         <Layers3 className="size-3.5 text-primary" />
-        <span className="text-foreground">地物分类完成 · {result.classes.length} 类</span>
+        <span className="text-foreground">{result.target_class === "building" ? "建筑提取完成" : `地物分类完成 · ${result.classes.length} 类`}</span>
         <span className="ml-auto font-mono text-[10px] text-muted-foreground">
           {result.imagery_id.slice(0, 8)}
         </span>
@@ -197,6 +207,35 @@ function SegmentationRow({ result, footer }: { result: GeospatialSegmentationRes
           ))}
         </div>
       )}
+      <div className="mt-2 flex flex-wrap gap-3 text-primary">
+        {result.building_mask_url?.startsWith(`/api/imagery/${result.imagery_id}/results/`) && <a href={result.building_mask_url} download className="underline">下载建筑掩膜</a>}
+        {result.raster_url?.startsWith(`/api/imagery/${result.imagery_id}/results/`) && <a href={result.raster_url} download className="underline">下载完整分类</a>}
+      </div>
+      {footer}
+    </div>
+  );
+}
+
+function InstanceSegmentationRow({ result, footer }: { result: GeospatialInstanceSegmentationResult; footer?: ReactNode }) {
+  const safe = (url: string | null | undefined) => url?.startsWith(`/api/imagery/${result.imagery_id}/results/`);
+  return (
+    <div className="mt-2 rounded-lg border border-primary/30 bg-primary/5 p-2.5 text-[12px]">
+      <div className="flex items-center gap-2">
+        <Layers3 className="size-3.5 text-primary" />
+        <span className="text-foreground">SAM3 实例分割完成 · {result.instance_count} 个目标</span>
+        <span className="ml-auto font-mono text-[10px] text-muted-foreground">{result.imagery_id.slice(0, 8)}</span>
+      </div>
+      <div className="mt-1.5 flex flex-wrap gap-2 font-mono text-[10px] text-muted-foreground">
+        {Object.entries(result.counts).map(([concept, count]) => <span key={concept}>{concept} {count}</span>)}
+        {result.area_m2 != null && <span>掩膜面积约 {fmt(result.area_m2)} m²</span>}
+      </div>
+      <div className="mt-2 flex flex-wrap gap-3 text-primary">
+        {safe(result.mask_url) && <a href={result.mask_url!} download className="underline">下载合并掩膜</a>}
+        {safe(result.instance_raster_url) && <a href={result.instance_raster_url!} download className="underline">下载实例栅格</a>}
+        {safe(result.vector_url) && <a href={result.vector_url!} download className="underline">下载实例矢量</a>}
+        {safe(result.instances_url) && <a href={result.instances_url!} download className="underline">下载实例明细</a>}
+      </div>
+      <p className="mt-2 text-[10px] leading-relaxed text-muted-foreground">SAM3 开放词汇识别结果，数量、轮廓和面积需结合原始影像复核。</p>
       {footer}
     </div>
   );
@@ -221,7 +260,7 @@ function SceneSearchRow({
   onImport,
 }: {
   result: GeospatialSceneSearchResult;
-  onPreview?: (bbox: number[]) => void;
+  onPreview?: (scene: SceneCardInfo) => void;
   onImport?: (sceneKey: string) => Promise<string | null>;
 }) {
   const [importing, setImporting] = useState<string | null>(null);
@@ -273,7 +312,7 @@ function SceneSearchRow({
           return (
             <div
               key={scene.key}
-              className="flex items-center gap-2.5 rounded-lg border border-border bg-background/50 p-2"
+              className="flex flex-wrap items-center gap-2.5 rounded-lg border border-border bg-background/50 p-2"
             >
               <img
                 src={absoluteUrl(scene.preview_url)}
@@ -281,7 +320,7 @@ function SceneSearchRow({
                 loading="lazy"
                 className="size-11 shrink-0 rounded-md border border-border object-cover"
               />
-              <div className="min-w-0 flex-1">
+              <div className="min-w-[100px] flex-1">
                 <div className="flex items-center gap-1.5">
                   <span className="truncate text-[11.5px] font-medium">{scene.satellite}</span>
                   <span className="font-mono text-[10px] text-muted-foreground">
@@ -293,10 +332,10 @@ function SceneSearchRow({
                   {scene.cloud_cover != null ? `${scene.cloud_cover}%` : "—"} · {scene.item_id}
                 </p>
               </div>
-              <div className="flex shrink-0 items-center gap-1">
+              <div className="ml-auto flex shrink-0 flex-wrap items-center gap-1">
                 <button
                   type="button"
-                  onClick={() => onPreview?.(scene.bbox)}
+                  onClick={() => onPreview?.(scene)}
                   className="flex items-center gap-1 rounded-md border border-border bg-card px-2 py-1 text-[10.5px] transition-colors hover:border-primary/50 hover:text-primary"
                 >
                   <Eye className="size-3" /> 预览

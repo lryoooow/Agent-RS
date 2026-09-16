@@ -474,7 +474,9 @@ def validate_heldout_cases(cases) -> None:
         valid_capability_names,
     )
 
-    valid_names = valid_capability_names()
+    # Frozen v1-v5 datasets retain the pre-SAM3 capability label. Accept it as
+    # an evaluation alias while the runtime registry exposes only SAM3.
+    valid_names = valid_capability_names() | {"segment_landcover"}
     errors: list[str] = []
     seen_ids: set[str] = set()
     seen_queries: set[str] = set()

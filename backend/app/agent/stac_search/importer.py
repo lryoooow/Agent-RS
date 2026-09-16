@@ -52,16 +52,20 @@ async def import_scene_as_imagery(record, user_id: str) -> dict:
         (dest / "results").mkdir(parents=True, exist_ok=True)
         shutil.copy2(staged, dest / "source.tif")
         shutil.copy2(staged, dest / "working.tif")
-        preview = _user_scene_dir(user_id, record.key) / "preview.png"
+        from app.services.raster_preview import generate_preview
+        from app.core.settings import get_settings
         try:
-            await asyncio.to_thread(render_scene_preview, record, preview)
-            shutil.copy2(preview, dest / "results" / "preview.png")
-        except SceneRasterError:
+            await asyncio.to_thread(generate_preview, dest / "working.tif", dest / "results" / "preview.png", get_settings().agent_scene_preview_size)
+        except Exception:
             logger.warning("场景预览生成失败，仅导入影像：%s", record.item_id)
 
+        from app.services.raster_semantics import grid_context
         # 元数据复用上传管线同一份提取逻辑；波段语义以 STAC asset key 为准。
         meta = await asyncio.to_thread(_extract_metadata, dest / "working.tif")
+        meta.update(await asyncio.to_thread(grid_context, dest / "working.tif"))
         meta.update(
+            source_origin="stac_composition",
+            native_resolution_m=record.resolution_m,
             band_roles=compose_meta.get("band_roles") or meta.get("band_roles"),
             band_roles_source="stac_assets",
             sensor=compose_meta.get("sensor") or meta.get("sensor"),
@@ -70,7 +74,7 @@ async def import_scene_as_imagery(record, user_id: str) -> dict:
             sha256=_file_sha256(dest / "source.tif"),
             created_at=datetime.now(timezone.utc).isoformat(),
             owner_user_id=user_id,
-            preview_url=f"/api/imagery/{imagery_id}/results/preview.png",
+            preview_url=f"/api/imagery/{imagery_id}/results/preview.png" if (dest / "results" / "preview.png").exists() else None,
             working_width=meta["width"],
             working_height=meta["height"],
             compressed=False,
@@ -95,4 +99,8 @@ async def import_scene_as_imagery(record, user_id: str) -> dict:
         "item_id": record.item_id,
         "satellite": record.satellite,
         "band_roles": meta["band_roles"],
+        "preview_url": meta.get("preview_url"),
+        "bounds": meta.get("bounds"),
+        "analysis_grid": meta.get("analysis_grid"),
+        "native_resolution_m": record.resolution_m,
     }
