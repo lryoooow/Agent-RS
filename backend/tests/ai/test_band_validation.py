@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 from pathlib import Path
 from typing import Any
 
@@ -12,10 +11,10 @@ from app.agent.tools.band_composite.schema import BandCompositeArguments
 from app.agent.tools.common import validate_band_indices
 from app.agent.tools.detect.runner import run_detect
 from app.agent.tools.detect.schema import DetectArguments
+from app.agent.tools.instance_segment.runner import run_instance_segment
+from app.agent.tools.instance_segment.schema import InstanceSegmentArguments
 from app.agent.tools.ndvi.runner import run_ndvi
 from app.agent.tools.ndvi.schema import NDVIArguments
-from app.agent.tools.segment.runner import run_segment
-from app.agent.tools.segment.schema import SegmentArguments
 from app.agent.tools.spectral_index.runner import run_spectral_index
 from app.agent.tools.spectral_index.schema import SpectralIndexArguments
 from app.core.settings import get_settings
@@ -36,6 +35,10 @@ def _write_test_tif(path: Path, *, count: int = 4) -> None:
         dtype="uint16",
     ) as dst:
         dst.write(data)
+        # This fixture represents an explicitly documented BGR+NIR sensor.
+        if count >= 4:
+            for index, label in enumerate(("Blue", "Green", "Red", "NIR"), 1):
+                dst.set_band_description(index, label)
 
 
 def _prepare_imagery(root: Path, *, count: int = 4, imagery_id: str = IMAGERY_ID) -> Path:
@@ -71,14 +74,6 @@ def _fake_success_result(tool_name: str, arguments: dict[str, Any] | None) -> di
             "score_threshold": arguments["score_threshold"],
             "classes": [{"name": "plane", "label": "plane", "count": 1, "color": "#ff0000"}],
             "output_png": "detection_overlay.png",
-        }
-    if tool_name == "segment_landcover":
-        return {
-            "total_pixels": 4,
-            "classes": [
-                {"name": "building", "label": "building", "pixel_count": 2, "percentage": 50.0, "color": "#ffffff"}
-            ],
-            "output_png": "segmentation_overlay.png",
         }
     if tool_name == "calculate_ndvi":
         return {
@@ -123,7 +118,7 @@ async def test_validate_band_indices_rejects_zero_negative_and_overrange(tmp_pat
     ("runner", "args"),
     [
         (run_detect, DetectArguments(imagery_id=IMAGERY_ID, red_band=99, green_band=2, blue_band=1)),
-        (run_segment, SegmentArguments(imagery_id=IMAGERY_ID, red_band=99, green_band=2, blue_band=1)),
+        (run_instance_segment, InstanceSegmentArguments(imagery_id=IMAGERY_ID, concepts=["building"], red_band=99, green_band=2, blue_band=1)),
         (run_spectral_index, SpectralIndexArguments(imagery_id=IMAGERY_ID, index_type="mndwi")),
         (run_band_composite, BandCompositeArguments(imagery_id=IMAGERY_ID, mode="custom", bands=[1, 2, 99])),
         (run_band_composite, BandCompositeArguments(imagery_id=IMAGERY_ID, mode="true_color")),
@@ -201,7 +196,7 @@ async def test_band_composite_false_color_passes_on_four_band_imagery(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_detect_default_bands_are_gf2_and_explicit_override_reaches_mcp(monkeypatch, tmp_path: Path) -> None:
+async def test_detect_uses_documented_roles_even_when_agent_supplies_old_mapping(monkeypatch, tmp_path: Path) -> None:
     _prepare_imagery(tmp_path, count=4)
     payloads: list[dict[str, Any]] = []
 
@@ -224,29 +219,5 @@ async def test_detect_default_bands_are_gf2_and_explicit_override_reaches_mcp(mo
     assert default_result.error is None
     assert explicit_result.error is None
     assert (payloads[0]["red_band"], payloads[0]["green_band"], payloads[0]["blue_band"]) == (3, 2, 1)
-    assert (payloads[1]["red_band"], payloads[1]["green_band"], payloads[1]["blue_band"]) == (1, 2, 3)
-    get_settings.cache_clear()
-
-
-@pytest.mark.asyncio
-async def test_segment_default_bands_are_gf2_and_reach_mcp(monkeypatch, tmp_path: Path) -> None:
-    _prepare_imagery(tmp_path, count=4)
-    seen: dict[str, Any] = {}
-
-    async def fake_call_tool(self, tool_name, *, source_path=None, output_dir=None, arguments=None):
-        seen["tool_name"] = tool_name
-        seen["arguments"] = arguments
-        return _fake_success_result(tool_name, arguments or {})
-
-    monkeypatch.setenv("IMAGERY_UPLOAD_DIR", str(tmp_path))
-    get_settings.cache_clear()
-    monkeypatch.setattr("app.mcp.rs_tools_client.RSToolsMCPClient.call_tool", fake_call_tool)
-
-    args = SegmentArguments(imagery_id=IMAGERY_ID)
-    result = await run_segment(args)
-
-    assert (args.red_band, args.green_band, args.blue_band) == (3, 2, 1)
-    assert result.error is None
-    assert seen["tool_name"] == "segment_landcover"
-    assert (seen["arguments"]["red_band"], seen["arguments"]["green_band"], seen["arguments"]["blue_band"]) == (3, 2, 1)
+    assert (payloads[1]["red_band"], payloads[1]["green_band"], payloads[1]["blue_band"]) == (3, 2, 1)
     get_settings.cache_clear()

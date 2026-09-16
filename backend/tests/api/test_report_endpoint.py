@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 from fastapi.testclient import TestClient
 
@@ -28,6 +29,8 @@ def test_create_report_returns_download_url(monkeypatch, tmp_path: Path) -> None
         )
 
     monkeypatch.setattr(report_route, "build_conversation_report", fake_build)
+    save = AsyncMock(return_value="report-message")
+    monkeypatch.setattr(report_route, "save_assistant_response", save)
     client = make_client(monkeypatch, tmp_path)
 
     resp = client.post("/api/reports", json={"conversation_id": "conv-1"})
@@ -35,6 +38,9 @@ def test_create_report_returns_download_url(monkeypatch, tmp_path: Path) -> None
     body = resp.json()
     assert body["download_url"].endswith("report_x.docx")
     assert body["imagery_id"] == "d722c20e1234"
+    assert save.call_args.args[0].conversation_id == "conv-1"
+    assert save.call_args.kwargs["geospatial_result"] == {"type": "report", **body}
+    assert save.call_args.kwargs["usage"] == {"input_tokens": 0, "output_tokens": 0}
 
 
 def test_create_report_maps_error_codes_to_status(monkeypatch, tmp_path: Path) -> None:

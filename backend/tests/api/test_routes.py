@@ -12,6 +12,8 @@ def make_client() -> TestClient:
 
 def test_health_route(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("IMAGERY_UPLOAD_DIR", str(tmp_path / "imagery"))
+    for name in ("TOOLS", "DETECT", "DOC"):
+        monkeypatch.setenv(f"RS_{name}_MCP_IMAGE", f"rs-{name.lower()}-mcp:0.1.0")
     client = make_client()
 
     response = client.get("/api/health")
@@ -29,11 +31,12 @@ def test_health_route(monkeypatch, tmp_path) -> None:
     } == {
         "rs_tools_mcp": "rs-tools-mcp:0.1.0",
         "rs_detect_mcp": "rs-detect-mcp:0.1.0",
-        "rs_segment_mcp": "rs-segment-mcp:0.1.0",
         "rs_doc_mcp": "rs-doc-mcp:0.1.0",
     }
-    for name in ("rs_tools_mcp", "rs_detect_mcp", "rs_segment_mcp", "rs_doc_mcp"):
-        assert set(body[name]) == {"use_docker", "image", "docker_command_available"}
+    for name in ("rs_tools_mcp", "rs_detect_mcp", "rs_doc_mcp"):
+        assert set(body[name]) == {"use_docker", "image", "docker_command_available", "image_present", "ready"}
+    assert body["sam3"]["enabled"] is True
+    assert body["sam3"]["model"] == "SAM3"
 
 
 def test_config_route_does_not_leak_api_key(monkeypatch) -> None:

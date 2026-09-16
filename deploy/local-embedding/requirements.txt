@@ -1,0 +1,11 @@
+# Install the Hygon DTK-compatible PyTorch wheel separately; do not install NVIDIA torch.
+numpy==1.26.4
+transformers==4.44.2
+safetensors==0.4.5
+sentencepiece==0.2.0
+fastapi==0.115.12
+uvicorn==0.34.2
+sympy==1.12
+networkx==3.2.1
+fsspec==2024.6.1
+jinja2

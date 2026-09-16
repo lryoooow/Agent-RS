@@ -33,11 +33,12 @@ from dataclasses import dataclass, field
 from typing import Iterator
 
 from app.agent.types import ToolRunResult
+from app.agent.tool_context import swap_analysis_provider
 from app.core.settings import get_settings
 
 # 需要 GPU 的重工具。与工具注册表里的 Agent 所有权正交：
 # 领域是「归谁管」，这里是「跑起来多贵」。
-GPU_HEAVY_TOOLS: frozenset[str] = frozenset({"detect_objects", "segment_landcover"})
+GPU_HEAVY_TOOLS: frozenset[str] = frozenset({"detect_objects", "segment_instances"})
 
 # 联网检索工具名。按次计费，所以和 GPU 工具一样要按回合限次。
 WEB_SEARCH_TOOL = "web_search"
@@ -52,6 +53,7 @@ _QUOTA_BUCKETS: dict[str, str] = {
     WEB_SEARCH_TOOL: "web_search",
     IMAGERY_SEARCH_TOOL: "imagery_search",
     SCENE_FETCH_TOOL: "scene_fetch",
+    "prepare_map_roi": "scene_fetch",
 }
 
 
@@ -94,9 +96,20 @@ class TurnToolState:
     # UI-originated parameters are trusted request context.  They override model
     # arguments for the named tool so an LLM cannot silently expand a selected ROI.
     trusted_tool_arguments: dict[str, dict] = field(default_factory=dict)
+    precondition_blocks: dict[str, str] = field(default_factory=dict)
 
     def arguments_for(self, tool_name: str, arguments: dict) -> dict:
-        trusted = self.trusted_tool_arguments.get(tool_name)
+        trusted = dict(self.trusted_tool_arguments.get(tool_name) or {})
+        # A successful scene import within this turn becomes the current resource for follow-up tools.
+        if "imagery_id" in trusted:
+            for invocation in reversed(self.succeeded):
+                geo = invocation.result.geospatial_result
+                if invocation.name in {"fetch_scene", "prepare_map_roi"} and geo and geo.get("imagery_id"):
+                    trusted["imagery_id"] = geo["imagery_id"]
+                    for role, index in ((invocation.result.metadata or {}).get("band_roles") or {}).items():
+                        if role + "_band" in arguments:
+                            trusted[role + "_band"] = index
+                    break
         return {**arguments, **trusted} if trusted else arguments
 
     def record_retrieval(self, *, retrieved_chunks: int, trace: dict | None) -> None:
@@ -106,6 +119,21 @@ class TurnToolState:
 
     def record(self, invocation: ToolInvocation) -> None:
         self.invocations.append(invocation)
+        if invocation.name in {"fetch_scene", "prepare_map_roi"} and not invocation.result.error:
+            self.precondition_blocks.clear()
+
+    def latest_imported_imagery_id(self) -> str | None:
+        for invocation in reversed(self.succeeded):
+            if invocation.name in {"fetch_scene", "prepare_map_roi"} and invocation.result.geospatial_result:
+                geo = invocation.result.geospatial_result
+                return geo.get("imagery_id") if isinstance(geo, dict) else geo.imagery_id
+        return None
+
+    def available(self, tool_name: str) -> bool:
+        if tool_name in self.precondition_blocks:
+            return False
+        bucket = _QUOTA_BUCKETS.get(tool_name)
+        return bucket is None or self.reservations.get(bucket, 0) < _bucket_limit(bucket)
 
     def try_reserve(self, tool_name: str) -> bool:
         """执行前占一个配额名额。占不到返回 False，调用方据此拒绝执行。
@@ -140,6 +168,19 @@ class TurnToolState:
     @property
     def succeeded(self) -> list[ToolInvocation]:
         return [i for i in self.invocations if i.result.error is None]
+
+    def completed_analysis_results(self) -> list[dict]:
+        """Server-produced results available before the assistant turn is saved."""
+        entries = []
+        for invocation in self.succeeded:
+            entry = {}
+            for key in ("geospatial_result", "tool_result"):
+                payload = _as_plain_dict(getattr(invocation.result, key, None))
+                if isinstance(payload, dict) and payload:
+                    entry[key] = payload
+            if entry:
+                entries.append(entry)
+        return entries
 
     def latest_geospatial_result(self) -> dict | None:
         """最后一个成功产出的地图图层。前端一次只渲染一个主结果。"""
@@ -209,7 +250,9 @@ def turn_scope(
         }
     )
     _turn_state.set(state)
+    previous_analysis_provider = swap_analysis_provider(state.completed_analysis_results)
     try:
         yield state
     finally:
+        swap_analysis_provider(previous_analysis_provider)
         _turn_state.set(previous)

@@ -28,13 +28,13 @@ def test_agent_status_event_uses_explicit_label() -> None:
     payload = _payload(
         agent_status_event(
             "child_agent_running",
-            label="正在进行地物分类",
-            tool_name="segment_landcover",
+            label="正在进行 SAM3 实例分割",
+            tool_name="segment_instances",
             elapsed_ms=1234,
         )
     )
-    assert payload["label"] == "正在进行地物分类"
-    assert payload["tool_name"] == "segment_landcover"
+    assert payload["label"] == "正在进行 SAM3 实例分割"
+    assert payload["tool_name"] == "segment_instances"
     assert payload["elapsed_ms"] == 1234
 
 

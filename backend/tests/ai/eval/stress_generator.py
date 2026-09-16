@@ -445,7 +445,9 @@ def validate_stress_cases(cases) -> None:
         valid_capability_names,
     )
 
-    valid_names = valid_capability_names()
+    # Preserve reproducibility of historical stress seeds after the runtime
+    # segmentation tool migrated from U-Net to SAM3.
+    valid_names = valid_capability_names() | {"segment_landcover"}
     forbidden = {_PRIMARY, _OTHER, _DOC}
     errors: list[str] = []
     seen_ids: set[str] = set()

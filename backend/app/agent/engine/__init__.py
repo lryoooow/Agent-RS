@@ -43,6 +43,7 @@ __all__ = [
     "decide_memory",
     "complete_turn",
     "stream_turn_events",
+    "AutogenTurnOutput",
 ]
 
 # 子模块导出名 -> 所在模块。
@@ -67,6 +68,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "decide_memory": "app.agent.engine.memory_judge",
     "complete_turn": "app.agent.engine.service",
     "stream_turn_events": "app.agent.engine.service",
+    "AutogenTurnOutput": "app.agent.engine.service",
 }
 
 if TYPE_CHECKING:  # pragma: no cover - 只为类型检查器，运行期不执行

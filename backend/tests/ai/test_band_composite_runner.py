@@ -28,6 +28,10 @@ def _write_test_tif(path: Path, *, count: int = 4) -> None:
         dtype="uint16",
     ) as dst:
         dst.write(data)
+        # This fixture represents an explicitly documented BGR+NIR sensor.
+        if count >= 4:
+            for index, label in enumerate(("Blue", "Green", "Red", "NIR"), 1):
+                dst.set_band_description(index, label)
 
 
 def _prepare_imagery(root: Path, *, count: int = 4) -> Path:

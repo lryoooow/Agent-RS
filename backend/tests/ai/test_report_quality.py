@@ -153,6 +153,28 @@ def _wrap(pool):
     return _inner()
 
 
+@_pg_async
+async def test_report_button_persists_download_card_with_zero_model_usage(pool, settings, monkeypatch, tmp_path):
+    from app.api.routes.report import create_report, ReportCreateRequest
+    from app.auth import user_scope
+    from app.db.repositories.message import list_conversation_messages
+    image = "d722c20e1234"
+    cid, owner = await _seed_conversation_with_segmentation(pool, settings, imagery_id=image)
+    monkeypatch.setattr(report_builder, "imagery_root", lambda: tmp_path)
+    monkeypatch.setattr(report_builder, "read_imagery_metadata", lambda _: {"filename": "test.tif"})
+    monkeypatch.setattr(report_builder, "fetch_optional_pool", lambda: _wrap(pool))
+    monkeypatch.setattr("app.agent.persistence.fetch_optional_pool", lambda: _wrap(pool))
+    with user_scope(owner):
+        report = await create_report(ReportCreateRequest(conversation_id=cid, imagery_id=image))
+    async with pool.acquire() as conn:
+        messages = await list_conversation_messages(conn, conversation_id=cid)
+    saved = messages[-1]
+    assert saved["role"] == "assistant"
+    assert saved["tokens_in"] == saved["tokens_out"] == 0
+    assert saved["metadata_json"]["geospatial_result"] == {"type": "report", **report.model_dump()}
+    assert (tmp_path / image / "results" / report.filename).is_file()
+
+
 def test_python_sources_are_utf8_without_replacement_characters() -> None:
     replacement = chr(0xFFFD)  # 用 chr 构造，避免本检测文件自身含 U+FFFD 字面量而误报
     scanned = 0

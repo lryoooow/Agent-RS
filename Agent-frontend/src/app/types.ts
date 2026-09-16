@@ -53,7 +53,7 @@ export type AgentStatus =
   | "final_answering";
 
 export type ToolExecutionInfo = {
-  mode: "docker_mcp" | "local_subprocess" | "local_fallback" | "failed";
+  mode: "docker_mcp" | "local_service" | "local_subprocess" | "local_fallback" | "failed";
   fallback_used: boolean;
   error_code?: string | null;
 };
@@ -113,6 +113,11 @@ export type DetectionClassInfo = {
 
 export type GeospatialDetectionResult = GeospatialBaseResult & {
   type: "detection";
+  model_name?: string | null;
+  device?: string | null;
+  bands_used?: number[] | null;
+  vector_url?: string | null;
+  detections_url?: string | null;
   detection_count: number;
   score_threshold: number;
   classes: DetectionClassInfo[];
@@ -129,8 +134,28 @@ export type SegmentationClassInfo = {
 
 export type GeospatialSegmentationResult = GeospatialBaseResult & {
   type: "segmentation";
+  target_class?: "all" | "building";
+  raster_url?: string | null;
+  building_mask_url?: string | null;
   total_pixels: number;
   classes: SegmentationClassInfo[];
+  execution?: ToolExecutionInfo | null;
+};
+
+export type GeospatialInstanceSegmentationResult = GeospatialBaseResult & {
+  type: "instance_segmentation";
+  model_name: "SAM3" | string;
+  device?: string | null;
+  concepts: string[];
+  instance_count: number;
+  counts: Record<string, number>;
+  union_pixels: number;
+  area_m2?: number | null;
+  mask_url?: string | null;
+  instance_raster_url?: string | null;
+  vector_url?: string | null;
+  instances_url?: string | null;
+  metrics_url?: string | null;
   execution?: ToolExecutionInfo | null;
 };
 
@@ -170,6 +195,7 @@ export type GeospatialResult =
   | GeospatialCompositeResult
   | GeospatialDetectionResult
   | GeospatialSegmentationResult
+  | GeospatialInstanceSegmentationResult
   | GeospatialReportResult
   | GeospatialSceneSearchResult;
 
@@ -189,7 +215,19 @@ export type RasterCapabilities = {
   has_swir: boolean;
 };
 
+export type RasterGrid = {
+  width: number;
+  height: number;
+  pixel_size: [number, number] | null;
+  crs?: string | null;
+};
+
 export type RasterInspectResult = {
+  source_grid?: RasterGrid | null;
+  analysis_grid?: RasterGrid | null;
+  resampled?: boolean;
+  bounds_wgs84?: [number, number, number, number] | null;
+  center_wgs84?: [number, number] | null;
   type: "raster_inspect";
   imagery_id: string;
   width: number;
@@ -208,6 +246,8 @@ export type RasterInspectResult = {
 export type ToolResult = RasterInspectResult;
 
 export type ChatTurn = ChatMessage & {
+  selectedImageryId?: string;
+  restored?: boolean;
   id: string;
   analysisStatus?: AnalysisStatus;
   analysisLabel?: string;
@@ -227,6 +267,7 @@ export type ChatTurn = ChatMessage & {
 };
 
 export type ChatResponse = {
+  active_imagery_id?: string | null;
   content: string;
   model: string;
   provider: string;

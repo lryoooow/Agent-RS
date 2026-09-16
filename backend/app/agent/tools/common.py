@@ -50,7 +50,16 @@ async def validate_band_indices(source_path: Path, bands: dict[str, int]) -> str
     over_range = {name: index for name, index in bands.items() if index > band_count}
     if over_range:
         return f"影像只有 {band_count} 个波段，无法使用 {over_range}"
-    return None
+    def alpha_error():
+        import rasterio
+        from app.services.imagery_persist import _match_band_role
+        with rasterio.open(source_path) as src:
+            for name, index in bands.items():
+                declared = _match_band_role(src.descriptions[index - 1] or "")
+                if src.colorinterp[index - 1].name == "alpha" and declared != name:
+                    return f"B{index} 是透明度 Alpha 波段，不能作为 {name} 光谱波段。请使用真实光谱波段或上传包含近红外的原始影像。"
+        return None
+    return await asyncio.to_thread(alpha_error)
 
 
 def invalid_bands_result(tool_name: str, detail: str) -> ToolRunResult:

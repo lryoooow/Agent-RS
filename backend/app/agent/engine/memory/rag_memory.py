@@ -28,6 +28,7 @@ from app.agent.engine.memory._common import (
     run_query_once_per_turn,
 )
 from app.agent.engine.turn_context import current_turn_state
+from app.agent.rag.relevance import should_retrieve_documents
 from app.agent.rag.service import retrieve_rag_context
 from app.core.settings import get_settings
 from app.db.pool import fetch_optional_pool
@@ -82,6 +83,10 @@ class RagMemory(Memory):
         text = query if isinstance(query, str) else str(query.content)
         text = text.strip()
         if not text or not get_settings().storage_active:
+            return MemoryQueryResult(results=[])
+
+        if not should_retrieve_documents(text):
+            self._record_trace(retrieved_chunks=0, trace={"use_rag": True, "skipped": True, "reason": "task_not_document_related", "context_chars": 0})
             return MemoryQueryResult(results=[])
 
         pool = await fetch_optional_pool()

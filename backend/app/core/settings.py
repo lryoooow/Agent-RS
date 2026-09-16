@@ -3,6 +3,7 @@ import os
 from functools import lru_cache
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field
 
 logger = logging.getLogger(__name__)
 _DEPRECATED_AGENT_ENV = (
@@ -123,7 +124,7 @@ class Settings(BaseSettings):
     agent_auto_flow_enabled: bool = True
     # 单轮内允许的工具调用轮数上限。
     agent_max_tool_iterations: int = 5
-    # GPU 重工具（detect_objects / segment_landcover）单轮调用次数上限。
+    # GPU 重工具（detect_objects / segment_instances）单轮调用次数上限。
     # 与 agent_max_tool_iterations 分开限制：轻工具串 5 步只是秒级，
     # 而两个 GPU 工具串起来可能到分钟级，单独设闸避免单次请求超时。
     agent_max_gpu_tool_calls: int = 1
@@ -148,6 +149,7 @@ class Settings(BaseSettings):
     database_pool_max_size: int = 5
     # RAG 检索引擎：仅预留开关，当前只有 builtin（现有 hybrid+RRF+rerank+MMR）。
     rag_engine: str = "builtin"
+    knowledge_graph_enabled: bool = False
 
     default_user_id: str = "00000000-0000-4000-8000-000000000001"
     default_workspace_id: str = "00000000-0000-4000-8000-000000000001"
@@ -171,6 +173,8 @@ class Settings(BaseSettings):
     rerank_model: str = "gte-rerank-v2"
     rerank_top_n: int = 5
     rag_candidate_limit: int = 20
+    sam3_max_resolution_m: float = Field(default=5.0, gt=0)
+    rag_min_similarity: float = Field(default=0.55, ge=0.0, le=1.0)
     rag_rrf_k: int = 60
     rag_mmr_enabled: bool = True
     rag_mmr_lambda: float = 0.7
@@ -243,13 +247,10 @@ class Settings(BaseSettings):
     rs_detect_mcp_cpus: float = 4.0
     rs_detect_mcp_network: str = "none"
     rs_detect_mcp_gpus: str = "all"
-    rs_segment_docker_timeout_seconds: int = 300
-    rs_segment_mcp_image: str = "rs-segment-mcp:0.1.0"
-    rs_segment_mcp_use_docker: bool = True
-    rs_segment_mcp_memory_limit: str = "6g"
-    rs_segment_mcp_cpus: float = 4.0
-    rs_segment_mcp_network: str = "none"
-    rs_segment_mcp_gpus: str = "all"
+    rs_detect_mcp_accelerator: str = "nvidia"
+    sam3_enabled: bool = True
+    sam3_service_url: str = "http://127.0.0.1:18082"
+    sam3_inference_timeout_seconds: float = 900.0
     rs_doc_docker_timeout_seconds: int = 180
     rs_doc_mcp_image: str = "rs-doc-mcp:0.1.0"
     rs_doc_mcp_use_docker: bool = True

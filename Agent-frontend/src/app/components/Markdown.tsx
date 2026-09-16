@@ -26,7 +26,7 @@ const COMPONENTS: Components = {
   code: ({ className, children }) => {
     const inline = !className;
     if (inline) {
-      return <code className="rounded bg-background/70 px-1 py-0.5 font-mono text-[12px] text-primary">{children}</code>;
+      return <code className="[overflow-wrap:anywhere] rounded bg-background/70 px-1 py-0.5 font-mono text-[12px] text-primary">{children}</code>;
     }
     return (
       <code className="block overflow-x-auto rounded-lg border border-border bg-background/70 p-2.5 font-mono text-[12px] leading-relaxed text-foreground">
@@ -34,12 +34,13 @@ const COMPONENTS: Components = {
       </code>
     );
   },
-  pre: ({ children }) => <pre className="my-2 overflow-x-auto">{children}</pre>,
+  pre: ({ children }) => <pre className="my-2 max-w-full overflow-x-auto whitespace-pre-wrap [overflow-wrap:anywhere]">{children}</pre>,
   table: ({ children }) => (
-    <div className="my-2 overflow-x-auto rounded-lg border border-border">
-      <table className="w-full border-collapse text-[12px]">{children}</table>
+    <div className="my-2 max-w-full overflow-x-auto rounded-lg border border-border">
+      <table className="w-full table-fixed border-collapse text-[12px]">{children}</table>
     </div>
   ),
+  img: ({src, alt}) => <img src={src} alt={alt ?? ""} loading="lazy" className="my-2 h-auto max-w-full rounded" />,
   thead: ({ children }) => <thead className="bg-background/60">{children}</thead>,
   th: ({ children }) => <th className="border-b border-border px-2.5 py-1.5 text-left font-semibold text-foreground">{children}</th>,
   td: ({ children }) => <td className="border-b border-border/60 px-2.5 py-1.5 align-top">{children}</td>,
@@ -47,7 +48,7 @@ const COMPONENTS: Components = {
 
 export function Markdown({ children }: { children: string }) {
   return (
-    <div className="text-[13px] text-card-foreground">
+    <div className="min-w-0 max-w-full [overflow-wrap:anywhere] text-[13px] text-card-foreground">
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={COMPONENTS}>
         {children}
       </ReactMarkdown>

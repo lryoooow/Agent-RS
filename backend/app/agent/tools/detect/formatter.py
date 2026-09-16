@@ -6,8 +6,11 @@ from typing import Any
 def format_detect_context(imagery_id: str, result: dict[str, Any], result_filename: str) -> str:
     classes = result.get("classes") or []
     lines = [
-        f"遥感目标检测完成（影像 ID: {imagery_id}，模型 PP-YOLOE-R / DOTA 15 类）。",
+        f"遥感目标检测完成（影像 ID: {imagery_id}，模型 {result.get('model_name', 'DOTA 15 类')}）。",
         f"- 结果图层: {result_filename}",
+        f"- 运行设备: {result.get('device', '未报告')}；RGB 波段: {result.get('bands_used')}",
+        f"- 分块推理: {result.get('tile_count')} 块；分析网格: {result.get('width')}×{result.get('height')} px",
+        f"- 旋转框与置信度: {result.get('output_json')}；WGS84 矢量: {result.get('output_geojson')}",
         f"- 检测目标总数: {result.get('detection_count', 0)}",
         f"- 置信度阈值: {result.get('score_threshold')}",
     ]

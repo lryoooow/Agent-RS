@@ -56,11 +56,11 @@ from app.agent.tools.report.schema import (
     ReportArguments,
 )
 from app.agent.tools.schema_gen import build_function_definition
-from app.agent.tools.segment.runner import run_segment
-from app.agent.tools.segment.schema import (
-    SEGMENT_TOOL_DESCRIPTION,
-    SEGMENT_TOOL_NAME,
-    SegmentArguments,
+from app.agent.tools.instance_segment.runner import run_instance_segment
+from app.agent.tools.instance_segment.schema import (
+    INSTANCE_SEGMENT_TOOL_DESCRIPTION,
+    INSTANCE_SEGMENT_TOOL_NAME,
+    InstanceSegmentArguments,
 )
 from app.agent.tools.spectral_index.runner import run_spectral_index
 from app.agent.tools.spectral_index.schema import (
@@ -93,6 +93,7 @@ from app.agent.tools.web_search.schema import (
 )
 from app.agent.search.schema import WebSearchArguments
 from app.agent.types import ToolRunResult
+from app.agent.tools.map_roi import MapROIArguments, run_map_roi
 
 
 ToolRunner = Callable[[BaseModel], Awaitable[ToolRunResult]]
@@ -138,8 +139,8 @@ async def _run_detect(args: DetectArguments) -> ToolRunResult:
     return await run_detect(args)
 
 
-async def _run_segment(args: SegmentArguments) -> ToolRunResult:
-    return await run_segment(args)
+async def _run_instance_segment(args: InstanceSegmentArguments) -> ToolRunResult:
+    return await run_instance_segment(args)
 
 
 async def _run_cloud_mask(args: CloudMaskArguments) -> ToolRunResult:
@@ -183,6 +184,14 @@ async def _run_scene_fetch(args: SceneFetchArguments) -> ToolRunResult:
 
 
 TOOLS: dict[str, RegisteredTool] = {
+    "prepare_map_roi": RegisteredTool(
+        name="prepare_map_roi",
+        definition=build_function_definition(
+            "prepare_map_roi", "获取当前地图框选区域的卫星底图 RGB 影像，供直接提取、分类和检测。无需预先上传或检索影像；只在用户要求分析地图选区时调用。", MapROIArguments
+        ),
+        argument_model=MapROIArguments, runner=run_map_roi, agent_name="shared",
+        resource_kind="none", scope="shared", tags=("map", "imagery"),
+    ),
     "calculate_ndvi": RegisteredTool(
         name="calculate_ndvi",
         definition=build_function_definition(
@@ -238,16 +247,16 @@ TOOLS: dict[str, RegisteredTool] = {
         resource_kind="imagery",
         tags=("imagery", "detection", "mcp"),
     ),
-    "segment_landcover": RegisteredTool(
-        name="segment_landcover",
+    "segment_instances": RegisteredTool(
+        name="segment_instances",
         definition=build_function_definition(
-            SEGMENT_TOOL_NAME, SEGMENT_TOOL_DESCRIPTION, SegmentArguments
+            INSTANCE_SEGMENT_TOOL_NAME, INSTANCE_SEGMENT_TOOL_DESCRIPTION, InstanceSegmentArguments
         ),
-        argument_model=SegmentArguments,
-        runner=_run_segment,
+        argument_model=InstanceSegmentArguments,
+        runner=_run_instance_segment,
         agent_name="segmentation_agent",
         resource_kind="imagery",
-        tags=("imagery", "segmentation", "mcp"),
+        tags=("imagery", "segmentation", "sam3", "open-vocabulary"),
     ),
     "cloud_shadow_mask": RegisteredTool(
         name="cloud_shadow_mask",

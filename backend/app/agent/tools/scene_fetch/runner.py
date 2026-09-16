@@ -36,13 +36,19 @@ async def run_scene_fetch(args: SceneFetchArguments) -> ToolRunResult:
         )
 
     roles = result["band_roles"]
+    grid = result.get("analysis_grid") or {}
+    geospatial = {"type": "preview", "imagery_id": result["imagery_id"],
+                  "result_url": result.get("preview_url") or "", "bounds": result.get("bounds")}
     return ToolRunResult(
         tool_context=(
             f"已导入「{result['satellite']} {result['item_id']}」为平台影像 "
             f"（ID: {result['imagery_id']}，波段角色："
             + "，".join(f"{role}=B{index}" for role, index in sorted(roles.items(), key=lambda kv: kv[1]))
-            + "）。它已出现在影像清单里，可以直接对其调用分析工具。"
+            + f"）。当前分析网格 {grid.get('width', '未知')}×{grid.get('height', '未知')}，实际像元 {grid.get('pixel_size', '未知')}（单位依坐标系）。"
+            + "已设为当前分析影像。后续分析使用此 ID 与其波段角色；实际像元不能用传感器标称分辨率替代。"
         ),
         query=args.reason,
         result_count=1,
+        geospatial_result=geospatial,
+        metadata={"band_roles": roles},
     )

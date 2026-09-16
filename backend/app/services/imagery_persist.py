@@ -59,13 +59,15 @@ def _match_band_role(description: str) -> str | None:
 
 
 def _derive_band_roles(
-    count: int, descriptions: list[str | None]
+    count: int, descriptions: list[str | None], colorinterp: list[str] | None = None, sensor: str | None = None
 ) -> tuple[dict[str, int], str] | tuple[None, None]:
     """波段角色表：文件自带描述优先，识别不出再按位置约定兜底。
 
     返回 (roles, source)。source 告诉清单消费方这份映射的置信度：
     - "descriptions"：来自文件的波段描述（可信）
-    - "positional_gf2"：无描述时按 GF-2 波序约定 B1蓝/B2绿/B3红/B4近红外/B5短波红外
+    - "colorinterp"：来自 GeoTIFF 的 RGB 颜色解释；Alpha 不是光谱波段
+    - "positional_gf2"：仅明确 GF-2 传感器时按 B1蓝/B2绿/B3红/B4近红外
+    - 未标注传感器的多波段文件不凭数量猜测 NIR/SWIR
     - "positional_rgb"：三波段按自然 RGB 序（band1=R）
     - "positional_gray"：单波段全色
 
@@ -82,11 +84,15 @@ def _derive_band_roles(
     if roles:
         return roles, "descriptions"
 
+    colors = {name: index for index, name in enumerate(colorinterp or [], start=1) if name in {"red", "green", "blue"}}
+    if colors:
+        return colors, "colorinterp"
+    if count == 4 and colorinterp and colorinterp[-1] == "alpha":
+        return {"red": 1, "green": 2, "blue": 3}, "positional_rgba"
+    if count >= 4 and (sensor or "").upper().replace("-", "") in {"GF2", "GF02"}:
+        return {"blue": 1, "green": 2, "red": 3, "nir": 4}, "positional_gf2"
     if count >= 4:
-        roles = {"blue": 1, "green": 2, "red": 3, "nir": 4}
-        if count >= 5:
-            roles["swir"] = 5
-        return roles, "positional_gf2"
+        return None, None
     if count == 3:
         return {"red": 1, "green": 2, "blue": 3}, "positional_rgb"
     if count == 1:
@@ -137,7 +143,8 @@ def _extract_metadata(tif_path: Path) -> dict[str, Any]:
         descriptions = list(src.descriptions or [])
         # 键统一小写：GDAL 标签键大小写不稳定（SENSOR_ID/sensor_id 都见过）。
         tags = {str(k).lower(): str(v) for k, v in (src.tags() or {}).items()}
-        band_roles, band_roles_source = _derive_band_roles(src.count, descriptions)
+        colorinterp = [color.name for color in src.colorinterp]
+        band_roles, band_roles_source = _derive_band_roles(src.count, descriptions, colorinterp, _sensor_from_tags(tags))
         normalized_descriptions = [str(d) if d else None for d in descriptions]
         meta = {
             "crs": str(src.crs) if src.crs else None,
@@ -152,6 +159,8 @@ def _extract_metadata(tif_path: Path) -> dict[str, Any]:
             # 全空的描述列表（rasterio 未写 band description 时返回 None 元组）
             # 归一成 None，让消费方不必区分"没有"和"全是空"。
             "band_descriptions": normalized_descriptions if any(normalized_descriptions) else None,
+            "color_interpretations": colorinterp,
+            "alpha_bands": [i for i, name in enumerate(colorinterp, 1) if name == "alpha" and i not in (band_roles or {}).values()],
             "band_roles": band_roles,
             "band_roles_source": band_roles_source,
             "sensor": _sensor_from_tags(tags),

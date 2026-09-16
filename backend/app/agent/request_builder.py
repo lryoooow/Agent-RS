@@ -14,6 +14,7 @@ from app.agent.embedding.service import get_embedding_service
 from app.agent.geocode import cached_location, format_location_context, prefetch_location, reverse_geocode
 from app.agent.prompting.renderer import render_prompt_context
 from app.agent.prompting.scenarios import latest_user_text
+from app.agent.rag.relevance import mentions_documents, should_retrieve_documents
 from app.agent.rag.formatter import format_retrieved_blocks
 from app.agent.rag.service import retrieve_rag_context
 from app.db.pool import fetch_optional_pool
@@ -80,7 +81,7 @@ async def build_provider_request_context(
                 _resolve_prior_analysis_results(request, user_id=user_id),
                 _resolve_geo_context(request),
                 build_imagery_inventory(user_id),
-                build_document_inventory(user_id),
+                build_document_inventory(user_id) if mentions_documents(query) else asyncio.sleep(0, result=None),
             )
         else:
             # 并行执行：历史消息、先验结果、地理上下文、RAG/记忆检索、影像清单
@@ -90,7 +91,7 @@ async def build_provider_request_context(
                 _resolve_geo_context(request),
                 _resolve_retrieved_context(request, query=query, user_id=user_id),
                 build_imagery_inventory(user_id),
-                build_document_inventory(user_id),
+                build_document_inventory(user_id) if mentions_documents(query) else asyncio.sleep(0, result=None),
             )
     else:
         # retrieved_context 已提供，只并行其他操作
@@ -99,7 +100,7 @@ async def build_provider_request_context(
             _resolve_prior_analysis_results(request, user_id=user_id),
             _resolve_geo_context(request),
             build_imagery_inventory(user_id),
-            build_document_inventory(user_id),
+            build_document_inventory(user_id) if mentions_documents(query) else asyncio.sleep(0, result=None),
         )
     memory_context = retrieved_context.memory_context
     rag_context = retrieved_context.rag_context
@@ -261,7 +262,8 @@ async def _resolve_retrieved_context(
         use_memory=request.use_memory,
         query_chars=len(query),
     )
-    if not settings.storage_active or not query or not (request.use_memory or request.use_rag):
+    use_rag = request.use_rag and should_retrieve_documents(query)
+    if not settings.storage_active or not query or not (request.use_memory or use_rag):
         return RetrievedContext(rag_trace={"use_rag": request.use_rag, "use_memory": request.use_memory})
     pool = await fetch_optional_pool()
     if pool is None:
@@ -290,7 +292,7 @@ async def _resolve_retrieved_context(
         can_parallel = bool(
             request.use_memory
             and user_id
-            and request.use_rag
+            and use_rag
             and settings.database_pool_max_size >= 2
         )
         if can_parallel:
@@ -303,7 +305,7 @@ async def _resolve_retrieved_context(
         else:
             if request.use_memory and user_id:
                 memory_context = await _load_memory_context(pool, user_id=user_id, embedding=embedding)
-            if request.use_rag:
+            if use_rag:
                 rag_context, retrieved_chunks = await _load_rag_context(
                     pool,
                     query=query,
@@ -372,6 +374,8 @@ _BAND_ROLE_LABELS: dict[str, str] = {
 _BAND_ROLES_SOURCE_LABELS: dict[str, str] = {
     "descriptions": "来自波段描述",
     "positional_gf2": "GF-2位置约定",
+    "colorinterp": "GeoTIFF颜色解释",
+    "positional_rgba": "RGB+Alpha位置约定（源颜色标签不完整）",
     "positional_rgb": "自然RGB序",
     "positional_gray": "单波段",
 }
@@ -400,10 +404,34 @@ def _format_imagery_line(imagery_id: str, meta: dict) -> str:
         bands,
         f"{meta.get('width', '?')}x{meta.get('height', '?')}px",
     ]
-    pixel_size = meta.get("pixel_size") or []
+    if meta.get("alpha_bands"):
+        parts.append(f"透明度波段: {meta['alpha_bands']}（不是近红外，不能用于 NDVI）")
+    source_grid, analysis_grid = meta.get("source_grid"), meta.get("analysis_grid")
+    if source_grid and analysis_grid:
+        parts[2] = f"原图网格 {source_grid['width']}x{source_grid['height']}px，像元{source_grid.get('pixel_size')}"
+        parts.append(f"分析网格 {analysis_grid['width']}x{analysis_grid['height']}px，像元{analysis_grid.get('pixel_size')}")
+        if meta.get("resampled"):
+            parts.append("平台主动降采样，覆盖范围不变；质检/推理使用分析网格，面积按结果网格计算，不是元数据冲突")
+    elif meta.get("working_width") and meta.get("working_height"):
+        parts[2] = f"原图网格 {meta.get('width')}x{meta.get('height')}px"
+        parts.append(f"分析网格 {meta['working_width']}x{meta['working_height']}px；实际像元以质检为准，尺寸差异来自平台降采样")
+    pixel_size = [] if source_grid else meta.get("pixel_size") or []
     if pixel_size:
         parts.append(f"像元{pixel_size[0]:g}")
     parts.append(f"CRS: {meta.get('crs') or '未知'}")
+    bounds = meta.get("bounds")
+    if isinstance(bounds, (list, tuple)) and len(bounds) == 4:
+        try:
+            west, south, east, north = map(float, bounds)
+            if -180 <= west < east <= 180 and -90 <= south < north <= 90:
+                parts.append(f"WGS84四至(西,南,东,北): {west:.6f},{south:.6f},{east:.6f},{north:.6f}")
+                parts.append(f"地理范围中心(经度,纬度): {(west+east)/2:.6f},{(south+north)/2:.6f}")
+        except (TypeError, ValueError):
+            pass
+    if meta.get("source_origin") == "map_roi":
+        parts.append("来源为用户框选的地图卫星底图（Esri 及其影像提供方），RGB 显示影像；Alpha 不是近红外。当前像元大小为导出分析网格采样，原始传感器分辨率和拍摄日期未确认，不能当作多光谱科学产品。")
+    if meta.get("source_origin") == "stac_composition":
+        parts.append(f"来源为卫星场景合成导入；传感器标称分辨率 {meta.get('native_resolution_m', '未知')} 米，不代表当前像元大小；此处原图指已导入的合成文件，不是完整原生场景")
     if meta.get("sensor"):
         parts.append(f"传感器: {meta['sensor']}")
     if meta.get("acquired_at"):
@@ -449,7 +477,7 @@ async def build_document_inventory(user_id: str | None) -> str | None:
         return None
     if not documents:
         return None
-    return "用户已上传需要解析的文档:\n" + "\n".join(
+    return "可用文档（仅在当前任务相关时使用，已分块文档无需重复解析）:\n" + "\n".join(
         f"- ID: {document['id']} | 标题: {document.get('title') or '未命名'} "
         f"| 类型: {document.get('doc_type') or '未知'} | 分块: {document.get('chunk_count', 0)}"
         for document in documents

@@ -20,7 +20,7 @@ from app.agent.tool_registry import TOOLS
 
 def test_tool_running_label_known_tools_are_specific() -> None:
     assert tool_running_label("calculate_ndvi") == "正在计算 NDVI"
-    assert tool_running_label("segment_landcover") == "正在进行地物分类"
+    assert tool_running_label("segment_instances") == "正在进行 SAM3 实例分割"
     assert tool_running_label("detect_objects") == "正在进行目标检测"
     assert tool_running_label("web_search") == "正在联网搜索"
     # 关键：绝不能再是统一的"正在执行工具"。

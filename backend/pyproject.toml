@@ -37,12 +37,20 @@ dependencies = [
   # AutoGen 已进入 maintenance mode，不会有上游修复，因此必须在这里钉死上界。
   "mcp>=1.11.0,<2",
   "pystac-client>=0.9.0",
+  "lightrag-hku==1.5.7",
+  # Keep LightRAG's Google helpers compatible with AutoGen's protobuf 5 runtime.
+  "protobuf==5.29.6",
+  "google-api-core==2.25.1",
+  "googleapis-common-protos==1.70.0",
+  "proto-plus==1.26.1",
 ]
 
 [project.optional-dependencies]
 dev = [
   "pytest>=8.2.0",
-  "pytest-asyncio>=0.23.0"
+  "pytest-asyncio>=0.23.0",
+  "scipy>=1.10",
+  "shapely>=2.0"
 ]
 # 对象存储后端。仅 STORAGE_BACKEND=minio 时需要；本地后端（默认）无需安装。
 # 代码内 minio 为懒加载 import（MinioStore 方法内），未装也不影响本地后端启动。

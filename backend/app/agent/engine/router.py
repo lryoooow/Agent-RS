@@ -118,7 +118,7 @@ async def _run_structured_router(turn: TurnInput, client) -> FlowDecision:
         description="选择标准 GraphFlow 或通用 SelectorGroupChat。",
         model_client=client,
         system_message=_ROUTER_PROMPT,
-        model_context=turn.context(),
+        # Routing depends only on this request; full tool prompts/history needlessly duplicate tokens.
         output_content_type=FlowDecision,
     )
     result = await agent.run(task=turn.query, output_task_messages=False)
@@ -147,7 +147,7 @@ async def _run_plain_router(turn: TurnInput, client) -> FlowDecision:
             '{"strategy":"main","flow_name":null,"reason":"请求未完整命中标准流程"}。'
             "不要使用 Markdown 代码块，不要添加其它文字。"
         ),
-        model_context=turn.context(),
+        # Routing depends only on this request; full tool prompts/history needlessly duplicate tokens.
     )
     result = await agent.run(task=turn.query, output_task_messages=False)
     text = next(

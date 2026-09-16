@@ -58,6 +58,19 @@ async def prepare_persistence(
         context.conversation_id = request.conversation_id
         return context
 
+    selection_metadata = {}
+    if request.analysis_roi is not None:
+        selection_metadata['analysis_roi'] = request.analysis_roi.model_dump(exclude_none=True)
+        source = (request.metadata or {}).get('analysis_source')
+        if source in {'current_map','selected_imagery'}:
+            selection_metadata['analysis_source'] = source
+    selected_id = (request.metadata or {}).get("active_imagery_id")
+    if "active_imagery_id" in (request.metadata or {}) and selected_id is None:
+        selection_metadata["active_imagery_id"] = None
+    if isinstance(selected_id, str):
+        from app.agent.imagery_access import user_owns_imagery
+        if await user_owns_imagery(selected_id, user_id):
+            selection_metadata["active_imagery_id"] = selected_id
     try:
         async with pool.acquire() as conn:
             async with conn.transaction():
@@ -79,6 +92,7 @@ async def prepare_persistence(
                     role="user",
                     content=context.user_content,
                     status="complete",
+                    metadata=selection_metadata or None,
                 )
                 if create_streaming_assistant:
                     context.assistant_message_id = await append_message(
@@ -108,6 +122,7 @@ async def save_assistant_response(
     content: str,
     usage: dict,
     finish_reason: str | None,
+    active_imagery_id: str | None = None,
     geospatial_result: dict | None = None,
     tool_result: dict | None = None,
 ) -> str | None:
@@ -126,6 +141,7 @@ async def save_assistant_response(
                 status="complete",
                 metadata=_assistant_metadata(
                     finish_reason=finish_reason,
+                    active_imagery_id=active_imagery_id,
                     geospatial_result=geospatial_result,
                     tool_result=tool_result,
                 ),
@@ -162,6 +178,7 @@ async def save_streamed_assistant(
                 status="complete",
                 metadata=_assistant_metadata(
                     finish_reason=done_payload.get("finish_reason"),
+                    active_imagery_id=done_payload.get("active_imagery_id"),
                     geospatial_result=geospatial_result,
                     tool_result=tool_result,
                 ),
@@ -282,6 +299,7 @@ def _optional_int(value: object) -> int | None:
 def _assistant_metadata(
     *,
     finish_reason: str | None,
+    active_imagery_id: str | None = None,
     geospatial_result: dict | None,
     tool_result: dict | None,
 ) -> dict:
@@ -292,6 +310,8 @@ def _assistant_metadata(
     供 list_recent_analysis_results 跨轮回注与报告生成读取。None 值不写键，保持 metadata 精简。
     """
     metadata: dict = {"finish_reason": finish_reason}
+    if active_imagery_id:
+        metadata["active_imagery_id"] = active_imagery_id
     if geospatial_result:
         metadata["geospatial_result"] = geospatial_result
     if tool_result:

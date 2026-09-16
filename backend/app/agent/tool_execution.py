@@ -34,7 +34,7 @@ from app.agent.types import ToolRunResult
 
 logger = logging.getLogger(__name__)
 
-PrepareFailure = Literal["tool_unavailable", "invalid_arguments", "access_denied"]
+PrepareFailure = Literal["tool_unavailable", "invalid_arguments", "access_denied", "analysis_precondition"]
 
 
 @dataclass(frozen=True)
@@ -111,6 +111,25 @@ async def prepare_tool_call(
                 metadata={"error_code": access_error},
             ),
         )
+
+    if tool_name == "segment_instances":
+        from app.agent.imagery_access import get_user_imagery_metadata
+        from app.agent.imagery_selection import geo_roi_mismatch, grid_resolution_m
+        from app.core.settings import get_settings
+        meta = await get_user_imagery_metadata(arguments.get("imagery_id", ""), user_id)
+        message = None
+        code = "invalid_roi"
+        if meta:
+            if (arguments.get("bbox_crs") or "EPSG:4326").upper() in {"EPSG:4326", "WGS84"} and geo_roi_mismatch(meta.get("bounds"), arguments.get("bbox")):
+                message = "框选区域与此影像不相交；请选择覆盖选区的影像或重新框选。相同参数重复提交不会成功。"
+            resolution = grid_resolution_m(meta)
+            limit = get_settings().sam3_max_resolution_m
+            if not message and resolution is not None and resolution > limit:
+                code = "unsupported_resolution"
+                message = f"当前分析网格约 {resolution:.2f} 米/像元，超过平台对 SAM3 精细目标分割设置的 {limit:g} 米适用上限。这是平台的保守使用规则，并非精度保证；粗分辨率影像不能可靠恢复建筑等目标轮廓。请使用更高分辨率影像；本次未运行推理。"
+        if message:
+            return PrepareRejected(failure="analysis_precondition", error_detail=code,
+                result=ToolRunResult(tool_context=message, error=code, metadata={"error_code": code}))
 
     return PreparedTool(tool=tool, arguments=validated, user_id=user_id)
 

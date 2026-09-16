@@ -2,17 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import numpy as np
 import rasterio
 from PIL import Image
 from rasterio.enums import Resampling
-
-
-MODE_BANDS = {
-    "true_color": [3, 2, 1],
-    "false_color": [4, 3, 2],
-}
 
 
 def render(
@@ -24,14 +19,11 @@ def render(
     max_dimension: int = 2048,
 ) -> dict[str, Any]:
     mode = mode.lower()
-    if mode == "custom":
-        if not bands or len(bands) != 3:
-            raise ValueError("custom mode requires exactly 3 bands")
-        bands_used = [int(item) for item in bands]
-    elif mode in MODE_BANDS:
-        bands_used = MODE_BANDS[mode]
-    else:
+    if mode not in {"true_color", "false_color", "custom"}:
         raise ValueError(f"Unsupported composite mode: {mode}")
+    if not bands or len(bands) != 3:
+        raise ValueError("Every composite requires three resolved bands from imagery metadata")
+    bands_used = [int(item) for item in bands]
 
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -44,11 +36,12 @@ def render(
             bands_used,
             out_shape=(3, height, width),
             resampling=Resampling.bilinear,
-        ).astype(np.float32)
+        )
+        alpha = src.dataset_mask(out_shape=(height, width), resampling=Resampling.nearest)
 
-    rgb = np.dstack([_stretch_to_byte(channel) for channel in data])
-    filename = f"composite_{mode}.png"
-    Image.fromarray(rgb, mode="RGB").convert("RGBA").save(out / filename, optimize=True)
+    rgb = np.moveaxis(data, 0, -1) if data.dtype == np.uint8 else np.dstack([_stretch_to_byte(channel) for channel in data])
+    filename = f"composite_{mode}_{uuid4().hex[:16]}.png"
+    Image.fromarray(np.dstack([rgb, alpha])).save(out / filename, optimize=True)
     return {
         "mode": mode,
         "bands_used": bands_used,

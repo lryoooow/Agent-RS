@@ -61,7 +61,7 @@ def test_normalization_rules_apply():
             assert "$ref" not in node
             assert "$defs" not in node
 
-    segment = TOOLS["segment_landcover"].definition["function"]["parameters"]["properties"]
+    segment = TOOLS["segment_instances"].definition["function"]["parameters"]["properties"]
     for box in ("bbox", "pixel_bbox"):
         schema = segment[box]
         assert schema["type"] == "array", box

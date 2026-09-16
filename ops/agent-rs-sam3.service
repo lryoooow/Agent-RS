@@ -1,0 +1,25 @@
+[Unit]
+Description=Agent-RS SAM3 instance segmentation on Hygon DCU
+After=network.target
+Before=agent-rs.service
+
+[Service]
+Type=simple
+WorkingDirectory=/home/LRY/sam3-lab-20260916
+Environment="LD_LIBRARY_PATH=/opt/dtk/lib:/opt/dtk/lib64:/opt/dtk/hip/lib:/opt/dtk/llvm/lib:/usr/local/hyhal/lib"
+Environment="LD_PRELOAD=/usr/lib64/libffi.so.7"
+Environment="PYTHONPATH=/home/LRY/sam3-lab-20260916:/home/LRY/sam3-lab-20260916/source:/home/LRY/sam3-lab-20260916/phase2"
+Environment="HF_HUB_OFFLINE=1"
+Environment="TRANSFORMERS_OFFLINE=1"
+Environment="PYTHONFAULTHANDLER=1"
+Environment="SAM3_LAB_ROOT=/home/LRY/sam3-lab-20260916"
+Environment="SAM3_ALLOWED_ROOT=/home/LRY/Agent-RS/storage/imagery"
+ExecStart=/home/LRY/sam3-lab-20260916/venv/bin/python -m uvicorn ops.sam3_service:app --app-dir /home/LRY/Agent-RS --host 127.0.0.1 --port 18082 --no-access-log
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=180
+TimeoutStopSec=45
+UMask=0002
+
+[Install]
+WantedBy=multi-user.target

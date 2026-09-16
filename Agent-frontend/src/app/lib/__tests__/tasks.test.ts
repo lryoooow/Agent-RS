@@ -15,16 +15,16 @@ describe("tasksFromTurns", () => {
   it("extracts a completed tool task from trace terminal event with specific label + elapsed", () => {
     const turns: ChatTurn[] = [
       assistantTurn("t1", [
-        { stage: "child_agent_running", label: "正在进行地物分类", metadata: { tool_name: "segment_landcover", child_run_id: "c1" }, elapsed_ms: 100 },
-        { stage: "tool_execution_completed", label: "工具执行完成", metadata: { tool_name: "segment_landcover", child_run_id: "c1", imagery_id: "abcdef123456" }, elapsed_ms: 2200 },
+        { stage: "child_agent_running", label: "正在进行实例分割", metadata: { tool_name: "segment_instances", child_run_id: "c1" }, elapsed_ms: 100 },
+        { stage: "tool_execution_completed", label: "工具执行完成", metadata: { tool_name: "segment_instances", child_run_id: "c1", imagery_id: "abcdef123456" }, elapsed_ms: 2200 },
       ]),
     ];
     const tasks = tasksFromTurns(turns, null);
     expect(tasks).toHaveLength(1);
     expect(tasks[0].status).toBe("done");
-    expect(tasks[0].toolName).toBe("segment_landcover");
+    expect(tasks[0].toolName).toBe("segment_instances");
     // 展示用精确中文任务名，而非终态事件的"工具执行完成"
-    expect(tasks[0].label).toBe("地物分类");
+    expect(tasks[0].label).toBe("SAM3 实例分割");
     expect(tasks[0].elapsedMs).toBe(2200);
     expect(tasks[0].imageryId).toBe("abcdef123456");
   });

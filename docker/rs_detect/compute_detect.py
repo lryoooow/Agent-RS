@@ -1,4 +1,4 @@
-"""PP-YOLOE-R rotated-box detection over a raster, rendered as a transparent PNG overlay."""
+"""YOLO11s-OBB tiled detection over a raster, rendered as a transparent PNG overlay."""
 
 from __future__ import annotations
 
@@ -7,11 +7,13 @@ import os
 import sys
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
+from contextlib import redirect_stdout
 
 import numpy as np
 import rasterio
 
-# DOTA 1.0 — 15 categories (order matches the trained label_list).
+# Public DOTA 1.0 class order; the inference adapter maps checkpoint labels by name.
 DOTA_CLASSES = [
     "plane", "baseball-diamond", "bridge", "ground-track-field", "small-vehicle",
     "large-vehicle", "ship", "tennis-court", "basketball-court", "storage-tank",
@@ -47,9 +49,37 @@ def compute(
     out.mkdir(parents=True, exist_ok=True)
 
     rgb, (height, width) = _read_rgb(inp, red_band, green_band, blue_band)
-    detections = _run_inference(rgb, score_threshold)
+    from tiled_obb import infer
+    # stdout is reserved for JSON-RPC; model logs must go to stderr.
+    with redirect_stdout(sys.stderr):
+        detections, runtime = infer(rgb, score_threshold, DOTA_CLASSES)
+    with rasterio.open(inp) as src:
+        valid = src.dataset_mask() > 0
+        def valid_center(det):
+            points = np.asarray(det["polygon"]).reshape(4, 2)
+            x, y = points.mean(axis=0)
+            return 0 <= x < width and 0 <= y < height and valid[int(y), int(x)]
+        detections = [det for det in detections if valid_center(det)]
+        grid = {"width": width, "height": height, "pixel_size": list(src.res),
+                "crs": str(src.crs) if src.crs else None, "transform": list(src.transform)[:6]}
+        features = []
+        if src.crs:
+            from rasterio.warp import transform
+            for det in detections:
+                pixels = np.asarray(det["polygon"]).reshape(4, 2)
+                xy = [src.transform * tuple(point) for point in pixels]
+                lon, lat = transform(src.crs, "EPSG:4326", [p[0] for p in xy], [p[1] for p in xy])
+                ring = [list(pair) for pair in zip(lon, lat)]
+                ring.append(ring[0])
+                features.append({"type": "Feature", "geometry": {"type": "Polygon", "coordinates": [ring]},
+                                 "properties": {k: v for k, v in det.items() if k != "polygon"}})
+    suffix = uuid4().hex[:16]
+    output_json = f"detection_{suffix}.json"
+    output_geojson = f"detection_{suffix}.geojson" if grid["crs"] else None
+    if output_geojson:
+        (out / output_geojson).write_text(json.dumps({"type": "FeatureCollection", "features": features}), encoding="utf-8")
 
-    output_png = "detection_overlay.png"
+    output_png = f"detection_{suffix}.png"
     _render_overlay(detections, width, height, out / output_png)
 
     counts: dict[str, int] = {}
@@ -67,11 +97,18 @@ def compute(
     ]
     result = {
         "output_png": output_png,
+        "output_json": output_json,
+        "output_geojson": output_geojson,
+        "model_name": "YOLO11s-OBB / DOTA 15 类",
+        "model_sha256": "43fa63102922e0701501241b307420d24fc55e080816888b18bf8c6f96b1a45a",
+        "bands_used": [red_band, green_band, blue_band],
+        "analysis_grid": grid, "width": width, "height": height,
+        **runtime,
         "detection_count": len(detections),
         "score_threshold": score_threshold,
         "classes": classes,
     }
-    (out / "detection_stats.json").write_text(json.dumps(result), encoding="utf-8")
+    (out / output_json).write_text(json.dumps({**result, "detections": detections}), encoding="utf-8")
     return result
 
 
@@ -80,61 +117,26 @@ def _read_rgb(path: Path, red: int, green: int, blue: int) -> tuple[np.ndarray, 
         for name, band in ("red", red), ("green", green), ("blue", blue):
             if band < 1 or band > src.count:
                 raise ValueError(f"{name}_band={band} 超出影像波段范围（共 {src.count} 个波段）")
-        bands = [src.read(b).astype(np.float32) for b in (red, green, blue)]
+        bands = [src.read(b) for b in (red, green, blue)]
+        valid_mask = src.dataset_mask() > 0
+    if all(band.dtype == np.uint8 for band in bands):
+        rgb = np.stack(bands, axis=-1)
+        rgb[~valid_mask] = 0
+        return rgb, rgb.shape[:2]
     stacked = np.stack(bands, axis=-1)
     # Per-channel 2–98 percentile stretch to 8-bit (handles 16-bit imagery).
     out = np.zeros_like(stacked, dtype=np.uint8)
     for c in range(3):
         chan = stacked[..., c]
-        finite = chan[np.isfinite(chan)]
+        finite = chan[np.isfinite(chan) & valid_mask]
         if finite.size == 0:
             continue
         lo, hi = np.percentile(finite, (2, 98))
         if hi <= lo:
             hi = lo + 1.0
         out[..., c] = np.clip((chan - lo) / (hi - lo) * 255.0, 0, 255).astype(np.uint8)
+    out[~valid_mask] = 0
     return out, (out.shape[0], out.shape[1])
-
-
-def _run_inference(rgb: np.ndarray, score_threshold: float) -> list[dict[str, Any]]:
-    """Run PP-YOLOE-R via PaddleDetection's deploy predictor on an in-memory RGB array."""
-    import cv2  # noqa: F401  (paddle deploy pipeline imports cv2 internally)
-    import paddle
-
-    paddledet_dir = os.environ.get("PADDLEDET_DIR", "/app/PaddleDetection")
-    model_dir = os.environ.get("RS_DETECT_MODEL_DIR")
-    if not model_dir or not Path(model_dir).exists():
-        raise RuntimeError(f"检测模型目录不存在: {model_dir}")
-
-    # GPU when available, else CPU (the GPU image ships CPU kernels too).
-    device = "GPU" if paddle.device.is_compiled_with_cuda() and paddle.device.cuda.device_count() > 0 else "CPU"
-    paddle.set_device("gpu" if device == "GPU" else "cpu")
-
-    sys.path.insert(0, str(Path(paddledet_dir) / "deploy" / "python"))
-    from infer import Detector  # type: ignore
-
-    detector = Detector(model_dir, device=device, threshold=score_threshold)
-    # Detector expects BGR uint8 (cv2 convention).
-    bgr = rgb[..., ::-1].copy()
-    results = detector.predict_image([bgr], visual=False)
-    boxes = np.asarray(results.get("boxes", []))
-    detections: list[dict[str, Any]] = []
-    for row in boxes:
-        # Rotated-box output rows: [class_id, score, x1,y1,x2,y2,x3,y3,x4,y4]
-        if len(row) < 10:
-            continue
-        class_id, score = int(row[0]), float(row[1])
-        if score < score_threshold or class_id < 0 or class_id >= len(DOTA_CLASSES):
-            continue
-        detections.append(
-            {
-                "class_id": class_id,
-                "class_name": DOTA_CLASSES[class_id],
-                "score": score,
-                "polygon": [float(v) for v in row[2:10]],
-            }
-        )
-    return detections
 
 
 def _render_overlay(detections: list[dict[str, Any]], width: int, height: int, out_path: Path) -> None:

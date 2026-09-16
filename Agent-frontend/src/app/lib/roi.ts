@@ -2,8 +2,8 @@
 // 两种来源：
 //   - geo：带地理坐标的影像，地图上框选 → 经纬度 bbox [west, south, east, north]（EPSG:4326）。
 //   - pixel：无地理坐标的影像，查看器内框选 → 影像内相对位置 [x0, y0, x1, y1]，取值 0..1，左上角为原点。
-// segment_landcover 已支持可信 ROI：请求体将框选值作为 analysis_roi 发送，后端框架在
-// 工具执行前覆盖模型参数并先裁影像，所以地物分类只计算选区。其它未声明 ROI 的工具仍全图。
+// segment_instances 已支持可信 ROI：请求体将框选值作为 analysis_roi 发送，后端框架在
+// 工具执行前覆盖模型参数并先裁影像，所以 SAM3 只计算选区。其它未声明 ROI 的工具仍全图。
 
 export type GeoRoi = {
   kind: "geo";
@@ -18,6 +18,13 @@ export type PixelRoi = {
 };
 
 export type Roi = GeoRoi | PixelRoi;
+
+/** Unknown georeferencing is distinct from a proven non-intersection. */
+export function roiIntersectsBounds(roi: Roi | null, bounds?: number[] | null): boolean | null {
+  if (!roi || roi.kind !== "geo" || !bounds || bounds.length !== 4) return null;
+  const [w,s,e,n] = roi.bbox;
+  return w < bounds[2] && e > bounds[0] && s < bounds[3] && n > bounds[1];
+}
 
 function clamp01(value: number): number {
   if (!Number.isFinite(value)) return 0;
@@ -88,13 +95,13 @@ export function roiContextLine(roi: Roi): string {
       `右上[${fmtCoord(east)}, ${fmtCoord(north)}]、` +
       `左下[${fmtCoord(west)}, ${fmtCoord(south)}]、` +
       `右下[${fmtCoord(east)}, ${fmtCoord(south)}]。` +
-      `地物分类工具 segment_landcover 将仅计算该选区；其它未声明 ROI 参数的遥感工具仍按整幅影像计算。`
+      `SAM3 分割工具 segment_instances 将仅计算该选区；其它未声明 ROI 参数的遥感工具仍按整幅影像计算。`
     );
   }
   const [x0, y0, x1, y1] = roi.rel;
   return (
     `用户在影像上框选了分析聚焦区：以影像左上角为原点，` +
     `横向 ${fmtPct(x0)}–${fmtPct(x1)}、纵向 ${fmtPct(y0)}–${fmtPct(y1)} 的矩形区域（该影像无地理坐标，按影像内相对位置描述）。` +
-    `地物分类工具 segment_landcover 将仅计算该选区；其它未声明 ROI 参数的遥感工具仍按整幅影像计算。`
+    `SAM3 分割工具 segment_instances 将仅计算该选区；其它未声明 ROI 参数的遥感工具仍按整幅影像计算。`
   );
 }

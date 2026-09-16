@@ -30,10 +30,12 @@ class FakeClient:
 @pytest.fixture(autouse=True)
 def reset_geocode_state(monkeypatch: pytest.MonkeyPatch):
     geocode._GEOCODE_CACHE.clear()
+    geocode._FORWARD_CACHE.clear()
     geocode._PREFETCH_TASKS.clear()
     monkeypatch.setattr(geocode, "_client", None)
     yield
     geocode._GEOCODE_CACHE.clear()
+    geocode._FORWARD_CACHE.clear()
     geocode._PREFETCH_TASKS.clear()
 
 
@@ -188,6 +190,55 @@ async def test_forward_geocode_returns_center_and_bbox(monkeypatch: pytest.Monke
     assert res["display_name"]
 
     assert await geocode.forward_geocode("") is None  # 空查询安全回落
+
+
+@pytest.mark.asyncio
+async def test_forward_geocode_prefers_photon_and_parses_chinese_city(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class PhotonResp:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "type": "FeatureCollection",
+                "features": [{
+                    "type": "Feature",
+                    "properties": {
+                        "type": "city",
+                        "name": "杭州市",
+                        "state": "浙江省",
+                        "country": "中国",
+                        "extent": [118.3397, 30.5649, 120.7255, 29.1888],
+                    },
+                    "geometry": {"type": "Point", "coordinates": [120.2052342, 30.2489634]},
+                }],
+            }
+
+    class PhotonClient:
+        calls: list[str] = []
+
+        async def get(self, url: str, **_kwargs) -> PhotonResp:
+            self.calls.append(url)
+            return PhotonResp()
+
+    client = PhotonClient()
+    monkeypatch.setattr(geocode, "_client", client)
+
+    result = await geocode.forward_geocode("杭州市")
+
+    assert result is not None
+    assert result["center"] == [120.2052342, 30.2489634]
+    assert result["zoom"] == 11
+    assert result["provider"] == "photon"
+    assert "bbox" not in result
+    assert client.calls == [f"{geocode.PHOTON_BASE_URL}/api/"]
+
+
+def test_photon_query_variants_normalize_chinese_admin_names() -> None:
+    assert geocode._photon_query_variants("浙江省杭州市")[0] == "杭州市"
+    assert "南山区 深圳市" in geocode._photon_query_variants("深圳南山")
 
 
 def _fake_nominatim(monkeypatch: pytest.MonkeyPatch, item: dict) -> None:

@@ -28,7 +28,6 @@ EXPECTED_MCP_TOOLS = {
         "clip_reproject_raster",
     },
     "rs_detect": {"detect_objects"},
-    "rs_segment": {"segment_landcover"},
     "rs_doc": {"ocr_recognize"},
 }
 
@@ -41,7 +40,6 @@ VALID_RUNNER_ARGS = {
     "extract_water_mask": {"imagery_id": "94e758f38ede"},
     "clip_reproject_raster": {"imagery_id": "94e758f38ede", "dst_crs": "EPSG:4326"},
     "detect_objects": {"imagery_id": "94e758f38ede"},
-    "segment_landcover": {"imagery_id": "94e758f38ede"},
     "ocr_recognize": {"imagery_id": "94e758f38ede"},
 }
 
@@ -116,11 +114,6 @@ STUB_MCP_RESULTS = {
         "score_threshold": 0.3,
         "classes": [],
     },
-    "segment_landcover": {
-        "output_png": "segmentation_overlay.png",
-        "total_pixels": 4,
-        "classes": [],
-    },
     "ocr_recognize": {
         "full_text": "测试文本",
         "blocks": [],
@@ -164,6 +157,8 @@ def _write_contract_tif(path: Path) -> None:
         transform=from_origin(100.0, 20.0, 0.01, 0.01),
     ) as dst:
         dst.write(data)
+        for index, label in enumerate(("Blue", "Green", "Red", "NIR", "SWIR1", "SWIR2"), 1):
+            dst.set_band_description(index, label)
 
 
 def test_docker_mcp_servers_expose_exact_tool_sets() -> None:
@@ -222,7 +217,6 @@ async def test_actual_backend_mcp_payload_fields_are_accepted_by_container_schem
     monkeypatch.setenv("IMAGERY_UPLOAD_DIR", str(tmp_path))
     monkeypatch.setenv("RS_TOOLS_MCP_USE_DOCKER", "true")
     monkeypatch.setenv("RS_DETECT_MCP_USE_DOCKER", "true")
-    monkeypatch.setenv("RS_SEGMENT_MCP_USE_DOCKER", "true")
     monkeypatch.setenv("RS_DOC_MCP_USE_DOCKER", "true")
     get_settings.cache_clear()
     monkeypatch.setattr("app.mcp.rs_tools_client.RSToolsMCPClient.call_tool", fake_call_tool)

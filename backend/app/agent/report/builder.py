@@ -49,6 +49,7 @@ async def build_conversation_report(
     conversation_id: str | None,
     user_id: str | None,
     imagery_id: str | None = None,
+    current_analyses: list[dict[str, Any]] | None = None,
 ) -> ReportArtifact:
     """读本对话真实分析结果，生成 .docx 报告，返回下载信息。
 
@@ -75,7 +76,11 @@ async def build_conversation_report(
             limit=REPORT_ANALYSIS_LIMIT,
         )
 
-    selected_id, selected_analyses = _select_imagery_analyses(analyses, imagery_id)
+    # Only the tool runner supplies current_analyses; HTTP callers cannot submit
+    # analysis data. Validate conversation ownership before using either source.
+    selected_id, selected_analyses = _select_imagery_analyses(
+        [*analyses, *(current_analyses or [])], imagery_id
+    )
     if not selected_analyses:
         # 没有任何真实分析结果可写——绝不编造空报告。
         raise ReportError(
@@ -122,6 +127,18 @@ def _select_imagery_analyses(
     指定 imagery_id → 只取该影像；否则取**最近一次被分析的影像**（analyses 已按时间正序，
     取最后一条出现的 imagery_id）。返回 (影像ID, 该影像的分析结果列表)。
     """
+    # Preview/report/composite cards are not numeric analyses. Split payloads so
+    # an entry containing results from two images cannot attribute one to another.
+    reportable = []
+    for entry in analyses:
+        for key, supported in (
+            ("geospatial_result", {"instance_segmentation", "segmentation", "detection", "ndvi", "spectral_index"}),
+            ("tool_result", {"raster_inspect"}),
+        ):
+            payload = entry.get(key)
+            if isinstance(payload, dict) and payload.get("type") in supported and payload.get("imagery_id"):
+                reportable.append({key: payload})
+
     def _imagery_of(entry: dict[str, Any]) -> str | None:
         for key in ("geospatial_result", "tool_result"):
             payload = entry.get(key)
@@ -133,13 +150,13 @@ def _select_imagery_analyses(
         target = imagery_id
     else:
         target = None
-        for entry in analyses:  # 正序遍历，最后命中的即最近一张
+        for entry in reportable:  # 正序遍历，最后命中的即最近一张
             found = _imagery_of(entry)
             if found:
                 target = found
     if not target:
         return None, []
-    selected = [entry for entry in analyses if _imagery_of(entry) == target]
+    selected = [entry for entry in reportable if _imagery_of(entry) == target]
     return target, selected
 
 
@@ -171,7 +188,7 @@ def _render_report_docx(
     info_rows = [
         ("原始文件名", meta.get("filename")),
         ("坐标系 (CRS)", meta.get("crs")),
-        ("尺寸", f"{meta.get('width')}×{meta.get('height')} px" if meta.get("width") and meta.get("height") else None),
+        ("原始影像尺寸", f"{meta.get('width')}×{meta.get('height')} px" if meta.get("width") and meta.get("height") else None),
         ("波段数", meta.get("band_count")),
         ("数据类型", meta.get("dtype")),
     ]
@@ -197,9 +214,9 @@ def _render_report_docx(
     # 数据来源与边界声明
     document.add_heading("三、数据来源与说明", level=1)
     document.add_paragraph(
-        "本报告所有数值均来自本对话中对上述影像实际执行的工具计算结果（地物分类、"
-        "目标检测、光谱指数等），未做任何人工编造或估算。各模型结论存在适用边界："
-        "地物分类基于 LandCover.ai 四类体系，目标检测基于 DOTA 15 类，"
+        "本报告所有数值均来自本对话中对上述影像实际执行的工具计算结果（SAM3 分割、"
+        "目标检测、光谱指数等），未做任何人工编造。各模型结论存在适用边界："
+        "SAM3 开放词汇结果属于模型识别，实例数量、轮廓与面积需结合原始影像复核；目标检测基于 DOTA 15 类，"
         "指数解读阈值随传感器、地区、季节、大气校正变化，引用时请结合实际场景判断。"
     )
     document.add_paragraph(f"报告生成时间：{ts_text}")
@@ -216,6 +233,9 @@ def _render_analysis_entry(document, entry: dict[str, Any], current_no: int) -> 
         if geo_type == "segmentation":
             _render_segmentation(document, geo, current_no + 1)
             return 1
+        if geo_type == "instance_segmentation":
+            _render_instance_segmentation(document, geo, current_no + 1)
+            return 1
         if geo_type == "detection":
             _render_detection(document, geo, current_no + 1)
             return 1
@@ -229,21 +249,50 @@ def _render_analysis_entry(document, entry: dict[str, Any], current_no: int) -> 
 
 
 def _render_segmentation(document, geo: dict[str, Any], no: int) -> None:
-    document.add_heading(f"{no}. 地物分类（LandCover.ai 四类）", level=2)
+    task = "建筑提取及四类统计" if geo.get("target_class") == "building" else "地物分类"
+    document.add_heading(f"{no}. {task}（历史结果，旧格式）", level=2)
     classes = [c for c in (geo.get("classes") or []) if isinstance(c, dict)]
     if not classes:
         document.add_paragraph("未识别到地物类别。")
         return
-    table = document.add_table(rows=1, cols=3)
+    if geo.get("total_pixels") is not None:
+        document.add_paragraph(f"分析有效像素数：{geo['total_pixels']}。统计基于分析网格，可能与原始影像尺寸不同。")
+    has_area = any(isinstance(c.get("area_m2"), (int, float)) for c in classes)
+    table = document.add_table(rows=1, cols=4 if has_area else 3)
     table.style = "Light Grid Accent 1"
     header = table.rows[0].cells
     header[0].text, header[1].text, header[2].text = "类别", "像素数", "占比"
+    if has_area:
+        header[3].text = "面积（平方米）"
     for item in classes:
         cells = table.add_row().cells
         cells[0].text = str(item.get("label") or item.get("name") or "未知")
         cells[1].text = str(item.get("pixel_count", "—"))
         pct = item.get("percentage")
         cells[2].text = f"{pct:.2f}%" if isinstance(pct, (int, float)) else "—"
+        if has_area:
+            area = item.get("area_m2")
+            cells[3].text = f"{area:.2f}" if isinstance(area, (int, float)) else "—"
+
+
+def _render_instance_segmentation(document, geo: dict[str, Any], no: int) -> None:
+    document.add_heading(f"{no}. SAM3 开放词汇实例分割", level=2)
+    document.add_paragraph(f"模型：{geo.get('model_name') or 'SAM3'}；实例总数：{int(geo.get('instance_count') or 0)}。")
+    if isinstance(geo.get("union_pixels"), int):
+        document.add_paragraph(f"合并掩膜像素数：{geo['union_pixels']}。")
+    if isinstance(geo.get("area_m2"), (int, float)):
+        document.add_paragraph(f"模型掩膜估算面积：{geo['area_m2']:.2f} 平方米。")
+    counts = geo.get("counts") or {}
+    if isinstance(counts, dict) and counts:
+        table = document.add_table(rows=1, cols=2)
+        table.style = "Light Grid Accent 1"
+        table.rows[0].cells[0].text = "目标概念"
+        table.rows[0].cells[1].text = "实例数"
+        for concept, count in counts.items():
+            cells = table.add_row().cells
+            cells[0].text = str(concept)
+            cells[1].text = str(count)
+    document.add_paragraph("上述数量、轮廓与面积均为 SAM3 模型识别结果，需结合原始影像复核。")
 
 
 def _render_detection(document, geo: dict[str, Any], no: int) -> None:
@@ -281,7 +330,7 @@ def _render_raster_inspect(document, tool: dict[str, Any], no: int) -> None:
     document.add_heading(f"{no}. 影像质检", level=2)
     bits = []
     if tool.get("width") and tool.get("height"):
-        bits.append(f"尺寸 {tool['width']}×{tool['height']} px")
+        bits.append(f"分析网格尺寸 {tool['width']}×{tool['height']} px")
     if tool.get("band_count"):
         bits.append(f"{tool['band_count']} 波段")
     if tool.get("crs"):

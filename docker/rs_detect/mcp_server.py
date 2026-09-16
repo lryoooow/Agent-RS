@@ -15,7 +15,7 @@ SERVER_VERSION = "0.1.0"
 TOOL_DEFINITIONS = [
     {
         "name": "detect_objects",
-        "description": "PP-YOLOE-R 遥感目标检测（DOTA 15 类旋转框）。",
+        "description": "YOLO11s-OBB 遥感目标检测（DOTA 15 类旋转框）。",
         "inputSchema": {
             "type": "object",
             "properties": {

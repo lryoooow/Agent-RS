@@ -33,6 +33,8 @@ async def lifespan(_: FastAPI):
     await _ensure_object_storage_ready()
     await recover_document_jobs()
     start_tool_job_worker()
+    from app.knowledge.service import start_worker as start_knowledge_worker
+    start_knowledge_worker()
     settings = get_settings()
     _warn_missing_ai_credentials(settings)
     embedding_service = get_embedding_service()
@@ -41,6 +43,8 @@ async def lifespan(_: FastAPI):
     try:
         yield
     finally:
+        from app.knowledge.service import stop_worker as stop_knowledge_worker
+        await stop_knowledge_worker()
         await stop_tool_job_worker()
         await shutdown_tasks()
         await drain_persistence_tasks()  # O1: 排空 embedding/memory 后台任务（须在关池前）
@@ -156,7 +160,7 @@ def create_app() -> FastAPI:
         try:
             response = await call_next(request)
             response.headers.setdefault("X-Content-Type-Options", "nosniff")
-            response.headers.setdefault("X-Frame-Options", "DENY")
+            response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
             response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
             response.headers.setdefault("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
             response.headers.setdefault(
@@ -169,7 +173,7 @@ def create_app() -> FastAPI:
                 "worker-src 'self' blob:; "
                 "object-src 'none'; "
                 "base-uri 'self'; "
-                "frame-ancestors 'none'",
+                "frame-ancestors 'self'",
             )
             if settings.auth_cookie_secure:
                 response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")

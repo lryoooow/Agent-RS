@@ -60,6 +60,8 @@ class RemoteSensingTool(BaseTool[BaseModel, str]):
 
     async def run(self, args: BaseModel, cancellation_token: CancellationToken) -> str:
         state = current_turn_state()
+        if state is not None and self._tool.name in state.precondition_blocks:
+            return f"未执行 {self._tool.name}：{state.precondition_blocks[self._tool.name]}。前提未改变，停止重复提交。"
 
         # 配额（GPU 重工具 / 联网检索）：**执行前**占名额（并行工具调用下"跑完再记账"
         # 拦不住，详见 turn_context 模块文档）。超了就如实告诉模型让它自己收敛，
@@ -69,7 +71,7 @@ class RemoteSensingTool(BaseTool[BaseModel, str]):
             logger.info("工具 %s 被回合配额拦下（上限 %s 次）", self._tool.name, limit)
             return (
                 f"未执行 {self._tool.name}：本轮该工具调用已达上限（{limit} 次）。"
-                "请先基于已有结果回答，并告知用户这一步需要下一轮单独执行。"
+                "停止重复提交并基于已有结果回答。若执行因服务故障失败，应说明需修复服务，不要诱导用户换一轮盲目重试。"
                 "不要假装已经执行过，也不要编造结果。"
             )
 
@@ -88,6 +90,10 @@ class RemoteSensingTool(BaseTool[BaseModel, str]):
             arguments.get("document_id") or "-",
         )
 
+        if arguments.get("imagery_id") == "map_roi_pending":
+            if state is not None:
+                state.release(self._tool.name)
+            return "请先调用 prepare_map_roi 获取当前地图选区影像，成功后继续本次分析。无需用户重新上传、搜索或确认。"
         prepared = await prepare_tool_call(self._tool.name, arguments, user_id=user_id)
         if isinstance(prepared, PrepareRejected):
             # 拒绝一律留痕：鉴权失败尤其要能在日志里查到。
@@ -101,6 +107,8 @@ class RemoteSensingTool(BaseTool[BaseModel, str]):
             # 没真跑就把名额还回去，否则一次参数写错就白白吃掉本轮的 GPU 配额。
             if state is not None:
                 state.release(self._tool.name)
+                if prepared.failure == "analysis_precondition" and "imagery_id" in state.trusted_tool_arguments.get(self._tool.name, {}):
+                    state.precondition_blocks[self._tool.name] = prepared.result.tool_context
             self._record(state, arguments, prepared.result)
             return self._rejection_text(prepared)
 
@@ -130,6 +138,7 @@ class RemoteSensingTool(BaseTool[BaseModel, str]):
         # 把拒绝原因翻译成模型能据以调整行为的话术。
         # 关键：明确禁止编造结果——被拒之后模型最常见的失败模式就是「假装做过了」。
         hints = {
+            "analysis_precondition": f"未执行 {self._tool.name}：{rejected.result.tool_context} 不要编造结果，也不要要求用户无条件重试。",
             "tool_unavailable": (
                 f"未执行 {self._tool.name}：该工具当前不可用。请如实告知用户，不要编造结果。"
             ),

@@ -32,6 +32,7 @@ from app.agent.config import ResolvedAIConfig
 from app.agent.search.credentials import tavily_key_scope
 from app.agent.types import AgentEvent, AgentTrace
 from app.schemas.chat import ChatRequest
+from app.agent.roi_buildings import is_direct_building_request, direct_building_events
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +45,7 @@ class AutogenTurnOutput:
     trace: AgentTrace
     retrieved_chunks: int = 0
     rag_trace: dict | None = None
+    active_imagery_id: str | None = None
     geospatial_result: Any = None
     tool_result: Any = None
     used_tool: bool = False
@@ -64,6 +66,11 @@ async def complete_turn(
     config: ResolvedAIConfig | None = None,
 ) -> AutogenTurnOutput:
     """非流式：跑完一个回合。"""
+    if is_direct_building_request(request):
+        async for kind, payload in direct_building_events(request, user_id=user_id):
+            if kind == 'final':
+                return payload
+        raise RuntimeError('ROI building execution did not produce a result')
     trace = AgentTrace(enabled=True)
     state = BridgeState()
     emit_context_assembled(trace=trace, state=state)
@@ -113,6 +120,12 @@ async def stream_turn_events(
     这里显式 `aclose()` 而不是靠 asyncio 的异步生成器终结器，是为了让收尾**确定性地**
     立刻发生，而不是等下一次 GC。
     """
+    if is_direct_building_request(request):
+        from contextlib import aclosing
+        async with aclosing(direct_building_events(request, user_id=user_id)) as events:
+            async for item in events:
+                yield item
+        return
     trace = AgentTrace(enabled=True)
     state = BridgeState()
 
@@ -229,6 +242,7 @@ def _to_output(
 ) -> AutogenTurnOutput:
     return AutogenTurnOutput(
         content=result.content,
+        active_imagery_id=result.turn_state.latest_imported_imagery_id() if result.turn_state else None,
         trace=trace,
         retrieved_chunks=result.retrieved_chunks,
         rag_trace=result.rag_trace,

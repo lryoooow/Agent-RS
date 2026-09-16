@@ -23,7 +23,7 @@ export function useImageryUpload(endpoint: string) {
   const [lastUpload, setLastUpload] = useState<ImageryMeta | null>(null);
 
   const upload = useCallback(
-    async (file: File): Promise<ImageryMeta | null> => {
+    async (file: File): Promise<ImageryMeta> => {
       setUploading(true);
       setProgress(0);
       setError(null);
@@ -53,7 +53,7 @@ export function useImageryUpload(endpoint: string) {
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         setError(msg);
-        return null;
+        throw new Error(msg);
       } finally {
         setUploading(false);
       }

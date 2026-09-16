@@ -66,6 +66,8 @@ backend/backend/storage/
 *.ckpt
 *.onnx
 *.safetensors
+Agent-frontend/public/open-source/*.tar.gz
+Agent-frontend/tests/artifacts/
 CLAUDE.md
 AGENTS.md
 

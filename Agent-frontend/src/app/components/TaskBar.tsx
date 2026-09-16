@@ -1,7 +1,6 @@
-import { LayoutDashboard, Boxes, ListTodo, Database, FileBarChart, Satellite } from "lucide-react";
+import { LayoutDashboard, Boxes, ListTodo, Database, FileBarChart, Satellite, ChevronDown } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { motion, useReducedMotion } from "motion/react";
-import { slideDown } from "../lib/motion";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "./ui/dropdown-menu";
 
 interface TaskItem {
   id: string;
@@ -9,8 +8,7 @@ interface TaskItem {
   icon: LucideIcon;
 }
 
-// Scaffolded task-bar entries. 「模型工具」 opens the models page; the rest are
-// placeholders for you to wire up later.
+// Main navigation shares the header row with the platform brand.
 const ITEMS: TaskItem[] = [
   { id: "workspace", label: "工作台", icon: LayoutDashboard },
   { id: "search", label: "卫星影像", icon: Satellite },
@@ -21,12 +19,16 @@ const ITEMS: TaskItem[] = [
 ];
 
 export function TaskBar({
+  activeSection,
+  onOpenWorkspace,
   onOpenTools,
   onOpenData,
   onOpenTasks,
   onOpenReports,
   onOpenSearch,
 }: {
+  activeSection: "workspace" | "satellite";
+  onOpenWorkspace: () => void;
   onOpenTools: () => void;
   onOpenData: () => void;
   onOpenTasks: () => void;
@@ -34,46 +36,57 @@ export function TaskBar({
   onOpenSearch: () => void;
 }) {
   const handle = (id: string) => {
-    if (id === "tools") onOpenTools();
+    if (id === "workspace") onOpenWorkspace();
+    else if (id === "tools") onOpenTools();
     else if (id === "data") onOpenData();
     else if (id === "tasks") onOpenTasks();
     else if (id === "reports") onOpenReports();
     else if (id === "search") onOpenSearch();
-    // 「工作台」为当前主视图，无需额外动作
   };
 
-  const reduce = useReducedMotion();
+  const activeItem = ITEMS.find((item) => item.id === (activeSection === "satellite" ? "search" : "workspace")) ?? ITEMS[0];
+  const ActiveIcon = activeItem.icon;
 
   return (
-    <motion.nav
-      variants={reduce ? undefined : slideDown}
-      initial={reduce ? false : "hidden"}
-      animate="show"
-      className="absolute inset-x-0 top-14 z-30 flex h-11 items-center gap-1 border-b border-border bg-background/60 px-3 backdrop-blur-xl"
-    >
+    <nav aria-label="主导航" className="min-w-0">
+      <div className="hidden items-center gap-1 xl:flex">
       {ITEMS.map((it) => {
         const Icon = it.icon;
-        const active = it.id === "workspace";
+        const active = it.id === (activeSection === "satellite" ? "search" : "workspace");
         return (
           <button
             key={it.id}
+            type="button"
             onClick={() => handle(it.id)}
-            className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[12.5px] transition-colors ${
+            aria-current={active ? "page" : undefined}
+            className={`flex h-11 shrink-0 items-center gap-2 whitespace-nowrap rounded-xl px-3 text-[16px] font-medium transition-colors ${
               active
-                ? "bg-card text-foreground"
-                : "text-muted-foreground hover:bg-card/60 hover:text-foreground"
+                ? "bg-primary/12 text-primary ring-1 ring-primary/25"
+                : "text-foreground/75 hover:bg-card hover:text-foreground"
             }`}
           >
-            <Icon className="size-3.5" />
+            <Icon className="size-[18px] shrink-0" />
             {it.label}
           </button>
         );
       })}
-
-      <span className="ml-auto hidden items-center gap-1.5 font-mono text-[10px] uppercase tracking-wider text-muted-foreground md:flex">
-        <span className="size-1.5 rounded-full bg-primary" />
-        就绪
-      </span>
-    </motion.nav>
+      </div>
+      <div className="xl:hidden">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button type="button" aria-label="打开主导航" className="flex h-11 items-center gap-2 whitespace-nowrap rounded-xl bg-primary/10 px-3 text-[16px] font-medium text-primary ring-1 ring-primary/25">
+              <ActiveIcon className="size-[18px]" />{activeItem.label}<ChevronDown className="size-4" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="center" className="w-48">
+            {ITEMS.map(({id,label,icon:Icon}) => (
+              <DropdownMenuItem key={id} onSelect={() => handle(id)} className="gap-3 py-2.5 text-[15px]">
+                <Icon className="size-[18px]" />{label}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+    </nav>
   );
 }

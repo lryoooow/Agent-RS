@@ -20,6 +20,7 @@ from app.core.settings import get_settings
 from app.mcp.client import MCPCallError
 from app.mcp.rs_tools_client import RSToolsMCPClient
 from app.schemas.chat import ToolExecutionInfo
+from app.services.raster_semantics import resolve_rgb
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +33,15 @@ async def run_detect(args: DetectArguments) -> ToolRunResult:
         return imagery_not_found_result(args.imagery_id)
     results_dir.mkdir(parents=True, exist_ok=True)
 
+    try:
+        rgb = await asyncio.to_thread(
+            resolve_rgb, source_path,
+            {"red": args.red_band, "green": args.green_band, "blue": args.blue_band},
+            explicit={"red_band", "green_band", "blue_band"}.issubset(args.model_fields_set),
+        )
+    except ValueError as exc:
+        return invalid_bands_result("RGB 分析", str(exc))
+    args = args.model_copy(update={name + "_band": index for name, index in rgb.items()})
     band_error = await validate_band_indices(
         source_path,
         {"red": args.red_band, "green": args.green_band, "blue": args.blue_band},
@@ -57,10 +67,14 @@ async def run_detect(args: DetectArguments) -> ToolRunResult:
         )
     except (FileNotFoundError, asyncio.TimeoutError, MCPCallError) as exc:
         logger.warning("Object detection failed: %s", exc)
-        return _error_result("目标检测失败，请稍后重试或检查影像与服务状态。", "mcp_error")
+        if "no such image" in str(exc).lower() or isinstance(exc, FileNotFoundError):
+            return _error_result("检测服务尚未部署或运行环境缺失，本次未进行模型推理。需要管理员修复服务，换一轮重试不会解决。", "service_unavailable")
+        if isinstance(exc, asyncio.TimeoutError):
+            return _error_result("检测推理超时，未取得结果。需检查服务负载或缩小分析范围，不能直接归因于影像或参数。", "inference_timeout")
+        return _error_result("检测服务执行失败，未取得检测结果。详细原因已记录服务器日志，需要排查后再执行；不能据此判定参数无误或建议无条件重试。", "mcp_error")
     except Exception as exc:
         logger.exception("Object detection unexpected error: %s", exc)
-        return _error_result("目标检测失败，请稍后重试或检查影像与服务状态。", "unexpected_error")
+        return _error_result("检测服务异常，未取得结果。错误已记录服务器日志，需修复后再执行。", "unexpected_error")
 
     result_filename = str(result.get("output_png") or "detection_overlay.png")
     execution_info = ToolExecutionInfo(mode="docker_mcp", fallback_used=False)
@@ -69,6 +83,11 @@ async def run_detect(args: DetectArguments) -> ToolRunResult:
         "imagery_id": args.imagery_id,
         "result_url": f"/api/imagery/{args.imagery_id}/results/{result_filename}",
         "bounds": read_bounds(imagery_dir / "metadata.json"),
+        "model_name": result.get("model_name"),
+        "device": result.get("device"),
+        "bands_used": result.get("bands_used"),
+        "vector_url": f"/api/imagery/{args.imagery_id}/results/{result['output_geojson']}" if result.get("output_geojson") else None,
+        "detections_url": f"/api/imagery/{args.imagery_id}/results/{result['output_json']}" if result.get("output_json") else None,
         "detection_count": int(result.get("detection_count", 0)),
         "score_threshold": float(result.get("score_threshold", args.score_threshold)),
         "classes": result.get("classes") or [],
@@ -92,6 +111,7 @@ def _client(settings) -> RSToolsMCPClient:
         cpus=settings.rs_detect_mcp_cpus,
         network=settings.rs_detect_mcp_network,
         gpus=settings.rs_detect_mcp_gpus or None,
+        accelerator=settings.rs_detect_mcp_accelerator,
     )
 
 

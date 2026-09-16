@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { Upload, Search, Trash2, FileText, Loader2, RefreshCw } from "lucide-react";
+import { Upload, Search, Trash2, FileText, Loader2, RefreshCw, Network, BookOpen } from "lucide-react";
+import { KnowledgeGraphDialog } from "./KnowledgeGraphDialog";
+import { importPlatformGuides } from "../lib/knowledge-api";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { ScrollArea } from "./ui/scroll-area";
@@ -13,9 +15,12 @@ import {
 } from "../lib/documents-api";
 import type { KnowledgeDocument, DocumentSearchResult } from "../types";
 
-const TERMINAL = new Set(["done", "failed"]);
+const TERMINAL = new Set(["done", "complete", "failed"]);
 
 export function KnowledgePanel() {
+  const [graphOpen, setGraphOpen] = useState(false);
+  const [graphFocus, setGraphFocus] = useState("*");
+  const [importing, setImporting] = useState(false);
   const [docs, setDocs] = useState<KnowledgeDocument[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -50,14 +55,14 @@ export function KnowledgePanel() {
     setError("");
     try {
       const { job_id } = await uploadDocumentFile(file);
-      // 轮询任务进度直到 done/failed。
+      // The backend uses complete for successful ingestion.
       for (let i = 0; i < 120; i++) {
         await new Promise((r) => setTimeout(r, 1000));
         const job = await getDocumentJob(job_id);
         setProgress(job.progress || 0);
         if (TERMINAL.has(job.status)) {
           if (job.status === "failed") {
-            setError(job.error_message || "文档处理失败");
+            throw new Error(job.error_message || "文档处理失败");
           }
           break;
         }
@@ -99,6 +104,20 @@ export function KnowledgePanel() {
 
   return (
     <div className="flex h-full flex-col gap-3">
+      <KnowledgeGraphDialog open={graphOpen} onOpenChange={setGraphOpen} initialFocus={graphFocus} />
+      <div className="rounded-lg border border-primary/25 bg-primary/5 p-3">
+        <p className="text-xs font-medium">文档与 Agent 知识网络</p>
+        <p className="mt-1 text-[11px] leading-5 text-muted-foreground">关联原文、工具与 Agent，为检索和任务提供依据。</p>
+        <div className="mt-2 flex gap-2">
+          <Button size="sm" onClick={() => { setGraphFocus("*"); setGraphOpen(true); }}><Network className="size-3.5" />知识图谱</Button>
+          <Button size="sm" variant="outline" disabled={importing} onClick={async () => {
+            setImporting(true); setError("");
+            try { await importPlatformGuides(); await refresh(); }
+            catch (err) { setError(err instanceof Error ? err.message : String(err)); }
+            finally { setImporting(false); }
+          }}>{importing ? <Loader2 className="size-3.5 animate-spin" /> : <BookOpen className="size-3.5" />}导入平台指南</Button>
+        </div>
+      </div>
       {/* upload + search bar */}
       <div className="flex flex-col gap-2">
         <input
@@ -136,7 +155,7 @@ export function KnowledgePanel() {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && runSearch()}
-            placeholder="检索知识库（向量 + BM25 + Rerank）"
+            placeholder="检索文档内容与方法依据"
             className="h-8 bg-input-background text-[12px]"
           />
           <Button size="sm" onClick={runSearch} disabled={searching} className="gap-1.5">
@@ -184,7 +203,7 @@ export function KnowledgePanel() {
               <div key={d.id} className="flex items-start gap-2 rounded-lg border border-border bg-card p-2.5">
                 <FileText className="mt-0.5 size-4 shrink-0 text-primary" />
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-[12.5px] text-foreground">{d.title}</div>
+                  <button className="block max-w-full truncate text-left text-[12.5px] text-foreground hover:text-primary" onClick={() => { setGraphFocus("doc:" + d.id); setGraphOpen(true); }}>{d.title}</button>
                   <div className="font-mono text-[10px] text-muted-foreground">
                     {d.doc_type ?? "text"} · {d.chunk_count} chunks
                     {d.latest_job_status ? ` · ${d.latest_job_status}` : ""}

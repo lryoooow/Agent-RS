@@ -156,13 +156,23 @@ GOLDEN_CASES: tuple[AutogenEvalCase, ...] = (
         notes="裁剪/重投影工具，校验 dst_crs。",
     ),
     AutogenEvalCase(
-        case_id="tool_segment_landcover",
-        query=f"把影像 {PRIMARY_IMAGERY_ID} 做地物分割",
+        case_id="tool_prepare_map_roi",
+        query="直接分析我在地图上框选的区域：西 120.0、南 30.0、东 120.1、北 30.1",
         expected_action="call",
-        expected_capability="segment_landcover",
-        imagery_inventory=OWNED_IMAGE,
+        expected_capability="prepare_map_roi",
+        expected_arguments_subset={"bbox": [120.0, 30.0, 120.1, 30.1]},
         category="tool_positive",
-        notes="分割领域工具。",
+        notes="地图框选直接取当前底图影像，不要求先上传或检索场景。",
+    ),
+    AutogenEvalCase(
+        case_id="tool_segment_instances",
+        query=f"把影像 {PRIMARY_IMAGERY_ID} 里的建筑、林地和水体逐个分割出来",
+        expected_action="call",
+        expected_capability="segment_instances",
+        imagery_inventory=OWNED_IMAGE,
+        expected_arguments_subset={"concepts": ["building", "forest", "water"]},
+        category="tool_positive",
+        notes="SAM3 开放词汇实例分割工具。",
     ),
     AutogenEvalCase(
         case_id="tool_detect_objects",
@@ -403,7 +413,10 @@ def _ratio(count: int, total: int) -> float:
 def validate_cases(cases: tuple[AutogenEvalCase, ...] | None = None) -> None:
     if cases is None:
         cases = EVAL_CASES
-    valid_names = valid_capability_names()
+    # Frozen heldout v1-v5 recordings predate the SAM3 migration. Keep their
+    # legacy capability label valid as an evaluation alias without exposing the
+    # removed U-Net tool to the runtime registry.
+    valid_names = valid_capability_names() | {"segment_landcover"}
     seen: set[str] = set()
     errors: list[str] = []
 
@@ -436,7 +449,11 @@ def validate_cases(cases: tuple[AutogenEvalCase, ...] | None = None) -> None:
         if case.category == "unsupported_multi_tool" and case.scoring != "diagnostic_unsupported":
             errors.append(f"{case.case_id}: unsupported_multi_tool cases must use diagnostic_unsupported scoring")
 
-    call_capabilities = {case.expected_capability for case in cases if case.expected_action == "call"}
+    call_capabilities = {
+        "segment_instances" if case.expected_capability == "segment_landcover" else case.expected_capability
+        for case in cases
+        if case.expected_action == "call"
+    }
     missing_tools = set(TOOLS) - call_capabilities
     if missing_tools:
         errors.append(f"missing positive tool cases: {sorted(missing_tools)}")

@@ -28,6 +28,10 @@ def _write_test_tif(path: Path, *, count: int = 4) -> None:
         transform=from_origin(100.0, 20.0, 0.01, 0.01),
     ) as dst:
         dst.write(data)
+        # This fixture represents an explicitly documented BGR+NIR sensor.
+        if count >= 4:
+            for index, label in enumerate(("Blue", "Green", "Red", "NIR"), 1):
+                dst.set_band_description(index, label)
 
 
 def _prepare_imagery(root: Path, imagery_id: str = "94e758f38ede", *, count: int = 4) -> Path:
@@ -149,17 +153,19 @@ async def test_detect_runner_can_run_when_rs_tools_switch_is_disabled(monkeypatc
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "exc",
+    "exc,expected",
     [
-        MCPCallError("mcp failed"),
-        asyncio.TimeoutError(),
-        FileNotFoundError("missing docker"),
+        (MCPCallError("mcp failed"), "mcp_error"),
+        (asyncio.TimeoutError(), "inference_timeout"),
+        (FileNotFoundError("missing docker"), "service_unavailable"),
+        (MCPCallError("No such image: rs-detect-mcp"), "service_unavailable"),
     ],
 )
 async def test_detect_runner_transport_failures_return_mcp_error(
     monkeypatch,
     tmp_path: Path,
     exc: Exception,
+    expected: str,
 ) -> None:
     _prepare_imagery(tmp_path)
     monkeypatch.setenv("IMAGERY_UPLOAD_DIR", str(tmp_path))
@@ -173,8 +179,8 @@ async def test_detect_runner_transport_failures_return_mcp_error(
 
     result = await run_detect(DetectArguments(imagery_id="94e758f38ede"))
 
-    assert result.error == "mcp_error"
-    assert result.metadata["error_code"] == "mcp_error"
+    assert result.error == expected
+    assert result.metadata["error_code"] == expected
     assert result.metadata["execution_mode"] == "failed"
     assert result.geospatial_result is None
     assert result.artifacts == []

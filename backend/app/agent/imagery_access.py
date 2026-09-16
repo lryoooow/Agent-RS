@@ -122,6 +122,13 @@ async def user_owns_imagery(imagery_id: str, user_id: str | None) -> bool:
     return _user_owns_imagery_from_disk(imagery_id, user_id)
 
 
+async def get_user_imagery_metadata(imagery_id: str, user_id: str | None) -> dict[str, Any] | None:
+    if not await user_owns_imagery(imagery_id, user_id):
+        return None
+    row = await _db_lookup(imagery_id, user_id)
+    return dict(row.get("metadata") or {}) if row else read_imagery_metadata(imagery_id)
+
+
 async def iter_user_imagery_metadata(user_id: str | None) -> list[tuple[str, dict[str, Any]]]:
     """列出用户全部影像 (imagery_id, metadata) 对。
 

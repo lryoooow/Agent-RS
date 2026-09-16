@@ -89,7 +89,8 @@ async def test_build_document_inventory_is_owner_filtered(
     inventory = await build_document_inventory("user-a")
 
     assert inventory is not None
-    assert "用户已上传需要解析的文档" in inventory
+    assert "可用文档" in inventory
+    assert "无需重复解析" in inventory
     assert "doc-owned" in inventory
 
 
@@ -673,8 +674,8 @@ async def test_build_provider_request_context_tracks_rag_chunk_count(
 
     async def fake_search_hybrid_rrf(*_, **__):
         return [
-            {"content": "alpha"},
-            {"content": "beta"},
+            {"content": "alpha", "vector_score": 0.8},
+            {"content": "beta", "vector_score": 0.7},
             {"content": ""},
         ]
 

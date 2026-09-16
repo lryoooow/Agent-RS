@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { motion, useReducedMotion } from "motion/react";
 import { Settings2, Cpu, ChevronDown, Loader2, RefreshCw } from "lucide-react";
 import {
@@ -36,7 +36,7 @@ import type { ThinkingStrength } from "../types";
 type Settings = ReturnType<typeof useSettings>;
 type Auth = ReturnType<typeof useAuth>;
 
-export function TopBar({ settings, auth }: { settings: Settings; auth: Auth }) {
+export function TopBar({ settings, auth, navigation }: { settings: Settings; auth: Auth; navigation: ReactNode }) {
   const reduce = useReducedMotion();
   const [open, setOpen] = useState(false);
   // 草稿态：仅在保存时写回 settings，取消则丢弃。
@@ -81,32 +81,35 @@ export function TopBar({ settings, auth }: { settings: Settings; auth: Auth }) {
       variants={reduce ? undefined : slideDown}
       initial={reduce ? false : "hidden"}
       animate="show"
-      className="absolute inset-x-0 top-0 z-40 flex h-14 items-center gap-3 border-b border-border bg-background/70 px-4 backdrop-blur-xl"
+      className="absolute inset-x-0 top-0 z-40 grid h-[72px] grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3 border-b border-border bg-background/85 px-3 backdrop-blur-xl sm:px-5"
     >
-      <div className="flex items-center gap-2.5">
-        <Logo size={32} rounded="rounded-lg" />
-        <div className="leading-tight">
+      <div data-testid="platform-brand" className="flex min-w-0 items-center gap-2.5">
+        <Logo size={38} rounded="rounded-lg" />
+        <div className="hidden min-w-0 leading-tight sm:block">
           <div
-            className="flex items-center gap-2 text-[15px] tracking-tight text-foreground"
+            className="flex items-center gap-2 whitespace-nowrap text-[18px] font-semibold tracking-tight text-foreground"
             style={{ fontFamily: "var(--font-display)" }}
           >
             Agent-RS
-            <span className="rounded-md border border-primary/25 bg-primary/10 px-1.5 py-px font-mono text-[10px] font-normal text-primary">
+            <span className="hidden rounded-md border border-primary/25 bg-primary/10 px-1.5 py-px font-mono text-[10px] font-normal text-primary 2xl:inline">
               workbench
             </span>
           </div>
-          <div className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+          <div className="mt-0.5 whitespace-nowrap text-[11px] tracking-wide text-muted-foreground">
             遥感大模型应用智能体
           </div>
         </div>
       </div>
 
-      <div className="ml-auto hidden items-center md:flex">
+      {navigation}
+
+      <div className="flex min-w-0 items-center justify-end gap-2">
+      <div className="hidden min-w-0 items-center min-[1440px]:flex">
         <DropdownMenu onOpenChange={(nextOpen) => nextOpen && void settings.refreshModels()}>
           <DropdownMenuTrigger asChild>
             <button
               type="button"
-              className="flex max-w-[280px] items-center gap-1.5 rounded-full border border-border bg-card/60 px-3 py-1 font-mono text-[11px] text-muted-foreground transition-colors hover:border-primary/45 hover:text-foreground"
+              className="flex max-w-[132px] items-center gap-1.5 rounded-full border border-border bg-card/60 px-3 py-1.5 text-[12px] text-muted-foreground transition-colors hover:border-primary/45 hover:text-foreground 2xl:max-w-[180px]"
               aria-label="选择模型"
             >
               <Cpu className="size-3.5 shrink-0 text-primary" />
@@ -168,8 +171,8 @@ export function TopBar({ settings, auth }: { settings: Settings; auth: Auth }) {
         </DropdownMenu>
       </div>
 
-      <div className="flex items-center gap-2 max-md:ml-auto md:ml-3">
-        <AuthDialog auth={auth} />
+      <div className="flex shrink-0 items-center gap-2">
+        <AuthDialog auth={auth} compact />
         <Dialog
           open={open}
           onOpenChange={(o) => {
@@ -181,10 +184,11 @@ export function TopBar({ settings, auth }: { settings: Settings; auth: Auth }) {
             <Button
               variant="outline"
               size="sm"
-              className="h-8 gap-1.5 border-border bg-card/60 text-[12px]"
+              className="h-9 gap-1.5 border-border bg-card/60 text-[13px]"
+              aria-label="配置"
             >
               <Settings2 className="size-3.5" />
-              配置
+              <span className="hidden sm:inline">配置</span>
             </Button>
           </DialogTrigger>
         <DialogContent className="bg-card sm:max-w-md">
@@ -293,6 +297,7 @@ export function TopBar({ settings, auth }: { settings: Settings; auth: Auth }) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      </div>
       </div>
     </motion.header>
   );

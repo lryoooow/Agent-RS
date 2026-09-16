@@ -1,6 +1,7 @@
 """两个 Memory 实现共用的小工具。"""
 
 from __future__ import annotations
+import asyncio
 
 import logging
 from typing import Awaitable, Callable, TypeVar
@@ -37,8 +38,15 @@ async def run_query_once_per_turn(
     cache_key = f"{source_key}:{query}"
     cache = state.retrieval_cache
     if cache_key not in cache:
-        cache[cache_key] = await run_query()
-    return cache[cache_key]
+        # Publish the in-flight task before awaiting: parallel agents share one query.
+        cache[cache_key] = asyncio.create_task(run_query())
+    task = cache[cache_key]
+    try:
+        return await asyncio.shield(task)
+    except Exception:
+        if cache.get(cache_key) is task:
+            cache.pop(cache_key, None)
+        raise
 
 
 async def latest_user_query(model_context: ChatCompletionContext) -> str:

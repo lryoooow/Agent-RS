@@ -56,6 +56,31 @@ export async function importScene(sceneKey: string): Promise<SceneImportResponse
   return (await response.json()) as SceneImportResponse;
 }
 
+/**
+ * Load a protected scene preview through the shared API client.  Returning a
+ * Blob lets the catalogue map surface authentication, timeout and rendering
+ * failures before it claims the scene is visible.
+ */
+export async function fetchScenePreview(
+  previewUrl: string,
+  options?: { signal?: AbortSignal },
+): Promise<Blob> {
+  const path = previewUrl.startsWith("/api/") ? previewUrl.slice(4) : previewUrl;
+  if (/^https?:\/\//i.test(path)) {
+    throw new Error("影像预览地址必须来自当前平台。");
+  }
+  const response = await apiFetch(path, {
+    timeoutMs: 60_000,
+    signal: options?.signal,
+    retryOnNetworkError: true,
+  });
+  const blob = await response.blob();
+  if (!blob.type.startsWith("image/")) {
+    throw new Error("影像预览响应格式异常。");
+  }
+  return blob;
+}
+
 // 相对 /api 路径 → 同源绝对地址（<img> 与下载链接用；cookie 同源自动携带）。
 export function absoluteUrl(path: string): string {
   return path.startsWith("http") ? path : `${window.location.origin}${path}`;
