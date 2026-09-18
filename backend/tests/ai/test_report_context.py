@@ -154,16 +154,22 @@ async def test_same_turn_report_renders_successful_results_before_persistence(mo
     monkeypatch.setattr(builder, 'list_recent_analysis_results', AsyncMock(return_value=[]))
     monkeypatch.setattr(builder, 'imagery_root', lambda: tmp_path)
     monkeypatch.setattr(builder, 'read_imagery_metadata', lambda _: {'filename':'real-tool-fixture.tif'})
-    geo = {'type':'segmentation','imagery_id':IMAGE,'classes':[{'label':'建筑','pixel_count':233837,'percentage':1.3944}]}
+    geo = {
+        'type':'instance_segmentation', 'imagery_id':IMAGE, 'model_name':'SAM3',
+        'concepts':['building'], 'instance_count':37, 'counts':{'building':37},
+        'union_pixels':233837, 'area_m2':338598.87,
+    }
     with user_scope('owner'), conversation_scope('conversation'), turn_scope() as state:
-        state.record(ToolInvocation('segment_landcover',{},ToolRunResult(tool_context='计算完成',geospatial_result=geo)))
+        state.record(ToolInvocation('segment_instances',{},ToolRunResult(tool_context='计算完成',geospatial_result=geo)))
         state.record(ToolInvocation('detect_objects',{},ToolRunResult(tool_context='失败',error='inference_failed',geospatial_result={'type':'detection','imagery_id':OTHER_IMAGE})))
         report = await run_report(ReportArguments())
     assert report.error is None
     assert report.geospatial_result['imagery_id'] == IMAGE
     document = Document(tmp_path / IMAGE / 'results' / report.geospatial_result['filename'])
     cells = '\n'.join(cell.text for table in document.tables for row in table.rows for cell in row.cells)
-    assert '233837' in cells and '1.39%' in cells
+    assert 'building' in cells and '37' in cells
+    paragraphs = '\n'.join(p.text for p in document.paragraphs)
+    assert '338,598.87 平方米' in paragraphs and 'SAM3' in paragraphs
     assert OTHER_IMAGE not in '\n'.join(p.text for p in document.paragraphs)
 
 
