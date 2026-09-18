@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+from datetime import datetime, timezone
 
 import pytest
 from docx import Document
+from PIL import Image, ImageDraw
 
 from app.core.settings import Settings
 from app.db.repositories._pg import conversation as conv_repo
@@ -91,13 +93,75 @@ async def test_build_report_from_real_results_keeps_readable_chinese(pool, setti
     text = "\n".join(p.text for p in document.paragraphs)
     table_text = "\n".join(c.text for t in document.tables for r in t.rows for c in r.cells)
 
-    assert "遥感影像分析报告" in text
+    assert "遥感影像综合分析报告" in text
     assert imagery_id in text
     assert "数据来源" in text and "未做任何人工编造" in text  # 项目约束：标注来源、不编造
     assert "91.31%" in table_text  # 真实占比
     assert "GF2_test.tif" in table_text
     assert chr(0xFFFD) not in (text + table_text)  # 无乱码（U+FFFD 替换符，用 chr 避免本文件触发 utf8 自检）
     assert "？？" not in text
+
+
+def test_comprehensive_report_contains_real_figures_coverage_and_artifacts(monkeypatch, tmp_path):
+    imagery_id = "fec6252c9325"
+    results = tmp_path / "imagery" / imagery_id / "results"
+    results.mkdir(parents=True)
+
+    def picture(name: str, color: tuple[int, int, int], text: str) -> None:
+        image = Image.new("RGB", (960, 540), color)
+        canvas = ImageDraw.Draw(image)
+        canvas.rectangle((120, 90, 840, 450), outline=(255, 255, 255), width=8)
+        canvas.text((145, 115), text, fill=(255, 255, 255))
+        image.save(results / name)
+
+    picture("preview.png", (40, 92, 66), "ORIGINAL")
+    picture("sam3_building.png", (102, 52, 73), "SAM3 BUILDINGS")
+    picture("water_mask.png", (25, 85, 140), "WATER MASK")
+
+    monkeypatch.setattr(report_builder, "imagery_root", lambda: tmp_path / "imagery")
+    output = results / "quality-report.docx"
+    analyses = [
+        {"tool_result": {
+            "type": "raster_inspect", "imagery_id": imagery_id, "width": 4096, "height": 4096,
+            "band_count": 4, "crs": "EPSG:4526", "dtype": "uint8", "pixel_size": [1.2, 1.2],
+            "bounds_wgs84": [114.18, 24.84, 114.23, 24.89],
+            "band_roles": {"red": 1, "green": 2, "blue": 3},
+            "capabilities": {"has_blue": True, "has_green": True, "has_red": True, "has_nir": False},
+            "per_band_stats": [{"band": 1, "min": 0, "max": 255, "mean": 65.12, "std": 54.28}],
+        }},
+        {"geospatial_result": {
+            "type": "instance_segmentation", "imagery_id": imagery_id, "model_name": "SAM3",
+            "concepts": ["building"], "instance_count": 37, "counts": {"building": 37},
+            "union_pixels": 233837, "area_m2": 338598.87,
+            "result_url": f"/api/imagery/{imagery_id}/results/sam3_building.png",
+            "mask_url": f"/api/imagery/{imagery_id}/results/building_mask.tif",
+            "vector_url": f"/api/imagery/{imagery_id}/results/building.geojson",
+        }},
+        {"geospatial_result": {
+            "type": "water_mask", "imagery_id": imagery_id,
+            "result_url": f"/api/imagery/{imagery_id}/results/water_mask.png",
+            "stats": {"water_pct": 4.15, "non_water_pct": 95.85, "ndwi_threshold": 0.08},
+        }},
+    ]
+    report_builder._render_report_docx(
+        output, imagery_id=imagery_id,
+        imagery_meta={
+            "filename": "shaoguan.tif", "preview_url": f"/api/imagery/{imagery_id}/results/preview.png",
+            "width": 4096, "height": 4096, "band_count": 4, "crs": "EPSG:4526",
+        },
+        analyses=analyses, generated_at=datetime(2026, 9, 18, tzinfo=timezone.utc),
+    )
+
+    document = Document(output)
+    text = "\n".join(p.text for p in document.paragraphs)
+    tables = "\n".join(cell.text for table in document.tables for row in table.rows for cell in row.cells)
+    assert document.inline_shapes.__len__() == 3
+    for heading in ("报告摘要", "二 分析覆盖情况", "四 综合分析", "五 成果文件", "六 质量与适用边界"):
+        assert heading in text
+    assert "已完成" in tables and "未执行" in tables
+    assert "37" in tables and "4.15%" in tables
+    assert "sam3_building.png" in tables and "building.geojson" in tables
+    assert "338,598.87 平方米" in text
 
 
 @_pg_async

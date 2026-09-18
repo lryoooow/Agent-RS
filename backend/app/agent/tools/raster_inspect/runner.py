@@ -81,7 +81,7 @@ def _tool_result(imagery_id: str, result: dict) -> dict:
     pixel_size = result.get("pixel_size")
     return {
         "type": "raster_inspect",
-        **{key: result.get(key) for key in ("source_grid", "analysis_grid", "resampled", "band_roles", "band_roles_source", "alpha_statistics")},
+        **{key: result.get(key) for key in ("source_grid", "analysis_grid", "resampled", "band_roles", "band_roles_source", "color_interpretations", "alpha_bands", "alpha_statistics")},
         "imagery_id": imagery_id,
         "width": int(result.get("width") or 0),
         "height": int(result.get("height") or 0),

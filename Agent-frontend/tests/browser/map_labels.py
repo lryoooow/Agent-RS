@@ -8,7 +8,7 @@ url=sys.argv[1]; prefix=pathlib.Path(sys.argv[2]); prefix.parent.mkdir(parents=T
 img=io.BytesIO(); Image.new('RGBA',(256,256),(75,97,87,255)).save(img,format='PNG')
 bounds=[116.38,39.88,116.43,39.93]
 preview={'type':'preview','imagery_id':'map-check','result_url':'/api/map-check/image.png','bounds':bounds}
-result={'type':'segmentation','imagery_id':'map-check','result_url':'/api/map-check/result.png','bounds':bounds,'total_pixels':100,'classes':[{'name':'woodland','label':'林地','percentage':100,'pixel_count':100,'color':'#228833'}]}
+result={'type':'segmentation','imagery_id':'map-check','result_url':'/api/map-check/result.png','bounds':bounds,'total_pixels':100,'classes':[{'name':'woodland','label':'超长地物分类成果名称用于验证右侧图层窗口不会遮挡内容并且能够完整换行展示','percentage':100,'pixel_count':100,'color':'#228833'}]}
 messages=[{'role':'user','content':'地图名称与图层验收'},{'role':'assistant','content':'影像已上传','metadata':{'geospatial_result':preview}},{'role':'assistant','content':'地图名称与道路显示验收','metadata':{'geospatial_result':result}}]
 extract="""() => {
   const el=document.querySelector('.maplibregl-map');
@@ -84,6 +84,22 @@ with sync_playwright() as p:
  page.get_by_title('载入此会话').filter(has_text='地图名称验收').click()
  expect(page.get_by_test_id('chat-panel')).to_be_visible()
  page.wait_for_timeout(1200);page.evaluate(extract)
+ panel=page.get_by_test_id('layer-panel');expect(panel).to_be_visible()
+ initial_panel=panel.evaluate("e=>({width:e.clientWidth,height:e.clientHeight})")
+ page.get_by_role('button',name='图例',exact=True).click()
+ scroll=page.get_by_test_id('layer-panel-scroll')
+ expect(scroll.get_by_text('超长地物分类成果名称用于验证右侧图层窗口不会遮挡内容并且能够完整换行展示 100.0%',exact=True)).to_be_visible()
+ overflow=scroll.evaluate("e=>({clientWidth:e.clientWidth,scrollWidth:e.scrollWidth})")
+ assert overflow['scrollWidth']<=overflow['clientWidth'],overflow
+ resize=page.get_by_role('button',name='调整图层面板宽高',exact=True)
+ resize.focus();page.keyboard.press('Shift+ArrowLeft');page.keyboard.press('Shift+ArrowDown')
+ page.wait_for_timeout(150)
+ resized_panel=panel.evaluate("e=>({width:e.clientWidth,height:e.clientHeight})")
+ assert resized_panel['width']>=initial_panel['width']+39,(initial_panel,resized_panel)
+ assert resized_panel['height']>=initial_panel['height']+39,(initial_panel,resized_panel)
+ saved_panel=page.evaluate("JSON.parse(localStorage.getItem('agent-rs.layer-panel-size.v1'))")
+ assert abs(saved_panel['width']-resized_panel['width'])<=2 and abs(saved_panel['height']-resized_panel['height'])<=2,(saved_panel,resized_panel)
+ checks.append({'layer_panel':{'initial':initial_panel,'resized':resized_panel,'horizontal_overflow':overflow}})
  position('北京街区',[116.4074,39.9042],15)
  order()
  page.screenshot(path=str(prefix.with_suffix('.beijing.png')))
