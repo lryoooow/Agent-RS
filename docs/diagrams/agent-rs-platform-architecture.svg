@@ -1,0 +1,136 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="1530" viewBox="0 0 1400 1530" role="img" aria-labelledby="title desc">
+<title id="title">平台架构图</title>
+<desc id="desc">自然语言编排 · 遥感专业计算 · 空间成果回流</desc>
+<style>text {font-family:"Microsoft YaHei","PingFang SC","Noto Sans CJK SC",Arial,sans-serif;} path,line,rect,polygon,ellipse {stroke-linejoin:round;stroke-linecap:round;}</style>
+<defs>
+<marker id="arrow-blue" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto" markerUnits="userSpaceOnUse"><polygon points="0 0,10 3.5,0 7" fill="#2563eb"/></marker>
+<marker id="arrow-green" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto" markerUnits="userSpaceOnUse"><polygon points="0 0,10 3.5,0 7" fill="#059669"/></marker>
+<marker id="arrow-purple" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto" markerUnits="userSpaceOnUse"><polygon points="0 0,10 3.5,0 7" fill="#7c3aed"/></marker>
+<marker id="arrow-orange" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto" markerUnits="userSpaceOnUse"><polygon points="0 0,10 3.5,0 7" fill="#ea580c"/></marker>
+</defs>
+<rect x="0" y="0" width="1400" height="1530" rx="0" fill="#ffffff" stroke="none" stroke-width="1.5"/>
+<text x="56" y="53" text-anchor="start" fill="#2563eb" font-size="14" font-weight="700">AGENT-RS  /  REMOTE SENSING</text>
+<text x="56" y="100" text-anchor="start" fill="#111827" font-size="32" font-weight="700">平台架构图</text>
+<text x="56" y="130" text-anchor="start" fill="#64748b" font-size="16" font-weight="400">自然语言编排 · 遥感专业计算 · 空间成果回流</text>
+<rect x="40" y="164" width="1320" height="156" rx="14" fill="#f8fafc" stroke="#d1d5db" stroke-width="1.5" stroke-dasharray="6 5"/>
+<text x="62" y="195" text-anchor="start" fill="#64748b" font-size="17" font-weight="700">01  交互层</text>
+<rect x="64" y="214" width="420" height="82" rx="10" fill="#eff6ff" stroke="#d1d5db" stroke-width="1.5"/>
+<text x="274.0" y="244" text-anchor="middle" fill="#111827" font-size="20" font-weight="700">智能工作台</text>
+<text x="274.0" y="270" text-anchor="middle" fill="#64748b" font-size="15" font-weight="400">React + MapLibre · 对话 / ROI / 图层</text>
+<rect x="524" y="214" width="426" height="82" rx="10" fill="#eff6ff" stroke="#d1d5db" stroke-width="1.5"/>
+<text x="737.0" y="244" text-anchor="middle" fill="#111827" font-size="20" font-weight="700">卫星影像与知识中心</text>
+<text x="737.0" y="270" text-anchor="middle" fill="#64748b" font-size="15" font-weight="400">检索 / 导入 / 档案 / 文档与图谱</text>
+<rect x="1000" y="214" width="336" height="82" rx="10" fill="#ffffff" stroke="#d1d5db" stroke-width="1.5"/>
+<text x="1168.0" y="244" text-anchor="middle" fill="#111827" font-size="20" font-weight="700">卫星轨道态势</text>
+<text x="1168.0" y="270" text-anchor="middle" fill="#64748b" font-size="15" font-weight="400">Satvis 内嵌工作区 · 独立入口</text>
+<path d="M 274,296 L 274,348 L 380,348 L 380,386" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow-blue)"/>
+<path d="M 737,296 L 737,348 L 650,348 L 650,386" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow-blue)"/>
+<rect x="468.1" y="332" width="95.79999999999998" height="23" rx="4" fill="#ffffff" stroke="none" stroke-width="1.5"/>
+<text x="516" y="349" text-anchor="middle" fill="#2563eb" font-size="14" font-weight="400">HTTP / SSE</text>
+<rect x="64" y="386" width="886" height="90" rx="10" fill="#eff6ff" stroke="#d1d5db" stroke-width="1.5"/>
+<text x="507.0" y="416" text-anchor="middle" fill="#111827" font-size="20" font-weight="700">02  FastAPI 业务入口</text>
+<text x="507.0" y="442" text-anchor="middle" fill="#64748b" font-size="15" font-weight="400">登录与用户归属 · 对话 / 影像 / 场景 / 知识 / 报告 API</text>
+<rect x="1000" y="370" width="336" height="106" rx="10" fill="#ffffff" stroke="#d1d5db" stroke-width="1.5"/>
+<text x="1168.0" y="400" text-anchor="middle" fill="#111827" font-size="20" font-weight="700">平台约束</text>
+<text x="1168.0" y="426" text-anchor="middle" fill="#64748b" font-size="15" font-weight="400">请求 ID / 统一错误 / 用户隔离</text>
+<text x="1168.0" y="449" text-anchor="middle" fill="#64748b" font-size="15" font-weight="400">工具配额 / 并发控制 / 超时</text>
+<rect x="40" y="536" width="920" height="314" rx="14" fill="#f8fafc" stroke="#d1d5db" stroke-width="1.5" stroke-dasharray="6 5"/>
+<text x="62" y="567" text-anchor="start" fill="#64748b" font-size="17" font-weight="700">03  AutoGen 编排层  ·  engine 统一适配</text>
+<path d="M 500,476 L 500,580" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow-blue)"/>
+<rect x="464.0" y="491" width="72" height="23" rx="4" fill="#ffffff" stroke="none" stroke-width="1.5"/>
+<text x="500" y="508" text-anchor="middle" fill="#2563eb" font-size="14" font-weight="400">可信请求</text>
+<rect x="320" y="580" width="360" height="70" rx="10" fill="#eff6ff" stroke="#d1d5db" stroke-width="1.5"/>
+<text x="500.0" y="610" text-anchor="middle" fill="#111827" font-size="20" font-weight="700">结构化路由</text>
+<text x="500.0" y="636" text-anchor="middle" fill="#64748b" font-size="15" font-weight="400">完整命中标准作业才进入 GraphFlow</text>
+<path d="M 430,650 L 430,680 L 263,680 L 263,724" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow-blue)"/>
+<rect x="194.03" y="676" width="137.94" height="23" rx="4" fill="#ffffff" stroke="none" stroke-width="1.5"/>
+<text x="263" y="693" text-anchor="middle" fill="#2563eb" font-size="14" font-weight="400">自由 / 不确定请求</text>
+<path d="M 570,650 L 570,680 L 737,680 L 737,724" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow-blue)"/>
+<rect x="687.0" y="676" width="100" height="23" rx="4" fill="#ffffff" stroke="none" stroke-width="1.5"/>
+<text x="737" y="693" text-anchor="middle" fill="#2563eb" font-size="14" font-weight="400">完整标准作业</text>
+<rect x="88" y="724" width="350" height="94" rx="10" fill="#eff6ff" stroke="#d1d5db" stroke-width="1.5"/>
+<rect x="92" y="728" width="342" height="86" rx="7" fill="none" stroke="#bfdbfe" stroke-width="1.5"/>
+<text x="263.0" y="754" text-anchor="middle" fill="#111827" font-size="20" font-weight="700">主 Agent</text>
+<text x="263.0" y="780" text-anchor="middle" fill="#64748b" font-size="15" font-weight="400">全部已启用工具 · 自主工具循环</text>
+<text x="263.0" y="803" text-anchor="middle" fill="#64748b" font-size="15" font-weight="400">main_agent</text>
+<rect x="562" y="724" width="350" height="94" rx="10" fill="#eff6ff" stroke="#d1d5db" stroke-width="1.5"/>
+<rect x="566" y="728" width="342" height="86" rx="7" fill="none" stroke="#bfdbfe" stroke-width="1.5"/>
+<text x="737.0" y="754" text-anchor="middle" fill="#111827" font-size="20" font-weight="700">GraphFlow</text>
+<text x="737.0" y="780" text-anchor="middle" fill="#64748b" font-size="15" font-weight="400">固定领域节点顺序 · 报告收尾</text>
+<text x="737.0" y="803" text-anchor="middle" fill="#64748b" font-size="15" font-weight="400">节点内由 Agent 选择工具</text>
+<rect x="1000" y="536" width="336" height="314" rx="14" fill="#f8fafc" stroke="#d1d5db" stroke-width="1.5" stroke-dasharray="6 5"/>
+<text x="1022" y="567" text-anchor="start" fill="#64748b" font-size="17" font-weight="700">上下文与知识</text>
+<rect x="1020" y="582" width="296" height="72" rx="10" fill="#ffffff" stroke="#d1d5db" stroke-width="1.5"/>
+<text x="1168.0" y="612" text-anchor="middle" fill="#111827" font-size="20" font-weight="700">可信上下文</text>
+<text x="1168.0" y="638" text-anchor="middle" fill="#64748b" font-size="15" font-weight="400">当前影像 / 波段角色 / ROI</text>
+<rect x="1020" y="676" width="296" height="72" rx="10" fill="#ffffff" stroke="#d1d5db" stroke-width="1.5"/>
+<text x="1168.0" y="706" text-anchor="middle" fill="#111827" font-size="20" font-weight="700">RAG 与长期记忆</text>
+<text x="1168.0" y="732" text-anchor="middle" fill="#64748b" font-size="15" font-weight="400">相关片段检索 · 回合内缓存</text>
+<text x="1168" y="782" text-anchor="middle" fill="#64748b" font-size="15" font-weight="400">历史与已有成果 · Token 预算</text>
+<text x="1168" y="810" text-anchor="middle" fill="#64748b" font-size="15" font-weight="400">分别注入主 Agent / 流内节点</text>
+<path d="M 1020,618 L 960,618" fill="none" stroke="#059669" stroke-width="2" marker-end="url(#arrow-green)"/>
+<path d="M 263,818 L 263,882 L 500,882" fill="none" stroke="#2563eb" stroke-width="2"/>
+<path d="M 737,818 L 737,882 L 500,882" fill="none" stroke="#2563eb" stroke-width="2"/>
+<path d="M 500,882 L 500,922" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow-blue)"/>
+<rect x="464.0" y="886" width="72" height="23" rx="4" fill="#ffffff" stroke="none" stroke-width="1.5"/>
+<text x="500" y="903" text-anchor="middle" fill="#2563eb" font-size="14" font-weight="400">工具调用</text>
+<rect x="88" y="922" width="824" height="112" rx="10" fill="#faf5ff" stroke="#d1d5db" stroke-width="1.5"/>
+<text x="500.0" y="952" text-anchor="middle" fill="#111827" font-size="20" font-weight="700">04  单一工具注册表 + 统一执行管线</text>
+<text x="500.0" y="978" text-anchor="middle" fill="#64748b" font-size="15" font-weight="400">Pydantic 契约 → 配额 / 参数 / 资源归属 / 分析前置校验</text>
+<text x="500.0" y="1001" text-anchor="middle" fill="#64748b" font-size="15" font-weight="400">任务登记与心跳 → 影像 staging → runner → 终态记录</text>
+<rect x="40" y="1106" width="920" height="158" rx="14" fill="#f8fafc" stroke="#d1d5db" stroke-width="1.5" stroke-dasharray="6 5"/>
+<text x="62" y="1137" text-anchor="start" fill="#64748b" font-size="17" font-weight="700">05  能力执行层</text>
+<path d="M 500,1034 L 500,1074" fill="none" stroke="#2563eb" stroke-width="2"/>
+<path d="M 500,1074 L 203,1074 L 203,1152" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow-blue)"/>
+<path d="M 500,1074 L 510,1074 L 510,1152" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow-blue)"/>
+<path d="M 500,1074 L 817,1074 L 817,1152" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow-blue)"/>
+<rect x="66" y="1152" width="274" height="92" rx="10" fill="#ffffff" stroke="#d1d5db" stroke-width="1.5"/>
+<text x="203.0" y="1182" text-anchor="middle" fill="#111827" font-size="20" font-weight="700">MCP / Docker</text>
+<text x="203.0" y="1208" text-anchor="middle" fill="#64748b" font-size="15" font-weight="400">栅格质检 / 指数 / 预处理</text>
+<text x="203.0" y="1231" text-anchor="middle" fill="#64748b" font-size="15" font-weight="400">YOLO11s-OBB 目标检测</text>
+<rect x="373" y="1152" width="274" height="92" rx="10" fill="#ffffff" stroke="#d1d5db" stroke-width="1.5"/>
+<text x="510.0" y="1182" text-anchor="middle" fill="#111827" font-size="20" font-weight="700">SAM3 本地服务</text>
+<text x="510.0" y="1208" text-anchor="middle" fill="#64748b" font-size="15" font-weight="400">HTTP /infer · GPU 推理</text>
+<text x="510.0" y="1231" text-anchor="middle" fill="#64748b" font-size="15" font-weight="400">开放词汇实例分割</text>
+<rect x="680" y="1152" width="274" height="92" rx="10" fill="#ffffff" stroke="#d1d5db" stroke-width="1.5"/>
+<text x="817.0" y="1182" text-anchor="middle" fill="#111827" font-size="20" font-weight="700">共享业务工具</text>
+<text x="817.0" y="1208" text-anchor="middle" fill="#64748b" font-size="15" font-weight="400">STAC 检索 / 导入 / 地图</text>
+<text x="817.0" y="1231" text-anchor="middle" fill="#64748b" font-size="15" font-weight="400">联网搜索 / 文档 / 报告</text>
+<rect x="1000" y="906" width="336" height="358" rx="14" fill="#f8fafc" stroke="#d1d5db" stroke-width="1.5" stroke-dasharray="6 5"/>
+<text x="1022" y="937" text-anchor="start" fill="#64748b" font-size="17" font-weight="700">数据与成果存储</text>
+<path d="M 1020,966 A 148.0,14 0 0 1 1316,966 L 1316,1040 A 148.0,14 0 0 1 1020,1040 Z" fill="#ecfdf5" stroke="#a7d8c9" stroke-width="1.5"/>
+<ellipse cx="1168.0" cy="966" rx="148.0" ry="14" fill="none" stroke="#a7d8c9" stroke-width="1.5"/>
+<text x="1168.0" y="1001" text-anchor="middle" fill="#111827" font-size="18" font-weight="700">PostgreSQL + pgvector</text>
+<text x="1168.0" y="1027" text-anchor="middle" fill="#64748b" font-size="14" font-weight="400">会话 / 元数据 / 向量 / 任务</text>
+<path d="M 1020,1096 A 148.0,14 0 0 1 1316,1096 L 1316,1170 A 148.0,14 0 0 1 1020,1170 Z" fill="#ecfdf5" stroke="#a7d8c9" stroke-width="1.5"/>
+<ellipse cx="1168.0" cy="1096" rx="148.0" ry="14" fill="none" stroke="#a7d8c9" stroke-width="1.5"/>
+<text x="1168.0" y="1131" text-anchor="middle" fill="#111827" font-size="18" font-weight="700">本地文件 / MinIO</text>
+<text x="1168.0" y="1157" text-anchor="middle" fill="#64748b" font-size="14" font-weight="400">影像文件 / 分析产物 / 报告</text>
+<text x="1168" y="1220" text-anchor="middle" fill="#64748b" font-size="14" font-weight="400">知识图谱按用户存储于 PostgreSQL</text>
+<path d="M 912,978 L 1020,978" fill="none" stroke="#059669" stroke-width="2" stroke-dasharray="6 5" marker-end="url(#arrow-green)"/>
+<rect x="945.0" y="963" width="44" height="23" rx="4" fill="#ffffff" stroke="none" stroke-width="1.5"/>
+<text x="967" y="980" text-anchor="middle" fill="#059669" font-size="14" font-weight="400">状态</text>
+<path d="M 203,1244 L 203,1292 L 500,1292" fill="none" stroke="#7c3aed" stroke-width="2"/>
+<path d="M 510,1244 L 510,1292 L 500,1292" fill="none" stroke="#7c3aed" stroke-width="2"/>
+<path d="M 817,1244 L 817,1292 L 500,1292" fill="none" stroke="#7c3aed" stroke-width="2"/>
+<path d="M 500,1292 L 500,1338" fill="none" stroke="#7c3aed" stroke-width="2" marker-end="url(#arrow-purple)"/>
+<rect x="457.0" y="1300" width="86" height="23" rx="4" fill="#ffffff" stroke="none" stroke-width="1.5"/>
+<text x="500" y="1317" text-anchor="middle" fill="#7c3aed" font-size="14" font-weight="400">结构化结果</text>
+<rect x="64" y="1338" width="886" height="92" rx="10" fill="#ecfdf5" stroke="#d1d5db" stroke-width="1.5"/>
+<text x="507.0" y="1368" text-anchor="middle" fill="#111827" font-size="20" font-weight="700">06  结果回流与交付</text>
+<text x="507.0" y="1394" text-anchor="middle" fill="#64748b" font-size="15" font-weight="400">工具摘要回到 Agent · SSE 更新地图与对话 · 会话成果保存</text>
+<text x="507.0" y="1417" text-anchor="middle" fill="#64748b" font-size="15" font-weight="400">按需基于真实结果生成 Word 报告 · 下载 GeoTIFF / GeoJSON / PNG</text>
+<rect x="1000" y="1338" width="336" height="92" rx="10" fill="#ffffff" stroke="#d1d5db" stroke-width="1.5"/>
+<text x="1168.0" y="1368" text-anchor="middle" fill="#111827" font-size="20" font-weight="700">外部依赖</text>
+<text x="1168.0" y="1394" text-anchor="middle" fill="#64748b" font-size="15" font-weight="400">兼容模型端点 / Embedding</text>
+<text x="1168.0" y="1417" text-anchor="middle" fill="#64748b" font-size="15" font-weight="400">STAC 数据源 / 搜索 / 地图</text>
+<path d="M 56,1470 L 94,1470" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow-blue)"/>
+<text x="105" y="1475" text-anchor="start" fill="#64748b" font-size="14" font-weight="400">请求 / 数据</text>
+<path d="M 265,1470 L 303,1470" fill="none" stroke="#059669" stroke-width="2" marker-end="url(#arrow-green)"/>
+<text x="314" y="1475" text-anchor="start" fill="#64748b" font-size="14" font-weight="400">上下文 / 存储</text>
+<path d="M 494,1470 L 532,1470" fill="none" stroke="#7c3aed" stroke-width="2" marker-end="url(#arrow-purple)"/>
+<text x="543" y="1475" text-anchor="start" fill="#64748b" font-size="14" font-weight="400">结果反馈</text>
+<path d="M 695,1470 L 733,1470" fill="none" stroke="#ea580c" stroke-width="2" stroke-dasharray="6 5" marker-end="url(#arrow-orange)"/>
+<text x="744" y="1475" text-anchor="start" fill="#64748b" font-size="14" font-weight="400">异常 / 拒绝</text>
+<text x="56" y="1508" text-anchor="start" fill="#64748b" font-size="13" font-weight="400">图为职责与主调用路径；共享存储和外部依赖按需访问，省略重复连线。SAM3 与 MCP 的运行边界分别标注。</text>
+</svg>
