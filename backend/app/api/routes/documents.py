@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 
 from app.auth.current_user import get_current_user_id
 from app.agent.embedding.service import EmbeddingUnavailableError, get_embedding_service
+from app.api.errors import require_uuid
 from app.db.errors import is_missing_schema_error
 from app.db.pool import fetch_optional_pool
 from app.db.repositories.document import (
@@ -272,6 +273,11 @@ async def upload_document(
 
 @router.get("/documents/jobs/{job_id}", response_model=DocumentJobResponse)
 async def get_document_job(job_id: str) -> DocumentJobResponse:
+    job_id = require_uuid(
+        job_id,
+        code="DOCUMENT_JOB_NOT_FOUND",
+        message="Document ingest job was not found.",
+    )
     user_id = get_current_user_id()
     pool = await _require_document_db()
     try:
@@ -291,6 +297,11 @@ async def get_document_job(job_id: str) -> DocumentJobResponse:
 
 @router.get("/documents/{document_id}", response_model=DocumentDetailResponse)
 async def get_knowledge_document(document_id: str) -> DocumentDetailResponse:
+    document_id = require_uuid(
+        document_id,
+        code="DOCUMENT_NOT_FOUND",
+        message="Document was not found.",
+    )
     user_id = get_current_user_id()
     pool = await _require_document_db()
     async with pool.acquire() as conn:
@@ -320,6 +331,11 @@ async def get_knowledge_document_chunks(
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
 ) -> DocumentChunksResponse:
+    document_id = require_uuid(
+        document_id,
+        code="DOCUMENT_NOT_FOUND",
+        message="Document was not found.",
+    )
     user_id = get_current_user_id()
     pool = await _require_document_db()
     async with pool.acquire() as conn:
@@ -659,6 +675,11 @@ async def _fail_ingest_job(job_id: str, code: str, message: str) -> None:
 
 @router.delete("/documents/{document_id}", response_model=DocumentDeleteResponse)
 async def remove_document(document_id: str) -> DocumentDeleteResponse:
+    document_id = require_uuid(
+        document_id,
+        code="DOCUMENT_NOT_FOUND",
+        message="Document was not found.",
+    )
     user_id = get_current_user_id()
     pool = await _require_document_db()
     async with pool.acquire() as conn:

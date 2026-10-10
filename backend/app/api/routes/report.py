@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 
 from app.agent.report.builder import ReportError, build_conversation_report
 from app.agent.persistence import PersistenceContext, save_assistant_response
+from app.api.errors import require_uuid
 from app.auth import get_current_user_id
 
 router = APIRouter(tags=["reports"])
@@ -39,8 +40,15 @@ class ReportCreateResponse(BaseModel):
 async def create_report(request: ReportCreateRequest) -> ReportCreateResponse:
     user_id = get_current_user_id()
     try:
+        # G8：非法 conversation_id 与"对话不存在"同形（404），不再把坏字符串
+        # 打到 DB 引发 DataError→500。
+        conversation_id = require_uuid(
+            request.conversation_id,
+            code="conversation_forbidden",
+            message="未找到该对话或无权访问，无法生成报告。",
+        )
         artifact = await build_conversation_report(
-            conversation_id=request.conversation_id,
+            conversation_id=conversation_id,
             user_id=user_id,
             imagery_id=request.imagery_id,
         )

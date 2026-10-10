@@ -23,9 +23,11 @@
 
 from __future__ import annotations
 
+from uuid import UUID
+
 from fastapi import HTTPException
 
-__all__ = ["api_error", "ERROR_MESSAGES"]
+__all__ = ["api_error", "ERROR_MESSAGES", "require_uuid"]
 
 
 def api_error(status_code: int, code: str, message: str) -> HTTPException:
@@ -54,3 +56,18 @@ def coded_error(code: str, message_override: str | None = None) -> HTTPException
     """按错误码目录抛错；message 可覆写（如带具体 ID）。"""
     status, default_message = ERROR_MESSAGES.get(code, (400, "请求无效。"))
     return api_error(status, code, message_override or default_message)
+
+
+def require_uuid(value: str, *, code: str, message: str) -> str:
+    """校验来自路径/请求体的 UUID 字符串，非法即 404（G8）。
+
+    历史缺陷：路由把原始字符串直接传给仓储层，SQL 里 ``$1::uuid`` 让
+    asyncpg 抛 ``DataError: invalid input for query argument``，FastApi 兜成
+    500。参照 ``routes/chat.py`` 的 ``UUID(...)`` 写法抽成公共校验：非法值与
+    "资源不存在"返回同一个 404 信封（同一个 code），既不泄露校验时机差异，
+    也杜绝坏字符串打到数据库。返回规范化（小写连字符）后的 UUID 字符串。
+    """
+    try:
+        return str(UUID(value))
+    except (TypeError, ValueError, AttributeError):
+        raise api_error(404, code, message) from None
