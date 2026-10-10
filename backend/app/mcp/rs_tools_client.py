@@ -7,6 +7,7 @@ from pathlib import Path
 import tempfile
 import os
 from hashlib import sha256
+from uuid import uuid4
 from typing import Any
 
 from app.mcp.client import MCPCallError, StdioMCPClient
@@ -64,6 +65,10 @@ class RSToolsMCPClient:
             "run",
             "--rm",
             "--pull=never",
+            # G10：命名容器——超时/取消时 StdioMCPClient 按名 docker kill，
+            # 否则只杀本地 docker 客户端进程，容器本体继续在引擎上运行。
+            "--name",
+            f"rs-{uuid4().hex[:12]}",
             "-i",
             "--network",
             self.network,
