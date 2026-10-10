@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { MessageSquare, Trash2, RefreshCw, Pencil, Check, X, FolderOpen } from "lucide-react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -31,6 +31,10 @@ export function HistoryPanel({
   const [error, setError] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
+  // G20（2026-10-09 审查）：快速切换历史会话时，先点的慢请求可能后返回，
+  // 覆盖最终选中的会话。请求序号 ref：每次 open 自增，只有最新一次请求的
+  // 结果（含错误）允许生效，过期结果一律丢弃。
+  const openSeqRef = useRef(0);
 
   const refresh = async () => {
     setLoading(true);
@@ -50,9 +54,12 @@ export function HistoryPanel({
   }, []);
 
   const open = async (id: string) => {
+    const seq = ++openSeqRef.current;
     setError("");
     try {
       const messages = await listConversationMessages(id);
+      // 过期请求：用户已点击更新的会话，丢弃本次结果，不得覆盖最新选择。
+      if (seq !== openSeqRef.current) return;
       onOpen(
         id,
         // 透传 metadata：loadConversation 据此还原 geospatial_result/tool_result，
@@ -60,6 +67,8 @@ export function HistoryPanel({
         messages.map((m) => ({ role: m.role, content: m.content, metadata: m.metadata })),
       );
     } catch (err) {
+      // 过期请求的错误同样不得展示，避免误导用户以为最新选择失败。
+      if (seq !== openSeqRef.current) return;
       setError(err instanceof Error ? err.message : String(err));
     }
   };
