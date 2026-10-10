@@ -5,6 +5,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from app.api.errors import require_uuid
 from app.auth import get_current_user_id
 from app.db.pool import fetch_optional_pool
 from app.db.repositories.conversation import (
@@ -81,6 +82,11 @@ async def list_user_conversation_messages(
     limit: int = Query(default=100, ge=1, le=100),
     before: str | None = Query(default=None, pattern=r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
 ) -> ConversationMessagesResponse:
+    conversation_id = require_uuid(
+        conversation_id,
+        code="CONVERSATION_NOT_FOUND",
+        message="Conversation was not found.",
+    )
     pool = await _require_db()
     user_id = get_current_user_id()
     async with pool.acquire() as conn:
@@ -118,6 +124,11 @@ async def update_user_conversation(
     conversation_id: str,
     request: ConversationUpdateRequest,
 ) -> dict[str, bool]:
+    conversation_id = require_uuid(
+        conversation_id,
+        code="CONVERSATION_NOT_FOUND",
+        message="Conversation was not found.",
+    )
     pool = await _require_db()
     async with pool.acquire() as conn:
         updated = await update_conversation_title(
@@ -136,6 +147,11 @@ async def update_user_conversation(
 
 @router.delete("/conversations/{conversation_id}")
 async def delete_user_conversation(conversation_id: str) -> dict[str, bool]:
+    conversation_id = require_uuid(
+        conversation_id,
+        code="CONVERSATION_NOT_FOUND",
+        message="Conversation was not found.",
+    )
     pool = await _require_db()
     async with pool.acquire() as conn:
         async with conn.transaction():

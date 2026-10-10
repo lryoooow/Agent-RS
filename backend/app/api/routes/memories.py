@@ -5,6 +5,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
+from app.api.errors import require_uuid
 from app.auth import get_current_user_id
 from app.db.pool import fetch_optional_pool
 from app.db.repositories.memory import delete_memory, list_memories
@@ -47,6 +48,11 @@ async def list_user_memories(limit: int = Query(default=100, ge=1, le=200)) -> M
 
 @router.delete("/memories/{memory_id}")
 async def delete_user_memory(memory_id: str) -> dict[str, bool]:
+    memory_id = require_uuid(
+        memory_id,
+        code="MEMORY_NOT_FOUND",
+        message="Memory was not found.",
+    )
     pool = await _require_db()
     async with pool.acquire() as conn:
         deleted = await delete_memory(conn, user_id=get_current_user_id(), memory_id=memory_id)

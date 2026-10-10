@@ -88,7 +88,7 @@ backend/tests/ai/thinkgeo/paper_2505.23752.pdf
 backend/.tmp_*
 .data_tmp_*
 
-# 外部项目审查产物（gf2-service @172.18.0.207，防止 git add -A 误提交）
+# 外部项目审查产物（gf2-service 内网审查机，防止 git add -A 误提交）
 .audit_20261008/
 影像处理服务复审报告_20261008.md
 .tmp_*
