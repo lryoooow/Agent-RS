@@ -2,15 +2,32 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import subprocess
 import threading
 from typing import Any
 
 PROTOCOL_VERSION = "2024-11-05"
 
+logger = logging.getLogger(__name__)
+
+# G10：docker kill 的等待上限；容器已退出/不存在时 docker kill 非零返回，忽略。
+CONTAINER_KILL_TIMEOUT_SECONDS = 10.0
+
 
 class MCPCallError(Exception):
     """Raised when the MCP server returns an error or the transport fails."""
+
+
+def _container_name_from_command(command: list[str]) -> str | None:
+    """从命令行解析 ``--name <value>``（G10：超时按名 kill 容器用）。"""
+    for index, arg in enumerate(command):
+        if arg.startswith("--name="):
+            value = arg.split("=", 1)[1]
+            return value or None
+        if arg == "--name" and index + 1 < len(command):
+            return command[index + 1] or None
+    return None
 
 
 class StdioMCPClient:
@@ -26,6 +43,9 @@ class StdioMCPClient:
         self.timeout_seconds = timeout_seconds
         self.client_name = client_name
         self.client_version = client_version
+        # G10：docker run 的本地客户端进程被 kill 并不会停止容器本体；
+        # 命令带 --name 时超时/取消改为（并）按名 docker kill 容器。
+        self._container_name = _container_name_from_command(command)
 
     async def call_tool(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         try:
@@ -46,6 +66,8 @@ class StdioMCPClient:
             completed = True
             return result
         except (asyncio.CancelledError, Exception):
+            # G10：先按名杀容器，再回收本地 docker 客户端进程。
+            await self._kill_container()
             await self._kill_process(proc)
             raise
         finally:
@@ -166,6 +188,42 @@ class StdioMCPClient:
         except asyncio.TimeoutError:
             pass
 
+    async def _kill_container(self) -> None:
+        """G10：按名 docker kill 容器。
+
+        kill 本地 ``docker run`` 客户端进程不会停止容器本体——容器继续占用
+        CPU/内存/挂载直至自行结束。命令带 ``--name`` 时按名杀容器；容器已
+        退出（``--rm`` 自动清理）时 docker kill 非零返回，属预期，忽略。
+        """
+        if not self._container_name:
+            return
+        try:
+            kill = await asyncio.create_subprocess_exec(
+                "docker",
+                "kill",
+                self._container_name,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            await asyncio.wait_for(kill.wait(), timeout=CONTAINER_KILL_TIMEOUT_SECONDS)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - 清理失败不得掩盖原始异常
+            logger.debug("docker kill %s failed during cleanup", self._container_name, exc_info=True)
+
+    def _kill_container_sync(self) -> None:
+        if not self._container_name:
+            return
+        try:
+            subprocess.run(
+                ["docker", "kill", self._container_name],
+                capture_output=True,
+                timeout=CONTAINER_KILL_TIMEOUT_SECONDS,
+                check=False,
+            )
+        except Exception:  # noqa: BLE001 - 清理失败不得掩盖原始异常
+            logger.debug("docker kill %s failed during cleanup", self._container_name, exc_info=True)
+
     async def _call_tool_sync_with_timeout(
         self,
         tool_name: str,
@@ -182,6 +240,8 @@ class StdioMCPClient:
             cancelled.set()
             proc = proc_holder.get("proc")
             if proc is not None:
+                # G10：线程内先按名杀容器再回收本地进程（同异步路径的顺序）。
+                await asyncio.to_thread(self._kill_container_sync)
                 await asyncio.to_thread(self._kill_process_sync, proc)
             raise
 
@@ -212,6 +272,8 @@ class StdioMCPClient:
             completed = True
             return result
         except Exception:
+            # G10：先按名杀容器，再回收本地进程（同异步路径的顺序）。
+            self._kill_container_sync()
             self._kill_process_sync(proc)
             raise
         finally:
