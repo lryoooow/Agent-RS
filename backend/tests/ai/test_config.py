@@ -15,6 +15,7 @@ def _set_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AI_BASE_URL", "https://env.example/v1")
     monkeypatch.setenv("AI_API_KEY", "env-key")
     monkeypatch.setenv("AI_DEFAULT_MODEL", "env-model")
+    monkeypatch.setenv("ALLOW_CLIENT_PROVIDER_CONFIG", "true")
     reset_settings()
 
 
@@ -48,7 +49,7 @@ def test_missing_model_raises_config_error(monkeypatch: pytest.MonkeyPatch) -> N
 # ---------- 常规：允许且合规时，前端值覆盖 env ----------
 
 def test_client_provider_config_applied_when_allowed_and_valid(monkeypatch: pytest.MonkeyPatch) -> None:
-    # 契约：allow_client_provider_config=True（默认）且客户端 base_url 通过 SSRF 校验、
+    # 契约：allow_client_provider_config=True（测试显式开启）且客户端 base_url 通过 SSRF 校验、
     # 覆盖 base_url 时自带 api_key → 客户端三项覆盖 env。白名单内主机跳过 DNS（测试免联网）。
     _set_env(monkeypatch)
     monkeypatch.setenv("AI_PROVIDER_ALLOWED_HOSTS", "client.example")

@@ -11,6 +11,9 @@ def make_client() -> TestClient:
 
 
 def test_health_route(monkeypatch, tmp_path) -> None:
+    # This is a response-contract unit test. TestClient requests made without
+    # lifespan use different loops; do not inherit a developer's real DB pool.
+    monkeypatch.setenv("DATABASE_ENABLED", "false")
     monkeypatch.setenv("IMAGERY_UPLOAD_DIR", str(tmp_path / "imagery"))
     for name in ("TOOLS", "DETECT", "DOC"):
         monkeypatch.setenv(f"RS_{name}_MCP_IMAGE", f"rs-{name.lower()}-mcp:0.1.0")
@@ -19,10 +22,17 @@ def test_health_route(monkeypatch, tmp_path) -> None:
     response = client.get("/api/health")
 
     assert response.status_code == 200
-    body = response.json()
+    assert response.json() == {"ok": True, "status": "ok"}
+    assert "api_key_configured" not in response.text
+    assert "docker" not in response.text
+    assert "rs-tools-mcp" not in response.text
+
+    details = client.get("/api/health/details")
+    assert details.status_code == 200
+    body = details.json()
     assert body["ok"] is True
     assert body["storage_writable"] is True
-    assert "api_key_configured" in body
+    assert body["database_ready"] is True
     assert "docker_available" in body
     assert {
         name: value["image"]
@@ -34,7 +44,9 @@ def test_health_route(monkeypatch, tmp_path) -> None:
         "rs_doc_mcp": "rs-doc-mcp:0.1.0",
     }
     for name in ("rs_tools_mcp", "rs_detect_mcp", "rs_doc_mcp"):
-        assert set(body[name]) == {"use_docker", "image", "docker_command_available", "image_present", "ready"}
+        assert set(body[name]) == {
+            "use_docker", "image", "docker_command_available", "image_present", "ready"
+        }
     assert body["sam3"]["enabled"] is True
     assert body["sam3"]["model"] == "SAM3"
 
@@ -159,3 +171,52 @@ def test_chat_route_streams_sse_response() -> None:
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/event-stream")
     assert 'event: delta\ndata: {"content": "hello"}' in response.text
+
+
+def test_chat_non_stream_response_filters_unknown_internal_fields() -> None:
+    class FakeChatService:
+        async def chat(self, _):
+            return {
+                "content": "ok",
+                "model": "test-model",
+                "provider": "test-provider",
+                "internal_traceback": "must-not-leak",
+                "raw_database_row": {"secret": True},
+            }
+
+    get_settings.cache_clear()
+    app = create_app()
+    app.dependency_overrides[get_chat_service] = lambda: FakeChatService()
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/chat",
+        json={"messages": [{"role": "user", "content": "hello"}]},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["content"] == "ok"
+    assert "internal_traceback" not in response.json()
+    assert "raw_database_row" not in response.json()
+
+
+def test_chat_stream_emits_keepalive_during_silent_tool() -> None:
+    import asyncio
+
+    from app.api.routes.chat import stream_with_heartbeat
+
+    async def silent_then_done():
+        await asyncio.sleep(0.04)
+        yield 'event: done\ndata: {"finish_reason": "stop"}\n\n'
+
+    async def collect():
+        return [
+            chunk
+            async for chunk in stream_with_heartbeat(
+                silent_then_done(), interval_seconds=0.01
+            )
+        ]
+
+    chunks = asyncio.run(collect())
+    assert chunks.count(": keepalive\n\n") >= 2
+    assert chunks[-1].startswith("event: done")

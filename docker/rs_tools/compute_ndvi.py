@@ -3,9 +3,20 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import numpy as np
 import rasterio
+
+from raster_utils import (
+    UncalibratedInputError,
+    as_numeric,
+    calibrate_reflectance,
+    pixel_counts,
+    safe_ratio,
+    require_valid_pixels,
+    valid_mask,
+)
 
 
 def compute(
@@ -31,34 +42,63 @@ def compute(
             raise ValueError(
                 f"Requested bands ({red_band}, {nir_band}) exceed available bands ({src.count})"
             )
-        red = src.read(red_band).astype(np.float32)
-        nir = src.read(nir_band).astype(np.float32)
+        red = src.read(red_band)
+        nir = src.read(nir_band)
         profile = src.profile.copy()
 
-    denominator = nir + red
-    with np.errstate(divide="ignore", invalid="ignore"):
-        ndvi = np.where(denominator == 0, np.nan, (nir - red) / denominator)
+        # 统一无效像元判定（A3）：NaN/nodata 元数据不再污染统计量。
+        valid = valid_mask(src, (red, nir), band_indexes=(red_band, nir_band))
+        require_valid_pixels(valid)
 
-    output_tif = "ndvi.tif"
-    output_png = "ndvi_colored.png"
+        # Only declared calibration is applied. An entirely unknown generic DN
+        # input may yield a labelled relative ratio; damaged or incomplete
+        # declarations and known offset-prone products must fail explicitly.
+        try:
+            calibrated_bands, cal_info = calibrate_reflectance(src, {"red": red, "nir": nir}, band_indexes={"red": red_band, "nir": nir_band})
+            calibrated = cal_info["method"] != "unknown_all_invalid"
+            red, nir = calibrated_bands["red"], calibrated_bands["nir"]
+        except UncalibratedInputError:
+            calibrated = False
+            red, nir = as_numeric(red), as_numeric(nir)
+            cal_info = {"method": "uncalibrated_relative", "method_version": "reflectance-v2", "bands": {}}
+
+    with np.errstate(over="ignore", invalid="ignore"):
+        ndvi = safe_ratio(nir - red, nir + red)
+    # 无效像元（nodata/NaN）置 NaN，不进 min/mean/std。
+    with np.errstate(over="ignore", invalid="ignore"):
+        ndvi = ndvi.astype(np.float32, copy=False)
+    ndvi[~valid | ~np.isfinite(ndvi)] = np.nan
+    require_valid_pixels(np.isfinite(ndvi))
+
+    # 每次运行的输出带 uuid 后缀，重跑不覆盖历史结果（A6）。
+    run_id = uuid4().hex[:16]
+    output_tif = f"ndvi_{run_id}.tif"
+    output_png = f"ndvi_{run_id}_colored.png"
     profile.update(dtype="float32", count=1, nodata=np.nan)
     with rasterio.open(out / output_tif, "w", **profile) as dst:
         dst.write(ndvi, 1)
 
     stats = _stats(ndvi)
+    stats["calibrated"] = calibrated
+    stats["calibration"] = cal_info
+    stats["method_version"] = "ndvi-v2"
+    stats["resolved_bands"] = {"red": red_band, "nir": nir_band}
+    stats["input_valid_pixels"] = int(valid.sum())
+    stats["math_invalid_pixels"] = int(np.count_nonzero(valid & ~np.isfinite(ndvi)))
     stats["output_tif"] = output_tif
     stats["output_png"] = output_png
-    (out / "ndvi_stats.json").write_text(json.dumps(stats), encoding="utf-8")
+    (out / f"ndvi_{run_id}_stats.json").write_text(json.dumps(stats), encoding="utf-8")
 
     _write_colored_png(ndvi, out / output_png)
     return stats
 
 
 def _stats(ndvi: np.ndarray) -> dict[str, Any]:
-    valid = ndvi[np.isfinite(ndvi)]
+    valid = ndvi[np.isfinite(ndvi)].astype(np.float64)
     total = ndvi.size
     nodata = total - valid.size
     return {
+        **pixel_counts(np.isfinite(ndvi)),
         "min": float(np.min(valid)) if valid.size else 0.0,
         "max": float(np.max(valid)) if valid.size else 0.0,
         "mean": float(np.mean(valid)) if valid.size else 0.0,

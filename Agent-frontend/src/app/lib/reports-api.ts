@@ -1,4 +1,5 @@
-import { apiFetch } from "./http";
+import { apiJson } from "./http";
+import { isSafeSameOriginUrl } from "./urls";
 
 export type ReportArtifact = {
   imagery_id: string;
@@ -15,6 +16,19 @@ export async function createReport(params: {
   const body: Record<string, string> = { conversation_id: params.conversationId };
   if (params.imageryId) body.imagery_id = params.imageryId;
   // 报告生成含 Word 渲染，放宽到 2 分钟。
-  const response = await apiFetch("/reports", { method: "POST", json: body, timeoutMs: 120_000 });
-  return (await response.json()) as ReportArtifact;
+  return apiJson(
+    "/reports",
+    { method: "POST", json: body, timeoutMs: 120_000 },
+    (raw) => {
+      if (!raw || typeof raw !== "object") return undefined;
+      const value = raw as Record<string, unknown>;
+      if (typeof value.imagery_id !== "string" || typeof value.filename !== "string") return undefined;
+      if (!isSafeSameOriginUrl(value.download_url)) return undefined;
+      return {
+        imagery_id: value.imagery_id,
+        filename: value.filename,
+        download_url: value.download_url,
+      };
+    },
+  );
 }

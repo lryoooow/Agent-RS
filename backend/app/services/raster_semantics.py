@@ -30,17 +30,75 @@ def band_semantics(path: Path) -> dict[str, Any]:
     return _extract_metadata(original if original.is_file() else path)
 
 
-def resolve_rgb(path: Path, requested: dict[str, int], *, explicit: bool = False) -> dict[str, int]:
-    meta = band_semantics(path)
-    invalid = {role: index for role, index in requested.items() if index < 1 or index > meta["band_count"]}
-    if explicit and invalid:
-        raise ValueError(f"影像只有 {meta['band_count']} 个波段，无法使用 {invalid}")
+def resolve_rgb(path: Path, requested: dict[str, int], *, explicit: set[str] | bool = False) -> dict[str, int]:
+    fields = {role + "_band" for role in requested} if explicit is True else (explicit or set())
+    return resolve_spectral_bands(path, requested, explicit=set(fields))
+
+
+class BandResolutionError(ValueError):
+    def __init__(self, code: str, detail: str):
+        self.code = code
+        super().__init__(f"{code}: {detail}")
+
+
+def validate_spectral_selection(meta: dict[str, Any], selected: dict[str, int]) -> None:
+    """Validate actual bands after resolving defaults, never before metadata resolution."""
     roles = meta.get("band_roles") or {}
-    if all(role in roles for role in ("red", "green", "blue")):
-        return {role: int(roles[role]) for role in ("red", "green", "blue")}
-    if explicit:
-        return requested
-    raise ValueError("源影像缺少可用的 RGB 波段定义；需要提供红、绿、蓝波段号，不能套用 GF-2 默认值。")
+    conflicts = meta.get("band_role_conflicts") or {}
+    spectral_roles = {"red", "green", "blue", "nir", "swir", "swir1", "swir2"}
+    actual_spectral = {role: index for role, index in selected.items() if role in spectral_roles}
+    if len(set(actual_spectral.values())) != len(actual_spectral):
+        raise BandResolutionError("invalid_bands", "不同光谱角色不能使用同一波段。")
+    for role, index in selected.items():
+        if index < 1:
+            raise BandResolutionError("invalid_bands", "波段索引必须从 1 开始。")
+        if index > meta["band_count"]:
+            raise BandResolutionError("invalid_bands", f"影像只有 {meta['band_count']} 个波段，无法使用 {role}=B{index}。")
+        if index in (meta.get("alpha_bands") or []):
+            raise BandResolutionError("invalid_bands", f"B{index} 是 Alpha 透明度波段，不能作为 {role} 光谱波段。")
+        if role not in spectral_roles:
+            continue  # Display-channel names describe placement, not physical wavelengths.
+        if role in conflicts:
+            raise BandResolutionError("band_roles_unknown", f"ambiguous: {role} 对应多个波段 {conflicts[role]}，需要修正影像波段定义。")
+        authoritative = meta.get("band_roles_source") in {"descriptions", "colorinterp", "positional_gf2", "stac_assets"}
+        if authoritative and role in roles and int(roles[role]) != index:
+            raise BandResolutionError("invalid_bands", f"{role}=B{index} 与影像真实角色 {role}=B{roles[role]} 冲突，不能由模型改写。")
+        for declared, number in roles.items():
+            if authoritative and int(number) == index and declared != role:
+                if declared == "swir" and role in {"swir1", "swir2"}:
+                    continue  # Qualified explicit fields can disambiguate legacy generic SWIR.
+                raise BandResolutionError("invalid_bands", f"B{index} 已定义为 {declared}，不能作为 {role}。")
+
+
+def resolve_spectral_bands(
+    path: Path,
+    requested: dict[str, int],
+    *,
+    explicit: set[str],
+    required: set[str] | None = None,
+) -> dict[str, int]:
+    """Resolve missing arguments from the actual image; explicit values cannot contradict known roles."""
+    meta = band_semantics(path)
+    roles = meta.get("band_roles") or {}
+    conflicts = meta.get("band_role_conflicts") or {}
+    required = set(requested) if required is None else required
+    resolved: dict[str, int] = {}
+    missing: list[str] = []
+    for role, value in requested.items():
+        if role in required and role in conflicts:
+            raise BandResolutionError("band_roles_unknown", f"ambiguous: {role} 对应多个波段 {conflicts[role]}，不能选择第一个。")
+        if f"{role}_band" in explicit:
+            resolved[role] = int(value)
+        elif role in roles:
+            resolved[role] = int(roles[role])
+        elif role in required:
+            missing.append(role)
+        else:
+            resolved[role] = int(value)
+    if missing:
+        raise BandResolutionError("band_roles_unknown", "影像缺少 " + "/".join(sorted(missing)) + " 的明确波段角色；不能套用默认波序或把 SWIR1/SWIR2 混同。")
+    validate_spectral_selection(meta, {role: resolved[role] for role in required})
+    return resolved
 
 
 def format_grids(context: dict[str, Any]) -> list[str]:

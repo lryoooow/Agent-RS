@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import numpy as np
 import rasterio
@@ -84,7 +85,8 @@ def compute(
         "grayscale": bool(grayscale or band_count == 1),
         "engine": "rapidocr_onnxruntime/PP-OCRv4",
     }
-    (out / "ocr_result.json").write_text(
+    stats["output_json"] = f"ocr_{uuid4().hex[:16]}.json"
+    (out / stats["output_json"]).write_text(
         json.dumps(stats, ensure_ascii=False), encoding="utf-8"
     )
     return stats
@@ -172,5 +174,7 @@ def _engine() -> Any:
     if _OCR_ENGINE is None:
         from rapidocr_onnxruntime import RapidOCR
 
-        _OCR_ENGINE = RapidOCR()
+        # Three ONNX sessions share the container's two-CPU quota. Letting each
+        # session spawn one thread per host core causes heavy oversubscription.
+        _OCR_ENGINE = RapidOCR(intra_op_num_threads=2, inter_op_num_threads=1)
     return _OCR_ENGINE

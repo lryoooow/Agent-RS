@@ -97,15 +97,61 @@ def render_scene_preview(record: SceneRecord, out_path: Path) -> Path:
     return out_path
 
 
-def _apply_reflectance(record: SceneRecord, band: np.ndarray) -> np.ndarray:
-    """Landsat SR 的偏置量化必须转真反射率，否则比值类指数（NDVI 等）失真。
+def _calibration_for(record: SceneRecord, role: str) -> dict | None:
+    if record.band_calibration:
+        return record.band_calibration.get(role)
+    if record.reflectance_scale is not None and record.reflectance_offset is not None:
+        return {"scale": record.reflectance_scale, "offset": record.reflectance_offset,
+                "quantity": "surface_reflectance", "source": "scene_record_explicit"}
+    return None
 
-    S2 L2A 的 DN/10000 是纯线性缩放（无偏置），比值不变，保持整型原值即可。
-    """
-    if record.reflectance_scale is None or record.reflectance_offset is None:
+
+def _apply_reflectance(record: SceneRecord, band: np.ndarray, role: str) -> np.ndarray:
+    calibration = _calibration_for(record, role)
+    if calibration is None or not record.reflectance_applied_at_compose:
         return band
-    converted = band.astype(np.float32) * record.reflectance_scale + record.reflectance_offset
-    return np.where(band == 0, 0.0, converted)  # 0 是 nodata，保持 0 不参与拉伸
+    # WarpedVRT already marks invalid source pixels NaN; never use pixel value zero as an extra mask.
+    return band.astype(np.float32) * calibration["scale"] + calibration["offset"]
+
+
+def _compose_quality(record: SceneRecord, path: Path, profile: dict) -> dict | None:
+    if not record.quality_assets:
+        return None
+    import rasterio
+    from rasterio.enums import Resampling
+    from rasterio.vrt import WarpedVRT
+    if len(record.quality_assets) != 1:
+        raise SceneRasterError("场景质量分类来源有歧义，不能混合解码。")
+    kind, href = next(iter(record.quality_assets.items()))
+    if kind not in {"sentinel2_scl", "landsat_c2_qa_pixel"}:
+        raise SceneRasterError("未知场景质量分类格式。")
+    dtype = "uint8" if kind == "sentinel2_scl" else "uint16"
+    fill = 0 if kind == "sentinel2_scl" else 1  # Landsat QA_PIXEL bit0=fill; zero is a valid bit pattern.
+    pending = path.with_suffix(".tif.pending")
+    try:
+        with rasterio.Env(**_gdal_env()):
+            with rasterio.open(_open_path(signed_href(href, record.quality_sign_info.get(kind)))) as src:
+                if src.count != 1 or np.dtype(src.dtypes[0]) != np.dtype(dtype):
+                    raise SceneRasterError("场景质量分类必须为单波段整数编码。")
+                with WarpedVRT(src, crs=profile["crs"], transform=profile["transform"],
+                    width=profile["width"], height=profile["height"], dtype=dtype,
+                    src_nodata=src.nodata, nodata=fill,
+                    resampling=Resampling.nearest) as aligned:
+                    data = aligned.read(1)
+        quality_profile = {**profile, "count": 1, "dtype": dtype, "nodata": fill}
+        with rasterio.open(pending, "w", **quality_profile) as dst:
+            dst.write(data, 1)
+            dst.set_band_description(1, kind)
+            dst.update_tags(QA_TYPE=kind, QA_SENSOR=record.satellite, QA_SOURCE=record.source,
+                            QA_ITEM_ID=record.item_id, QA_SCENE_KEY=record.key)
+        pending.replace(path)
+    except Exception as exc:
+        pending.unlink(missing_ok=True)
+        if isinstance(exc, SceneRasterError):
+            raise
+        raise SceneRasterError("场景质量分类读取或对齐失败。") from exc
+    return {"filename": "quality.tif", "type": kind, "source": record.source,
+            "item_id": record.item_id, "scene_key": record.key}
 
 
 def compose_scene_tif(
@@ -113,6 +159,7 @@ def compose_scene_tif(
     out_path: Path,
     *,
     bbox: list[float] | None = None,
+    cancellation_event=None,
 ) -> dict:
     """合成多波段 GeoTIFF（下载/导入共用），返回附注元数据。
 
@@ -160,13 +207,15 @@ def compose_scene_tif(
 
                 bands: list[np.ndarray] = []
                 for role in roles:
+                    if cancellation_event is not None and cancellation_event.is_set():
+                        raise SceneRasterError("场景合成已取消。")
                     href = base_href if role == "red" else _band_href(record, role)
                     with rasterio.open(_open_path(href)) as src:
                         with WarpedVRT(src, crs=crs, transform=transform, width=out_width, height=out_height,
                                        src_nodata=src.nodata if src.nodata is not None else 0,
                                        nodata=float("nan"), dtype="float32", resampling=Resampling.bilinear) as aligned:
                             data = aligned.read(1)
-                    bands.append(_apply_reflectance(record, data))
+                    bands.append(_apply_reflectance(record, data, role))
         except SceneRasterError:
             raise
         except Exception as exc:
@@ -195,19 +244,54 @@ def compose_scene_tif(
         for index, (role, data) in enumerate(zip(roles, bands), start=1):
             dst.write(data, index)
             dst.set_band_description(index, role)
-        dst.update_tags(
-            NATIVE_PIXEL_SIZE=",".join(map(str, native_size)),
-            SENSOR=record.satellite,
-            ACQUISITIONDATE=record.datetime,
-        )
+            calibration = _calibration_for(record, role)
+            if calibration is not None:
+                dst.update_tags(index, REFL_SCALE=f"{calibration['scale']:.17g}",
+                    REFL_OFFSET=f"{calibration['offset']:.17g}",
+                    REFL_APPLIED=str(record.reflectance_applied_at_compose).lower(),
+                    REFL_SOURCE=calibration["source"], REFL_QUANTITY=calibration["quantity"])
+        applied = record.reflectance_applied_at_compose
+        calibrations = [_calibration_for(record, role) for role in roles]
+        dst.scales = tuple(1.0 if applied or c is None else c["scale"] for c in calibrations)
+        dst.offsets = tuple(0.0 if applied or c is None else c["offset"] for c in calibrations)
+        dst.units = tuple("reflectance" if applied and c is not None else "dn" for c in calibrations)
+        tags = {
+            "NATIVE_PIXEL_SIZE": ",".join(map(str, native_size)),
+            "SENSOR": record.satellite,
+            "ACQUISITIONDATE": record.datetime,
+        }
+        # S2 路径（compose 不转换反射率）把条目级定标参数写入标签，
+        # 下游 calibrate_reflectance 读取后按 ρ = DN*scale+offset 定标。
+        if (
+            not record.reflectance_applied_at_compose
+            and record.reflectance_scale is not None
+            and record.reflectance_offset is not None
+        ):
+            tags["REFL_SCALE"] = f"{record.reflectance_scale:.10g}"
+            tags["REFL_OFFSET"] = f"{record.reflectance_offset:.10g}"
+            tags["REFL_APPLIED"] = "false"
+            tags["REFL_QUANTITY"] = "surface_reflectance"
+            tags["REFL_SOURCE"] = "scene_record_explicit"
+        dst.update_tags(**tags)
 
+    try:
+        if cancellation_event is not None and cancellation_event.is_set():
+            raise SceneRasterError("场景合成已取消。")
+        quality = _compose_quality(record, out_path.parent / "quality.tif", profile)
+    except SceneRasterError:
+        out_path.unlink(missing_ok=True)  # This invocation created the file, no stale half-import is reusable.
+        raise
     return {
+        "composition_version": 2,
+        "quality_mask": quality,
         "native_pixel_size": native_size,
         "band_roles": record.band_roles,
         "band_roles_source": "stac_assets",
         "sensor": record.satellite,
         "acquired_at": record.datetime,
         "roles": roles,
+        "band_calibration": {role: {**c, "applied": record.reflectance_applied_at_compose}
+                             for role in roles if (c := _calibration_for(record, role)) is not None},
         "width": out_width,
         "height": out_height,
         "dtype": final_dtype.name,

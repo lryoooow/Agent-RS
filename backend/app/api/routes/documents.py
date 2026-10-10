@@ -4,7 +4,6 @@ import asyncio
 import json
 import logging
 import time
-import uuid
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +25,7 @@ from app.db.repositories.document import (
 from app.db.repositories.document_job import create_ingest_job, get_ingest_job, update_ingest_job
 from app.agent.context.budget import estimate_tokens
 from app.documents import DocumentParseError, parse_uploaded_document
+from app.documents.isolated import parse_document_file
 from app.documents.chunker import chunk_document, chunk_text
 from app.documents.parser import SUPPORTED_EXTENSIONS, TEXT_EXTENSIONS
 from app.documents.task_registry import schedule_task
@@ -34,6 +34,7 @@ from app.agent.rerank import get_rerank_service
 from app.db.repositories.vector_search import search_hybrid_rrf
 from app.core.logging import log_event
 from app.core.settings import get_settings
+from app.uploads import UploadSizeExceeded, stream_upload_to_temp
 
 router = APIRouter(tags=["documents"])
 logger = logging.getLogger(__name__)
@@ -186,12 +187,6 @@ async def upload_document(
 ) -> DocumentUploadJobResponse:
     settings = get_settings()
     user_id = get_current_user_id()
-    data = await file.read()
-    if len(data) > settings.document_max_file_bytes:
-        raise HTTPException(
-            status_code=413,
-            detail={"code": "FILE_TOO_LARGE", "message": "File exceeds the configured size limit."},
-        )
     filename = file.filename or "document"
     extension = Path(filename).suffix.lower()
     if extension not in SUPPORTED_EXTENSIONS:
@@ -202,54 +197,77 @@ async def upload_document(
                 "message": "Only txt, md, markdown, pdf, docx, pptx, and xlsx files are supported.",
             },
         )
-    parsed_metadata = _parse_form_metadata(metadata)
-    if extension in TEXT_EXTENSIONS:
+
+    upload_dir = Path(settings.storage_upload_dir)
+    try:
+        uploaded = await stream_upload_to_temp(
+            file,
+            max_bytes=settings.document_max_file_bytes,
+            suffix=extension,
+            directory=upload_dir,
+        )
+    except UploadSizeExceeded as exc:
+        raise HTTPException(
+            status_code=413,
+            detail={"code": "FILE_TOO_LARGE", "message": "File exceeds the configured size limit."},
+        ) from exc
+
+    temp_path = uploaded.path
+    keep_for_job = False
+    try:
+        parsed_metadata = _parse_form_metadata(metadata)
+        if extension in TEXT_EXTENSIONS:
+            data = await asyncio.to_thread(temp_path.read_bytes)
+            try:
+                await asyncio.to_thread(
+                    parse_uploaded_document,
+                    filename=filename,
+                    content_type=file.content_type,
+                    data=data,
+                    title=title,
+                    settings=settings,
+                )
+            except DocumentParseError as exc:
+                raise HTTPException(
+                    status_code=exc.status_code,
+                    detail={"code": exc.code, "message": exc.message},
+                ) from exc
+
+        pool = await _require_document_db()
         try:
-            await asyncio.to_thread(
-                parse_uploaded_document,
+            async with pool.acquire() as conn:
+                job_id = await create_ingest_job(
+                    conn,
+                    filename=filename,
+                    file_size=uploaded.size,
+                    temp_path=str(temp_path),
+                    metadata={"title": title, "content_type": file.content_type, **parsed_metadata},
+                    user_id=user_id,
+                )
+        except Exception as exc:
+            if is_missing_schema_error(exc):
+                raise _migration_required() from exc
+            raise
+
+        schedule_task(
+            _run_document_ingest_job(
+                job_id=job_id,
+                temp_path=temp_path,
                 filename=filename,
                 content_type=file.content_type,
-                data=data,
                 title=title,
-                settings=settings,
-            )
-        except DocumentParseError as exc:
-            raise HTTPException(
-                status_code=exc.status_code,
-                detail={"code": exc.code, "message": exc.message},
-            ) from exc
-    pool = await _require_document_db()
-    upload_dir = Path(settings.storage_upload_dir)
-    upload_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-    temp_path = upload_dir / f"{uuid.uuid4().hex}{extension}"
-    temp_path.write_bytes(data)
-    try:
-        async with pool.acquire() as conn:
-            job_id = await create_ingest_job(
-                conn,
-                filename=filename,
-                file_size=len(data),
-                temp_path=str(temp_path),
-                metadata={"title": title, "content_type": file.content_type, **parsed_metadata},
+                metadata=parsed_metadata,
                 user_id=user_id,
             )
-    except Exception as exc:
-        temp_path.unlink(missing_ok=True)
-        if is_missing_schema_error(exc):
-            raise _migration_required() from exc
-        raise
-    schedule_task(
-        _run_document_ingest_job(
-            job_id=job_id,
-            temp_path=temp_path,
-            filename=filename,
-            content_type=file.content_type,
-            title=title,
-            metadata=parsed_metadata,
-            user_id=user_id,
         )
-    )
-    return DocumentUploadJobResponse(job_id=job_id, status="pending")
+        keep_for_job = True
+        return DocumentUploadJobResponse(job_id=job_id, status="pending")
+    finally:
+        if not keep_for_job:
+            try:
+                temp_path.unlink(missing_ok=True)
+            except OSError:
+                logger.warning("Failed to remove rejected document upload: %s", temp_path, exc_info=True)
 
 
 @router.get("/documents/jobs/{job_id}", response_model=DocumentJobResponse)
@@ -558,8 +576,7 @@ async def _run_document_ingest_job(
         async with pool.acquire() as conn:
             await update_ingest_job(conn, job_id=job_id, status="parsing", progress=15)
         started = time.perf_counter()
-        parsed = await asyncio.to_thread(
-            _read_and_parse_document,
+        parsed = await parse_document_file(
             temp_path=temp_path,
             filename=filename,
             content_type=content_type,
@@ -595,6 +612,17 @@ async def _run_document_ingest_job(
             user_id=user_id,
             job_id=job_id,
         )
+    except asyncio.CancelledError:
+        # The isolated parser has already reaped its process before propagation.
+        terminal = asyncio.create_task(asyncio.wait_for(
+            _fail_ingest_job(job_id, "DOCUMENT_INGEST_CANCELLED", "Document ingestion was cancelled."), 5))
+        while not terminal.done():
+            try: await asyncio.shield(terminal)
+            except asyncio.CancelledError: continue
+            except Exception: break
+        if not terminal.cancelled() and terminal.exception() is not None:
+            logger.warning("Unable to persist cancelled document job")
+        raise
     except DocumentParseError as exc:
         await _fail_ingest_job(job_id, exc.code, exc.message)
     except HTTPException as exc:
@@ -606,7 +634,7 @@ async def _run_document_ingest_job(
         )
     except Exception as exc:
         logger.exception("Document ingest job failed.")
-        await _fail_ingest_job(job_id, "DOCUMENT_INGEST_FAILED", str(exc))
+        await _fail_ingest_job(job_id, "DOCUMENT_INGEST_FAILED", "Document ingestion failed.")
     finally:
         try:
             temp_path.unlink(missing_ok=True)

@@ -85,10 +85,9 @@ async def update_conversation_title(
 
 
 async def delete_conversation(conn, *, conversation_id: str, user_id: str) -> bool:
-    row = await get_conversation(conn, conversation_id, user_id)
-    if row is None:
-        return False
-    await conn.execute("DELETE FROM agent_rs.messages WHERE conversation_id = $1::uuid", conversation_id)
+    # Messages have an ON DELETE CASCADE foreign key.  Deleting only the owned
+    # parent keeps parent and children in one PostgreSQL statement, so this
+    # repository function remains atomic without relying on its caller.
     result = await conn.execute(
         "DELETE FROM agent_rs.conversations WHERE id = $1::uuid AND created_by_user_id = $2::uuid",
         conversation_id,

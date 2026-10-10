@@ -125,15 +125,23 @@ class NDVIStats(BaseModel):
     max: float
     mean: float
     std: float
-
-
-class SpectralIndexStats(BaseModel):
-    index_type: str
-    min: float
-    max: float
-    mean: float
-    std: float
     nodata_pct: float = 0.0
+    total_pixels: int | None = Field(default=None, ge=0)
+    valid_pixels: int | None = Field(default=None, ge=0)
+    nodata_pixels: int | None = Field(default=None, ge=0)
+    input_valid_pixels: int | None = Field(default=None, ge=0)
+    math_invalid_pixels: int | None = Field(default=None, ge=0)
+    percentage_denominator: Literal["total_pixels"] | None = None
+    calibrated: bool | None = None
+    calibration: dict[str, Any] | None = None
+    method_version: str | None = None
+    resolved_bands: dict[str, int] | None = None
+
+
+class SpectralIndexStats(NDVIStats):
+    index_type: str
+    out_of_range_pct: float | None = None
+
 
 
 class RasterBandStats(BaseModel):
@@ -250,6 +258,8 @@ class GeospatialSegmentationResult(BaseModel):
 
 class GeospatialInstanceSegmentationResult(BaseModel):
     type: Literal["instance_segmentation"]
+    inference_grid: dict[str, int] | None = None
+    resampled: bool = False
     imagery_id: str
     result_url: str
     bounds: tuple[float, float, float, float] | None = None
@@ -299,10 +309,21 @@ class GeospatialReportResult(BaseModel):
     download_url: str
 
 
+class GeospatialMaskResult(BaseModel):
+    type: Literal["water_mask", "cloud_mask"]
+    imagery_id: str
+    result_url: str
+    bounds: tuple[float, float, float, float] | None = None
+    stats: dict[str, Any]
+    execution: ToolExecutionInfo | None = None
+    legend: dict[str, Any] | None = None
+
+
 GeospatialResult = (
     GeospatialPreviewResult
     | GeospatialNDVIResult
     | GeospatialSpectralIndexResult
+    | GeospatialMaskResult
     | GeospatialCompositeResult
     | GeospatialDetectionResult
     | GeospatialSegmentationResult

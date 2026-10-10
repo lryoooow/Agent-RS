@@ -14,24 +14,33 @@ import sys
 import time
 from typing import Any
 
-LAB_ROOT = Path(os.environ.get("SAM3_LAB_ROOT", "/home/LRY/sam3-lab-20260916")).resolve()
-for entry in (LAB_ROOT, LAB_ROOT / "source", LAB_ROOT / "phase2"):
+LAB_ROOT = Path(os.environ.get("SAM3_LAB_ROOT", "/home/LRY/sam3-runtime-releases/20260922-meta-2345a4ad")).resolve()
+for entry in (LAB_ROOT / "source",):
     sys.path.insert(0, str(entry))
 
 import numpy as np
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from pydantic import BaseModel, Field, field_validator
 from PIL import Image
 
-from geometry import deduplicate, make_instance, tiles, union_mask
-from runtime import Engine
+from ops.sam3_runtime.geometry import deduplicate, make_instance, tiles, union_mask
+from ops.sam3_runtime.runtime import Engine
 
 ALLOWED_ROOT = Path(
     os.environ.get("SAM3_ALLOWED_ROOT", "/home/LRY/Agent-RS/storage/imagery")
 ).resolve()
 MAX_PIXELS = int(os.environ.get("SAM3_MAX_PIXELS", str(64 * 1024 * 1024)))
 TILE_SIZE = int(os.environ.get("SAM3_TILE_SIZE", "1024"))
-TILE_OVERLAP = int(os.environ.get("SAM3_TILE_OVERLAP", "160"))
+TILE_OVERLAP = int(os.environ.get("SAM3_TILE_OVERLAP", "256"))
+
+CONFIDENCE_THRESHOLD = float(os.environ.get("SAM3_CONFIDENCE_THRESHOLD", "0.25"))
+SOURCE_COMMIT = "2345a4ad109ac29c569da749c91d84f10dc08c40"
+SOURCE_SHA256 = "26a4f92919756ad412e111b20868f4bc1f2b2d7170214ab5cdae1669d6051f1a"
+CHECKPOINT_SHA256 = "9999e2341ceef5e136daa386eecb55cb414446a00ac2b55eb2dfd2f7c3cf8c9e"
+if not 0.0 <= CONFIDENCE_THRESHOLD <= 1.0:
+    raise RuntimeError("SAM3 confidence threshold must be within [0, 1]")
+if TILE_SIZE < 64 or not 0 <= TILE_OVERLAP < TILE_SIZE or MAX_PIXELS < 1:
+    raise RuntimeError("Invalid SAM3 image or tile limits")
 
 
 class InferRequest(BaseModel):
@@ -55,6 +64,7 @@ class InferRequest(BaseModel):
 app = FastAPI(title="Agent-RS SAM3 service", docs_url=None, redoc_url=None)
 engine: Engine | None = None
 loaded_at: float | None = None
+_inference_lock = asyncio.Lock()
 
 
 def _allowed(path_value: str, *, directory: bool = False) -> Path:
@@ -71,7 +81,7 @@ def _allowed(path_value: str, *, directory: bool = False) -> Path:
 @app.on_event("startup")
 async def load_model() -> None:
     global engine, loaded_at
-    engine = await asyncio.to_thread(Engine, 0.5)
+    engine = await asyncio.to_thread(Engine, CONFIDENCE_THRESHOLD)
     loaded_at = time.time()
 
 
@@ -81,15 +91,23 @@ async def health() -> dict[str, Any]:
         "status": "ok" if engine is not None else "loading",
         "model": "SAM3",
         "device": "hygon-dcu",
+        "provider": "meta_official_sam3",
+        "source_commit": SOURCE_COMMIT,
+        "source_sha256": SOURCE_SHA256,
+        "checkpoint_sha256": CHECKPOINT_SHA256,
+        "confidence_threshold": CONFIDENCE_THRESHOLD,
+        "tile_size": TILE_SIZE,
+        "tile_overlap": TILE_OVERLAP,
         "loaded_at": loaded_at,
     }
 
 
 def _infer(request: InferRequest, input_path: Path, output_dir: Path) -> dict[str, Any]:
     assert engine is not None
-    image = Image.open(input_path).convert("RGB")
-    if image.width * image.height > MAX_PIXELS:
-        raise ValueError(f"input exceeds {MAX_PIXELS} pixels")
+    with Image.open(input_path) as source:
+        if source.width * source.height > MAX_PIXELS:
+            raise ValueError(f"input exceeds {MAX_PIXELS} pixels")
+        image = source.convert("RGB")
 
     started = time.perf_counter()
     extents = tiles(*image.size, TILE_SIZE, TILE_OVERLAP) if max(image.size) > TILE_SIZE else [(0, 0, *image.size)]
@@ -156,6 +174,10 @@ def _infer(request: InferRequest, input_path: Path, output_dir: Path) -> dict[st
     (output_dir / instances_name).write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8")
     metrics = {
         "model": "SAM3",
+        "provider": "meta_official_sam3",
+        "source_commit": SOURCE_COMMIT,
+        "checkpoint_sha256": CHECKPOINT_SHA256,
+        "confidence_threshold": CONFIDENCE_THRESHOLD,
         "device": "hygon-dcu",
         "input_size": list(image.size),
         "tile_size": TILE_SIZE,
@@ -182,16 +204,26 @@ def _infer(request: InferRequest, input_path: Path, output_dir: Path) -> dict[st
 
 
 @app.post("/infer")
-async def infer(request: InferRequest) -> dict[str, Any]:
+async def infer(request: InferRequest, response: Response) -> dict[str, Any]:
     if engine is None:
         raise HTTPException(status_code=503, detail="model is still loading")
     input_path = _allowed(request.input_path)
     output_dir = _allowed(request.output_dir, directory=True)
     if output_dir != input_path.parent:
         raise HTTPException(status_code=400, detail="output directory must be the input job directory")
-    try:
-        return await asyncio.to_thread(_infer, request, input_path, output_dir)
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"SAM3 inference failed: {type(exc).__name__}: {exc}") from exc
+    async with _inference_lock:
+        task=asyncio.create_task(asyncio.to_thread(_infer, request, input_path, output_dir))
+        try:
+            result=await asyncio.shield(task)
+            response.headers["X-SAM3-Settled"]="1"
+            return result
+        except asyncio.CancelledError:
+            # Keep the GPU slot until the actual native worker finishes.
+            while not task.done():
+                try: await asyncio.shield(task)
+                except asyncio.CancelledError: continue
+                except Exception: break
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=500,detail=f"SAM3 inference failed: {type(exc).__name__}",
+                headers={"X-SAM3-Settled":"1"}) from exc

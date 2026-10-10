@@ -154,6 +154,7 @@ async def test_same_turn_report_renders_successful_results_before_persistence(mo
     monkeypatch.setattr(builder, 'list_recent_analysis_results', AsyncMock(return_value=[]))
     monkeypatch.setattr(builder, 'imagery_root', lambda: tmp_path)
     monkeypatch.setattr(builder, 'read_imagery_metadata', lambda _: {'filename':'real-tool-fixture.tif'})
+    monkeypatch.setattr(builder, 'db_get_imagery', AsyncMock(return_value={'owner_user_id':'owner', 'storage_backend':'local', 'metadata':{'filename':'real-tool-fixture.tif'}}))
     geo = {
         'type':'instance_segmentation', 'imagery_id':IMAGE, 'model_name':'SAM3',
         'concepts':['building'], 'instance_count':37, 'counts':{'building':37},
@@ -206,9 +207,15 @@ async def test_current_results_cannot_bypass_conversation_ownership(monkeypatch)
 @pytest.mark.asyncio
 async def test_tool_job_keeps_verified_conversation_for_recovery(monkeypatch):
     from app.agent import tool_jobs
+    class FakeConn:
+        # begin_tool_job 现在把建任务+置 running 放进同一事务（修双跑窗口），
+        # 假连接须模拟 asyncpg 语义：transaction() 的 __aenter__ 返回连接自身、正常提交。
+        @asynccontextmanager
+        async def transaction(self):
+            yield self
     @asynccontextmanager
     async def acquire():
-        yield object()
+        yield FakeConn()
     create = AsyncMock(return_value='job')
     monkeypatch.setattr(tool_jobs,'get_settings',lambda:SimpleNamespace(tool_jobs_enabled=True))
     monkeypatch.setattr(tool_jobs,'fetch_optional_pool',AsyncMock(return_value=SimpleNamespace(acquire=acquire)))

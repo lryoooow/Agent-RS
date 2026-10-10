@@ -1,10 +1,23 @@
 ﻿from datetime import date
+from app.core.settings import get_settings
 
 from app.agent.context.budget import TRUNCATION_MARKER, trim_to_budget
 from app.agent.prompting.loader import render_template
 from app.agent.prompting.selector import DEFAULT_PROMPT_PROFILE, select_prompt_modules
 from app.agent.prompting.types import PromptRenderResult
 from app.schemas.chat import ChatMessage
+
+
+def _as_of_date() -> date:
+    """提示词里的"当前日期"。生产默认今天；AGENT_AS_OF_DATE 可覆盖。
+
+    覆盖口是为评测可复现性开的：录制/重放的 pins 哈希必须与日期解耦，
+    否则任何跨天续录或隔日重放都会被判 stale（2026-10-03 盲测中断暴露）。
+    """
+    override = get_settings().agent_as_of_date
+    if override:
+        return date.fromisoformat(override)
+    return date.today()
 
 
 def render_prompt_context(
@@ -37,7 +50,7 @@ def render_prompt_context(
         "template_version": "",
         "prompt_profile": profile,
         "language": language,
-        "current_date": (current_date or date.today()).isoformat(),
+        "current_date": (current_date or _as_of_date()).isoformat(),
         "assistant_name": assistant_name,
     }
 

@@ -1,0 +1,60 @@
+{
+  "schema": "agent-rs.sam3-hygon-runtime/v1",
+  "created_at": "2026-09-22T09:50:52.802408+08:00",
+  "provider": "meta_official_sam3",
+  "device": "hygon-dcu",
+  "source": {
+    "repository": "https://github.com/facebookresearch/sam3",
+    "commit": "2345a4ad109ac29c569da749c91d84f10dc08c40",
+    "upstream_sha256": "3d81b2ad5a5e201ec280b1e0f0c43b2f531f5ecf54f0c112dfa8ce195e15a372",
+    "patch_id": "windows_image_only_lazy_video_imports_v1",
+    "patch_sha256": "aa2cf4b67606e733e0492712c8624851f09a7616b1804e1b93048ce9042763d8",
+    "patched_sha256": "26a4f92919756ad412e111b20868f4bc1f2b2d7170214ab5cdae1669d6051f1a"
+  },
+  "checkpoints": {
+    "original": {
+      "path": "models/sam3.pt",
+      "size_bytes": 3450062241,
+      "sha256": "9999e2341ceef5e136daa386eecb55cb414446a00ac2b55eb2dfd2f7c3cf8c9e"
+    },
+    "tensor": {
+      "path": "models/sam3.safetensors",
+      "size_bytes": 3449863168,
+      "sha256": "323a9f5299a9479a98e507c2c6f8afd0de85e9f2e73db3952102937c70586a49"
+    }
+  },
+  "runtime": {
+    "python": "3.10.21",
+    "torch": "2.1.0+das.opt1.dtk24042",
+    "torchvision": "0.16.0+cpu",
+    "sam3": "0.1.0",
+    "precision": "bf16",
+    "attention": "math_sdp"
+  },
+  "inference": {
+    "tile_size": 1024,
+    "tile_overlap": 256,
+    "confidence_threshold": 0.25,
+    "max_pixels": 67108864,
+    "max_concepts": 6
+  },
+  "code_sha256": {
+    "patch_official_sam3.py": "aa2cf4b67606e733e0492712c8624851f09a7616b1804e1b93048ce9042763d8",
+    "hygon_compat.py": "96544f367ef758beaaf9cae816a6f48a2e807a20f1c4a6cc230ca878819672f4",
+    "phase2/runtime.py": "f97ae1f2e81bba3be7114407585e109132d4e767a48b933da395be499e61d338",
+    "phase2/geometry.py": "e5de6278974be3e39715260f339bfa2447afa15e9712bfe05c32af7cf5e07e8b",
+    "production/sam3_service.py": "f43a2d52f99f7b3b12ab62b91861bd48652bae7deb4d7c1b5750c0a0745a8e74",
+    "production/validate_runtime.py": "4e1e72611123260fde26f1777357515d8b8f287e4bd2cab6182e6d965425840b",
+    "production/agent-rs-sam3.service": "52624f6495bcf80cd7bda0b5b4a55d5e320751e0561d80a1b816f297f3bb8ccb"
+  },
+  "agent_rs": {
+    "release": "20261010-audit-release-091728",
+    "release_root": "/home/LRY/Agent-RS-current",
+    "code_paths": [
+      "ops/sam3_service.py",
+      "ops/sam3_runtime/runtime.py",
+      "ops/sam3_runtime/geometry.py",
+      "ops/sam3_runtime/hygon_compat.py"
+    ]
+  }
+}

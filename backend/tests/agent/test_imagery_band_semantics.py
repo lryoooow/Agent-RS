@@ -32,7 +32,7 @@ from app.core.settings import get_settings
         ("Near Infrared", "nir"),  # 不能被 'red' 子串误伤
         ("near-infrared", "nir"),
         ("近红外", "nir"),
-        ("SWIR 1", "swir"),
+        ("SWIR 1", "swir1"),
         ("Shortwave Infrared", "swir"),
         ("短波红外", "swir"),
         ("Red Edge", "rededge"),  # 无参数对应，识别出来只为排除
@@ -60,8 +60,8 @@ def test_derive_band_roles_landsat_style_red_edge_excluded():
         ["Coastal", "Blue", "Green", "Red", "Red Edge", "NIR", "SWIR1", "SWIR2"],
     )
     assert source == "descriptions"
-    # 同一角色多波段（SWIR1/SWIR2）取第一个；Red Edge 不占用 red。
-    assert roles == {"blue": 2, "green": 3, "red": 4, "nir": 6, "swir": 7}
+    # SWIR1/SWIR2 是不同光谱角色；Red Edge 不占用 red。
+    assert roles == {"blue": 2, "green": 3, "red": 4, "nir": 6, "swir1": 7, "swir2": 8}
 
 
 @pytest.mark.parametrize(

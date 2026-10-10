@@ -7,6 +7,46 @@ import "@testing-library/jest-dom/vitest";
 import { afterEach, vi } from "vitest";
 import { cleanup } from "@testing-library/react";
 
+// Node 26 exposes an unusable experimental global storage object unless a file
+// is configured. A deterministic in-memory implementation keeps browser-facing
+// tests independent of the host Node version.
+class MemoryStorage implements Storage {
+  private readonly values = new Map<string, string>();
+
+  get length() {
+    return this.values.size;
+  }
+
+  clear() {
+    this.values.clear();
+  }
+
+  getItem(key: string) {
+    return this.values.get(String(key)) ?? null;
+  }
+
+  key(index: number) {
+    return Array.from(this.values.keys())[index] ?? null;
+  }
+
+  removeItem(key: string) {
+    this.values.delete(String(key));
+  }
+
+  setItem(key: string, value: string) {
+    this.values.set(String(key), String(value));
+  }
+}
+
+Object.defineProperty(globalThis, "localStorage", {
+  configurable: true,
+  value: new MemoryStorage(),
+});
+Object.defineProperty(globalThis, "sessionStorage", {
+  configurable: true,
+  value: new MemoryStorage(),
+});
+
 afterEach(() => {
   cleanup();
 });

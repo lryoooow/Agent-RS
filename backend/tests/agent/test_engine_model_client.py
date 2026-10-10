@@ -98,3 +98,34 @@ def test_router_client_disables_thinking_and_honours_router_model(
 def test_routing_client_falls_back_to_main_model_when_unset() -> None:
     client = build_model_client(_config(), for_routing=True)
     assert client._create_args["model"] == "deepseek-v4-pro"  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_budget_client_closes_provider_stream_when_consumer_stops(monkeypatch) -> None:
+    closed = False
+
+    async def provider_stream(self, messages, *, tools, **kwargs):
+        nonlocal closed
+        try:
+            yield "first"
+            yield "second"
+        finally:
+            closed = True
+
+    monkeypatch.setattr(
+        "autogen_ext.models.openai.OpenAIChatCompletionClient.create_stream",
+        provider_stream,
+    )
+    from app.agent.engine.model_client import BudgetAwareOpenAIClient
+
+    client = BudgetAwareOpenAIClient(
+        model="local-test",
+        api_key="test",
+        model_info=_COMPATIBLE_DEFAULT,
+    )
+    stream = client.create_stream([], tools=[])
+    assert await anext(stream) == "first"
+    await stream.aclose()
+
+    assert closed is True
+    await client.close()

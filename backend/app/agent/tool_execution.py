@@ -20,19 +20,23 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from typing import Any, Literal
+from uuid import uuid4
 
 from pydantic import BaseModel, ValidationError
 
 from app.agent.tool_guards import validate_tool_access
-from app.agent.tool_jobs import begin_tool_job, finish_tool_job, heartbeat_tool_job
+from app.agent.tool_jobs import begin_tool_job, finish_tool_job, heartbeat_tool_job, interrupt_tool_job
 from app.agent.tool_registry import RegisteredTool, get_tool
 from app.agent.tools.staging import stage_imagery
 from app.agent.types import ToolRunResult
+from app.core.error_logging import log_exception_diagnostics
 
 logger = logging.getLogger(__name__)
+_CANCEL_FINALIZE_SECONDS = 3.0
 
 PrepareFailure = Literal["tool_unavailable", "invalid_arguments", "access_denied", "analysis_precondition"]
 
@@ -140,32 +144,90 @@ async def run_prepared_tool(prepared: PreparedTool) -> ToolRunResult:
     runner 抛异常不会外泄：统一转成带 `tool_runner_exception` 的失败结果，
     让上层（模型或 trace）拿到可读信息而不是炸掉整条链路。
     """
-    job_id: str | None = None
+    # Allocate before the first DB await: cancellation during registration must
+    # still have an ID to reconcile a potentially committed row.
+    job_id: str | None = str(uuid4())
+    runner_started = False
+    execution_complete = False
+    result: ToolRunResult | None = None
     try:
         # durable 工具队列：登记 pending→running 行（best-effort，关闭/无库则 job_id=None）。
         job_id = await begin_tool_job(
+            job_id=job_id,
             tool_name=prepared.name,
-            arguments=prepared.arguments.model_dump(),
+            arguments=prepared.arguments.model_dump(exclude_unset=True),
             imagery_id=prepared.imagery_id,
             user_id=prepared.user_id,
         )
         # 执行期心跳：长任务（detect/segment、并发闸排队、minio 大影像 staging）全程刷新
         # heartbeat_at，避免被恢复 worker 误判成孤儿而重复执行。job_id=None 时为 no-op。
         async with heartbeat_tool_job(job_id):
-            if prepared.imagery_id:
+            if prepared.imagery_id and prepared.name != "generate_report":
                 # minio 后端下把影像拉到请求级临时目录供 runner/docker 读取；local 后端为 no-op。
-                async with stage_imagery(prepared.imagery_id):
+                async with stage_imagery(prepared.imagery_id, user_id=prepared.user_id):
+                    runner_started = True
                     result = await prepared.tool.runner(prepared.arguments)
             else:
+                runner_started = True
                 result = await prepared.tool.runner(prepared.arguments)
+        execution_complete = True
+    except asyncio.CancelledError:
+        await _finalize_interrupted(job_id, outcome_unknown=runner_started)
+        raise
     except Exception as exc:
-        logger.exception("工具 %s 执行抛出未处理异常", prepared.name)
-        result = ToolRunResult(
-            tool_context="工具执行失败，已跳过该工具结果。",
-            error=str(exc),
-            metadata={"error_code": "tool_runner_exception"},
+        from app.agent.tools.staging import ArtifactPublicationError, ImageryStagingError
+        publication_failed = isinstance(exc, ArtifactPublicationError)
+        staging_failed = isinstance(exc, ImageryStagingError)
+        fingerprint = log_exception_diagnostics(
+            logger,
+            "tool.runner_exception",
+            exc,
+            job_id=job_id or "unregistered",
+            tool=prepared.name,
         )
+        result = ToolRunResult(
+            tool_context=f"工具执行失败，已跳过该工具结果。诊断编号：{fingerprint}",
+            error=("分析产物未成功发布，请检查存储状态。" if publication_failed else str(exc) if staging_failed else "工具运行时发生未处理异常。"),
+            metadata={
+                "error_code": exc.code if publication_failed or staging_failed else "tool_runner_exception",
+                "diagnostic_id": fingerprint,
+                "exception_type": type(exc).__name__,
+            },
+        )
+        execution_complete = True
 
     # 写终态（complete/failed）。job_id 为 None 时 no-op；best-effort 不抛进主路径。
-    await finish_tool_job(job_id, result)
+    try:
+        await finish_tool_job(job_id, result)
+    except asyncio.CancelledError:
+        # Runner and staging have already finished. Persist their actual result
+        # rather than converting a late cancellation into unknown execution.
+        if execution_complete:
+            await _finalize_interrupted(job_id, result=result)
+        else:
+            await _finalize_interrupted(job_id, outcome_unknown=runner_started)
+        raise
     return result
+
+
+async def _finalize_interrupted(
+    job_id: str | None, *, outcome_unknown: bool = False, result: ToolRunResult | None = None,
+    expected_attempt: int = 1,
+) -> None:
+    async def finalize():
+        try:
+            operation = finish_tool_job(job_id, result, expected_attempt=expected_attempt) if result is not None else interrupt_tool_job(
+                job_id, outcome_unknown=outcome_unknown, expected_attempt=expected_attempt,
+            )
+            await asyncio.wait_for(operation, timeout=_CANCEL_FINALIZE_SECONDS)
+        except Exception as exc:
+            log_exception_diagnostics(logger, "tool.cancel_finalize_failed", exc, job_id=job_id or "unregistered")
+
+    task = asyncio.create_task(finalize(), name="tool-cancel-finalize")
+    # A second HTTP cancellation must not interrupt this short, bounded write.
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            continue
+    task.result()

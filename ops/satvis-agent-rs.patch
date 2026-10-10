@@ -1559,6 +1559,135 @@ index e5e21df..7cabdd2 100644
    ];
  });
  
+diff --git a/src/composables/useLocale.ts b/src/composables/useLocale.ts
+new file mode 100644
+index 0000000..6fd1fb9
+--- /dev/null
++++ b/src/composables/useLocale.ts
+@@ -0,0 +1,123 @@
++import { computed, ref } from "vue";
++
++export type SatvisLocale = "zh-CN" | "en";
++
++function initialLocale(): SatvisLocale {
++  const requested = new URLSearchParams(window.location.search).get("lang");
++  if (requested?.toLowerCase().startsWith("en")) return "en";
++  if (requested?.toLowerCase().startsWith("zh")) return "zh-CN";
++  return navigator.language.toLowerCase().startsWith("zh") ? "zh-CN" : "en";
++}
++
++const locale = ref<SatvisLocale>(initialLocale());
++const isChinese = computed(() => locale.value === "zh-CN");
++
++const OPTION_ZH: Record<string, string> = {
++  Point: "卫星点位",
++  Label: "名称标签",
++  Orbit: "完整轨道",
++  "Orbit track": "轨道运行线",
++  "Ground track": "地面投影轨迹",
++  "Sensor cone": "传感器视场",
++  "3D model": "三维模型",
++  NaturalEarth: "自然地球底图",
++  ArcGis: "ArcGIS 卫星影像",
++  VersaTiles: "VersaTiles 卫星影像",
++  OSM: "开放街道地图",
++  BlackMarble: "NASA 夜间灯光",
++  Tiles: "瓦片坐标网格",
++  "GOES-IR": "GOES 红外云图",
++  Nextrad: "NEXRAD 气象雷达",
++  None: "无",
++  CesiumWorldTerrain: "Cesium 全球地形",
++  ReEarth: "Re:Earth 地形",
++  Maptiler: "MapTiler 地形",
++  OsmBuildings: "OSM 三维建筑",
++  GooglePhotorealistic: "Google 实景三维",
++  Tycho1K: "第谷星图（标准）",
++  DeepStar1K: "深空星图（标准）",
++  DeepStar2K: "深空星图（高清）",
++  "3D": "三维地球",
++  "2D": "二维地图",
++  Columbus: "哥伦布视图",
++  Sky: "天空观察",
++  Fixed: "地固视角",
++  Inertial: "惯性视角",
++};
++
++const GROUP_ZH: Record<string, string> = {
++  active: "全部在轨卫星",
++  cubesat: "立方星",
++  globalstar: "Globalstar 星座",
++  gnss: "全球导航卫星",
++  "iridium-NEXT": "铱星 NEXT",
++  "last-30-days": "近 30 天发射",
++  oneweb: "OneWeb 星座",
++  planet: "Planet 遥感卫星",
++  resource: "资源与遥感卫星",
++  science: "科学卫星",
++  spire: "Spire 星座",
++  starlink: "星链卫星",
++  stations: "空间站与载人航天器",
++  weather: "气象卫星",
++  eutelsat: "Eutelsat 通信卫星",
++  iss: "国际空间站相关目标",
++  new: "近 30 天发射",
++  iridiumnext: "铱星 NEXT",
++};
++
++const FACT_ZH: Record<string, string> = {
++  Name: "名称",
++  Latitude: "纬度",
++  Longitude: "经度",
++  Altitude: "高度",
++  Velocity: "速度",
++  Orbit: "轨道",
++  "Apogee / Perigee": "远地点 / 近地点",
++  "Ascending node": "升交点",
++  "Descending node": "降交点",
++  Swath: "幅宽",
++  "Sensor FOV": "传感器视场角",
++  Operator: "运营方",
++  Mission: "任务类型",
++  Owner: "所属国家或机构",
++  Launched: "发射日期与地点",
++  Status: "运行状态",
++  "Orbit type": "轨道状态",
++  Decayed: "再入日期",
++  OBJECT_ID: "国际编号",
++  NORAD_CAT_ID: "NORAD 编号",
++  INCLINATION: "轨道倾角",
++  RA_OF_ASC_NODE: "升交点赤经",
++  ECCENTRICITY: "离心率",
++  ARG_OF_PERICENTER: "近地点幅角",
++  MEAN_ANOMALY: "平近点角",
++  MEAN_MOTION: "平均运动",
++  BSTAR: "B* 阻力项",
++};
++
++export function useLocale() {
++  const text = (zh: string, en: string): string => (isChinese.value ? zh : en);
++  const optionLabel = (value: string): string => (isChinese.value ? (OPTION_ZH[value] ?? value) : value);
++  const groupLabel = (value: string): string => {
++    if (!isChinese.value) return value;
++    const normalized = value.toLowerCase().replace(/[^a-z0-9]/g, "");
++    return GROUP_ZH[value] ?? GROUP_ZH[value.toLowerCase()] ?? GROUP_ZH[normalized] ?? value;
++  };
++  const factLabel = (value: string): string => (isChinese.value ? (FACT_ZH[value] ?? value) : value);
++
++  function setLocale(next: SatvisLocale): void {
++    locale.value = next;
++    document.documentElement.lang = next;
++    const url = new URL(window.location.href);
++    url.searchParams.set("lang", next);
++    window.history.replaceState(window.history.state, "", url);
++  }
++
++  function toggleLocale(): void {
++    setLocale(isChinese.value ? "en" : "zh-CN");
++  }
++
++  document.documentElement.lang = locale.value;
++  return { locale, isChinese, text, optionLabel, groupLabel, factLabel, setLocale, toggleLocale };
++}
 diff --git a/src/composables/useSkyCompass.ts b/src/composables/useSkyCompass.ts
 index 4cd3484..d5390af 100644
 --- a/src/composables/useSkyCompass.ts
@@ -1635,7 +1764,7 @@ index 761814b..053d6e6 100644
     adjusted while the logo stays prominent, and the line's width is what the deck's
     breakpoints are measured against.
 diff --git a/src/modules/SatelliteComponentCollection.ts b/src/modules/SatelliteComponentCollection.ts
-index 69a9c47..76f3ef1 100644
+index 69a9c47..2f421b8 100644
 --- a/src/modules/SatelliteComponentCollection.ts
 +++ b/src/modules/SatelliteComponentCollection.ts
 @@ -1,5 +1,6 @@
@@ -1660,15 +1789,13 @@ index 69a9c47..76f3ef1 100644
  } from "@cesium/engine";
  import type { Viewer } from "@cesium/widgets";
  import CesiumSensorVolumes from "cesium-sensor-volumes";
-@@ -66,6 +67,25 @@ const GROUND_STATION_LINK = "Ground station link";
+@@ -66,6 +67,23 @@ const GROUND_STATION_LINK = "Ground station link";
  // these are shared instances, the same way Cesium shares its own Color constants.
  const POINT_COLOR = Object.fromEntries(Object.entries(ORBIT_CLASS_COLOR).map(([orbitClass, hex]) => [orbitClass, Color.fromCssColorString(hex)])) as Record<OrbitClass, Color>;
  
 +// A single monochrome texture is shared by every satellite billboard. Cesium
 +// stores it once in the billboard atlas and applies the orbit-class colour as a
-+// tint, so showing a large constellation does not allocate one image per
-+// satellite. The dark outline and separated solar-cell panels keep the shape
-+// readable over both daylight imagery and the night sky.
++// tint, so showing a large constellation does not allocate one image per satellite.
 +const SATELLITE_ICON = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(`
 +  <svg xmlns="http://www.w3.org/2000/svg" width="36" height="24" viewBox="0 0 36 24">
 +    <g fill="#fff" stroke="#111827" stroke-width="1.4" stroke-linejoin="round">
@@ -1686,18 +1813,18 @@ index 69a9c47..76f3ef1 100644
  /**
   * `BoundingSphereState.PENDING`. Written out rather than imported: the enum is
   * exported from the engine's JavaScript but not from its type declarations. See
-@@ -459,19 +479,20 @@ export class SatelliteComponentCollection {
+@@ -458,20 +476,19 @@ export class SatelliteComponentCollection {
+   }
  
    // Coloured by orbit regime, matching the badge the satellite browser shows on
-   // the same satellite's row — so the menu reads as the legend for the globe.
+-  // the same satellite's row — so the menu reads as the legend for the globe.
 -  //
 -  // Small on purpose: a whole constellation at 6 px merges into a sheet that
 -  // hides the globe under it. 5 px still leaves the globe legible under a full
 -  // Starlink activation, and the outline is what keeps a point visible against
 -  // bright imagery rather than its size.
-+  // The icon scales from about 12 px in the full-globe view to 22 px up close:
-+  // visibly a satellite without turning a large constellation into a solid
-+  // texture that hides the Earth.
++  // the same satellite's row. The icon stays recognizable at globe scale and
++  // grows gently when the user moves closer.
    createPoint(): void {
 -    const point = new PointGraphics({
 -      pixelSize: 5,
@@ -1708,8 +1835,8 @@ index 69a9c47..76f3ef1 100644
 -      outlineWidth: 1,
 +      verticalOrigin: VerticalOrigin.CENTER,
 +      horizontalOrigin: HorizontalOrigin.CENTER,
-+      scaleByDistance: new NearFarScalar(1e6, 0.62, 8e7, 0.34),
-+      translucencyByDistance: new NearFarScalar(6e7, 1.0, 8e7, 0.35),
++      scaleByDistance: new NearFarScalar(1e6, 0.7, 8e7, 0.42),
++      translucencyByDistance: new NearFarScalar(6e7, 1.0, 8e7, 0.55),
 +      distanceDisplayCondition: new DistanceDisplayCondition(2000, 8e7),
      });
 -    this.createCesiumSatelliteEntity("Point", "point", point);

@@ -1,4 +1,6 @@
-﻿def format_ndvi_context(imagery_id: str, stats: dict, result_filename: str) -> str:
+from app.agent.tools.common import format_spectral_provenance
+
+def format_ndvi_context(imagery_id: str, stats: dict, result_filename: str) -> str:
     """Format NDVI results as LLM-readable context."""
     lines = [
         "## NDVI计算结果",
@@ -14,12 +16,9 @@
     lines.append(f"- 无效像素比例: {stats.get('nodata_pct', 0):.1f}%")
     lines.append(f"- 结果文件: {result_filename}")
     lines.append("")
-    lines.append("植被覆盖参考:")
-    lines.append("- NDVI > 0.6: 高密度植被")
-    lines.append("- 0.2 < NDVI < 0.6: 中等植被覆盖")
-    lines.append("- NDVI < 0.2: 裸土/水体/人工地物")
-    lines.append("")
-    lines.append("回答样例:")
-    lines.append("- 均值较高时：本次 NDVI 均值偏高，整体植被覆盖较好。")
-    lines.append("- 无效像素较高时：无效像素比例较高，结果解读需要谨慎。")
+    if stats.get("calibrated") is True:
+        lines.append("植被参考需结合传感器、季节和局地样本验证，NDVI不直接等同植被覆盖面积。")
+    else:
+        lines.append("本结果未证明反射率定标，不能据此给出绝对植被覆盖或跨期定量结论。")
+    lines.extend(format_spectral_provenance(stats))
     return "\n".join(lines)

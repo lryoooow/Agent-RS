@@ -24,7 +24,9 @@ AutoGen 的工具签名里没有 `user_id`，塞进参数模型又等于让模�
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import re
 from typing import Any
 
 from autogen_core import CancellationToken
@@ -45,6 +47,14 @@ from app.core.settings import get_settings
 logger = logging.getLogger(__name__)
 
 
+class ToolExecutionFailure(RuntimeError):
+    """Controlled tool failure: AutoGen converts this into is_error=True."""
+
+    def __init__(self, code: str, message: str):
+        self.code = code if re.fullmatch(r"[a-z0-9_]{1,64}", code) else "tool_error"
+        super().__init__(f"[{self.code}] {message}")
+
+
 class RemoteSensingTool(BaseTool[BaseModel, str]):
     """单个已注册工具的 AutoGen 包装。"""
 
@@ -59,9 +69,18 @@ class RemoteSensingTool(BaseTool[BaseModel, str]):
         self._tool = tool
 
     async def run(self, args: BaseModel, cancellation_token: CancellationToken) -> str:
+        if cancellation_token.is_cancelled():
+            raise asyncio.CancelledError()
+        # AutoGen runs tools in detached tasks. Link only our owned execution,
+        # never the caller task (which may continue other work after this tool).
+        task = asyncio.create_task(self._run(args), name=f"tool:{self._tool.name}")
+        cancellation_token.link_future(task)
+        return await task
+
+    async def _run(self, args: BaseModel) -> str:
         state = current_turn_state()
         if state is not None and self._tool.name in state.precondition_blocks:
-            return f"未执行 {self._tool.name}：{state.precondition_blocks[self._tool.name]}。前提未改变，停止重复提交。"
+            raise ToolExecutionFailure("analysis_precondition", f"未执行 {self._tool.name}：{state.precondition_blocks[self._tool.name]}。前提未改变，停止重复提交。")
 
         # 配额（GPU 重工具 / 联网检索）：**执行前**占名额（并行工具调用下"跑完再记账"
         # 拦不住，详见 turn_context 模块文档）。超了就如实告诉模型让它自己收敛，
@@ -69,14 +88,14 @@ class RemoteSensingTool(BaseTool[BaseModel, str]):
         if state is not None and not state.try_reserve(self._tool.name):
             limit = state.quota_limit(self._tool.name)
             logger.info("工具 %s 被回合配额拦下（上限 %s 次）", self._tool.name, limit)
-            return (
+            raise ToolExecutionFailure("tool_quota_exceeded",
                 f"未执行 {self._tool.name}：本轮该工具调用已达上限（{limit} 次）。"
                 "停止重复提交并基于已有结果回答。若执行因服务故障失败，应说明需修复服务，不要诱导用户换一轮盲目重试。"
                 "不要假装已经执行过，也不要编造结果。"
             )
 
         user_id = peek_current_user_id()
-        arguments = args.model_dump()
+        arguments = args.model_dump(exclude_unset=True)
         if state is not None:
             arguments = state.arguments_for(self._tool.name, arguments)
 
@@ -93,7 +112,7 @@ class RemoteSensingTool(BaseTool[BaseModel, str]):
         if arguments.get("imagery_id") == "map_roi_pending":
             if state is not None:
                 state.release(self._tool.name)
-            return "请先调用 prepare_map_roi 获取当前地图选区影像，成功后继续本次分析。无需用户重新上传、搜索或确认。"
+            raise ToolExecutionFailure("analysis_precondition", "请先调用 prepare_map_roi 获取当前地图选区影像，成功后继续本次分析。无需用户重新上传、搜索或确认。")
         prepared = await prepare_tool_call(self._tool.name, arguments, user_id=user_id)
         if isinstance(prepared, PrepareRejected):
             # 拒绝一律留痕：鉴权失败尤其要能在日志里查到。
@@ -110,7 +129,7 @@ class RemoteSensingTool(BaseTool[BaseModel, str]):
                 if prepared.failure == "analysis_precondition" and "imagery_id" in state.trusted_tool_arguments.get(self._tool.name, {}):
                     state.precondition_blocks[self._tool.name] = prepared.result.tool_context
             self._record(state, arguments, prepared.result)
-            return self._rejection_text(prepared)
+            raise ToolExecutionFailure(prepared.failure, self._rejection_text(prepared))
 
         result = await run_prepared_tool(prepared)
         self._record(state, arguments, result)
@@ -121,7 +140,7 @@ class RemoteSensingTool(BaseTool[BaseModel, str]):
             state.map_target = dict(map_target["map_target"])
 
         if result.error:
-            return (
+            raise ToolExecutionFailure(str(result.metadata.get("error_code") or "tool_error"),
                 f"{self._tool.name} 执行失败：{result.tool_context}"
                 "\n请如实告知用户这一步没有成功，不要编造结果。"
             )

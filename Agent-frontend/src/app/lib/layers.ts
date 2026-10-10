@@ -1,5 +1,6 @@
 import type { GeospatialReportResult, GeospatialResult,
   GeospatialSceneSearchResult, ChatTurn, LegendInfo } from "../types";
+import { maskLegend, maskRows, maskTitle } from "./analysis-results";
 import { DETECTION_CLASSES, LANDCOVER_CLASSES, NDVI_RAMP, WATER_RAMP } from "../data/rs";
 
 // 图层视图模型：地图叠加 + 右侧图层面板共用。
@@ -102,6 +103,13 @@ function layerFromResult(
         legend: backendLegend(result.legend) ?? (isWater ? WATER_RAMP : NDVI_RAMP),
       };
     }
+    case "water_mask":
+    case "cloud_mask":
+      return { ...base, id: `${result.type}-${result.imagery_id}`,
+        name: maskTitle(result), sublabel: result.type === "cloud_mask" && result.stats.method !== "quality_mask" ? "未验证 · 请结合原始影像复核" : "分类标记 · 请结合原始影像复核",
+        kind: result.type === "water_mask" ? "water" : "segmentation", opacity: .75,
+        color: result.type === "water_mask" ? KIND_COLOR.water : "#ffa500",
+        legend: maskLegend(result), meta: Object.fromEntries(maskRows(result).map(row => [row.label, row.value])) };
     case "detection":
       return {
         ...base,

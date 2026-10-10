@@ -60,8 +60,21 @@ class BudgetAwareOpenAIClient(OpenAIChatCompletionClient):
         return await super().create(messages, tools=available_tools(tools), **kwargs)
 
     async def create_stream(self, messages, *, tools=(), **kwargs):
-        async for chunk in super().create_stream(messages, tools=available_tools(tools), **kwargs):
-            yield chunk
+        upstream = super().create_stream(
+            messages,
+            tools=available_tools(tools),
+            **kwargs,
+        )
+        try:
+            async for chunk in upstream:
+                yield chunk
+        finally:
+            # Closing this wrapper early (client disconnect/cancellation) must
+            # close the provider iterator immediately instead of waiting for the
+            # HTTP transport timeout or garbage collection.
+            aclose = getattr(upstream, "aclose", None)
+            if aclose is not None:
+                await aclose()
 
 
 # OpenAI 兼容端点的保守默认能力集。

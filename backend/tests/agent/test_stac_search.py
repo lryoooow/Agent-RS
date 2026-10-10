@@ -90,9 +90,38 @@ def test_record_from_item_maps_roles_and_label() -> None:
     assert record is not None
     assert record.satellite == "Sentinel-2B"
     assert record.band_assets["nir"] == "https://bucket/B8A.tif"
-    assert record.band_assets["swir"] == "https://bucket/B12.tif"
+    assert record.band_assets["swir2"] == "https://bucket/B12.tif"
     assert record.cloud_cover == 5.5
-    assert record.reflectance_scale is None  # S2 保持 DN
+    # 条目无 raster:bands 扩展时保持 DN（参数 None → compose 不写标签，
+    # 定标回落 offset=0；真实 c1-l2a 条目带 offset -0.1，见下方专项用例）
+    assert record.reflectance_scale is None
+    assert record.reflectance_offset is None
+
+
+def test_record_from_item_reads_s2_boa_offset() -> None:
+    """S2 c1-l2a 条目资产的 raster:bands 携带 PB>=04.00 的 BOA offset
+    （2026-10-07 D3 实测：scale=0.0001 / offset=-0.1，即 ρ=(DN-1000)/10000）。
+    record_from_item 必须把它带入 SceneRecord，且 compose 不做像元转换
+    （S2 走 REFL_* 标签路径，保持合成产物 DN 取值域）。
+    """
+    rb = {"raster:bands": [{"nodata": 0, "scale": 0.0001, "offset": -0.1}]}
+    item = _item(
+        "S2C_X",
+        {
+            "blue": _asset("https://bucket/B02.tif", rb),
+            "green": _asset("https://bucket/B03.tif", rb),
+            "red": _asset("https://bucket/B04.tif", rb),
+            "nir": _asset("https://bucket/B08.tif", rb),
+            "swir22": _asset("https://bucket/B12.tif", rb),
+        },
+    )
+    record = record_from_item(_s2_spec(), item)
+    assert record is not None
+    assert record.reflectance_scale == pytest.approx(0.0001)
+    assert record.reflectance_offset == pytest.approx(-0.1)
+    assert record.reflectance_applied_at_compose is False  # S2：标签下发，不改像元
+    # Landsat 源规格保持 compose 转换的历史行为
+    assert _landsat_spec().apply_reflectance_at_compose is True
 
 
 def test_record_from_item_requires_rgb() -> None:
@@ -252,14 +281,20 @@ def test_compose_aligns_mixed_resolution_bands(mixed_grid_scene: SceneRecord, tm
     meta = compose_scene_tif(mixed_grid_scene, out)
     with rasterio.open(out) as src:
         assert src.count == 5
-        assert src.descriptions == ("blue", "green", "nir", "red", "swir")
         assert src.tags()["SENSOR"] == "Sentinel-2B"
-        # 20m 波段与 10m 波段读进同一个输出网格：值域正确（各自填充值）。
-        blue_index = src.descriptions.index("blue") + 1
-        nir_index = src.descriptions.index("nir") + 1
-        assert src.read(blue_index).mean() == pytest.approx(800, abs=1)
-        assert src.read(nir_index).mean() == pytest.approx(4000, abs=2)
-    assert meta["band_roles"] == {"blue": 1, "green": 2, "nir": 3, "red": 4, "swir": 5}
+        # band_roles 必须与实际写入的波段内容一致（工作单 A4）：不再把字母序
+        # 波段顺序固化成期望值（历史 bug 曾把它当成规格，导致下游按 GF-2 默认
+        # 波序取波段时红/近红外互换），改为逐角色验证 band_roles 指向的波段
+        # 确实写着该角色的数据（fixture 中每个角色有唯一填充值）。
+        fill_by_role = {"red": 1000, "green": 900, "blue": 800, "nir": 4000, "swir": 2500}
+        roles = meta["band_roles"]
+        assert set(roles) == set(fill_by_role)
+        assert sorted(roles.values()) == [1, 2, 3, 4, 5]  # 每个波段恰好被一个角色指向
+        for role, band_index in roles.items():
+            assert src.descriptions[band_index - 1] == role
+            # 20m 波段与 10m 波段读进同一个输出网格：值域正确（各自填充值，
+            # 双线性重采样带来 <2 的偏差）。
+            assert src.read(band_index).mean() == pytest.approx(fill_by_role[role], abs=2)
     assert meta["band_roles_source"] == "stac_assets"
 
 
@@ -283,6 +318,38 @@ def test_compose_converts_landsat_to_reflectance(tmp_path: Path) -> None:
         assert data.dtype == np.float32
         # DN 10000 → 10000*2.75e-05 - 0.2 = 0.075（真反射率）
         assert data.mean() == pytest.approx(0.075, abs=1e-4)
+
+
+def test_compose_writes_refl_tags_and_keeps_s2_dn(tmp_path: Path) -> None:
+    """S2 带 BOA offset 参数的记录：compose 像元保持 DN 原值，参数写入
+    REFL_SCALE/REFL_OFFSET 标签，下游 calibrate_reflectance 应用。
+
+    历史背景（2026-10-07 D3 核实）：PB>=04.00 的 ρ=(DN-1000)/10000 存在
+    偏置，比值类指数不再平移不变；曾按"S2 纯线性缩放"把 DN/10000 当反射率，
+    真实场景 NDVI 均值 0.211（应为 0.327）。修复选择标签而非 compose 转换，
+    以保持预览/检测/分割共用合成产物的取值域不变。
+    """
+    import rasterio
+
+    scene = SceneRecord(
+        key="f" * 12, source="earthsearch", item_id="S2C_D3", collection="c",
+        satellite="Sentinel-2C", datetime="2025-08-24T03:19:48+00:00",
+        cloud_cover=9.0, bbox=[113.9, 30.4, 114.1, 30.6], resolution_m=10.0,
+        band_assets={"red": str(tmp_path / "r.tif")},
+        display_name="S2C_D3",
+        reflectance_scale=0.0001,
+        reflectance_offset=-0.1,
+        reflectance_applied_at_compose=False,
+    )
+    _write_band(tmp_path / "r.tif", 32, 10.0, 3426)
+    out = tmp_path / "s2.tif"
+    compose_scene_tif(scene, out)
+    with rasterio.open(out) as src:
+        tags = src.tags()
+        assert tags["REFL_SCALE"] == "0.0001"
+        assert tags["REFL_OFFSET"] == "-0.1"
+        # 像元保持 DN 原值（不转反射率）
+        assert src.read(1).mean() == pytest.approx(3426, abs=2)
 
 
 def test_preview_renders_png_and_reuses_cache(mixed_grid_scene: SceneRecord, tmp_path: Path) -> None:

@@ -46,6 +46,34 @@ describe("parseGeospatialResult — report 类型", () => {
     ).toBeUndefined();
   });
 
+  it.each([
+    "javascript:alert(document.domain)",
+    "data:text/html,<script>alert(1)</script>",
+    "https://evil.example/report.docx",
+    "//evil.example/report.docx",
+  ])("拒绝危险或跨域的报告链接：%s", (downloadUrl) => {
+    expect(
+      parseGeospatialResult({
+        type: "report",
+        imagery_id: "d722c20e1234",
+        filename: "x.docx",
+        download_url: downloadUrl,
+      }),
+    ).toBeUndefined();
+  });
+
+  it("接受同源绝对报告链接", () => {
+    const url = `${window.location.origin}/api/imagery/d722c20e1234/results/report.docx`;
+    expect(
+      parseGeospatialResult({
+        type: "report",
+        imagery_id: "d722c20e1234",
+        filename: "report.docx",
+        download_url: url,
+      }),
+    ).toMatchObject({ download_url: url });
+  });
+
   it("report 不要求 result_url（与图层类不同形态）", () => {
     // 回归守门：report 走独立分支，不应被通用的 result_url 必填校验拦掉。
     const parsed = parseGeospatialResult({

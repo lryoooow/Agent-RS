@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -107,6 +108,7 @@ class _FakeMinioClient:
     def __init__(self) -> None:
         self.store: dict[str, bytes] = {}
         self.buckets: set[str] = set()
+        self.batch_delete_calls = 0
 
     def bucket_exists(self, bucket: str) -> bool:
         return bucket in self.buckets
@@ -136,6 +138,12 @@ class _FakeMinioClient:
 
     def remove_object(self, bucket: str, key: str) -> None:
         self.store.pop(key, None)
+
+    def remove_objects(self, bucket: str, delete_objects):
+        self.batch_delete_calls += 1
+        for item in delete_objects:
+            self.store.pop(item.object_name, None)
+        return iter(())
 
     def list_objects(self, bucket: str, prefix: str = "", recursive: bool = False):
         return [_FakeObj(k) for k in list(self.store) if k.startswith(prefix)]
@@ -175,6 +183,11 @@ def minio_store(monkeypatch) -> MinioStore:
     store = MinioStore()
     fake = _FakeMinioClient()
     monkeypatch.setattr(store, "_get_client", lambda: fake)
+    monkeypatch.setattr(
+        store,
+        "_delete_object",
+        lambda object_name: SimpleNamespace(object_name=object_name),
+    )
     store._bucket = "test-bucket"
     return store
 
@@ -242,3 +255,57 @@ async def test_minio_list_and_delete_prefix(minio_store: MinioStore, tmp_path: P
 
     await minio_store.delete_prefix("imgX")
     assert await minio_store.list_keys("imgX") == []
+    assert minio_store._get_client().batch_delete_calls == 1
+
+
+def test_object_store_singleton_is_thread_safe(monkeypatch, tmp_path: Path) -> None:
+    import concurrent.futures
+    import time
+    from types import SimpleNamespace
+    import app.storage.object_store as module
+
+    created: list[object] = []
+
+    def factory():
+        time.sleep(0.01)
+        value = object()
+        created.append(value)
+        return value
+
+    monkeypatch.setattr(module, "LocalFileSystemStore", factory)
+    monkeypatch.setattr(
+        module,
+        "get_settings",
+        lambda: SimpleNamespace(storage_backend="local"),
+    )
+    module.reset_object_store()
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=12) as executor:
+            stores = list(executor.map(lambda _: module.get_object_store(), range(24)))
+        assert len(created) == 1
+        assert all(store is stores[0] for store in stores)
+    finally:
+        module.reset_object_store()
+
+
+def test_minio_client_lazy_initialization_is_thread_safe(monkeypatch) -> None:
+    import concurrent.futures
+    import sys
+    import time
+    from types import SimpleNamespace
+
+    created: list[object] = []
+
+    class FakeMinio:
+        def __init__(self, *_args, **_kwargs):
+            time.sleep(0.01)
+            created.append(self)
+
+    monkeypatch.setitem(sys.modules, "minio", SimpleNamespace(Minio=FakeMinio))
+    store = MinioStore()
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=12) as executor:
+        clients = list(executor.map(lambda _: store._get_client(), range(24)))
+
+    assert len(created) == 1
+    assert all(client is clients[0] for client in clients)

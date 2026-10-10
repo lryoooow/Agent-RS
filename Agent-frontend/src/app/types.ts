@@ -65,6 +65,32 @@ export type LegendInfo = {
   palette: string;
 };
 
+// 统计与逐波段定标的来源随新结果及历史恢复一起保留，不从像素值域猜测定标。
+export type BandCalibrationInfo = {
+  band_index?: number; scale?: number; offset?: number; source?: string;
+  applied?: boolean; input_applied?: boolean; quantity?: string; input_quantity?: string;
+};
+export type CalibrationInfo = {
+  method: string; method_version?: string; sensor?: string;
+  bands?: Record<string, BandCalibrationInfo>;
+};
+export type AnalysisProvenance = {
+  total_pixels?: number; valid_pixels?: number; nodata_pixels?: number;
+  percentage_denominator?: "total_pixels" | "valid_pixels";
+  nodata_pct?: number | null; calibrated?: boolean;
+  calibration?: CalibrationInfo | string; band_calibration?: Record<string, BandCalibrationInfo>;
+  calibration_method_version?: string; method?: string; method_version?: string;
+  method_validation?: string; resolved_bands?: Record<string, number>;
+  warning?: string; threshold_method?: string; threshold_value?: number; ndwi_threshold?: number;
+  cloud_vis_threshold?: number; shadow_nir_threshold?: number;
+  quality_type?: string; quality_sensor?: string; quality_source?: string; quality_item_id?: string;
+  cloud_policy?: string; clear_semantics?: string; uncertainty_policy?: string;
+};
+export type IndexStats = AnalysisProvenance & { min: number; max: number; mean: number; std: number };
+export type MaskClass = "water" | "non_water" | "clear" | "cloud" | "shadow" | "nodata" | "unknown" | "snow" | "terrain_shadow" | "candidate_bright" | "candidate_dark" | "candidate_other";
+export type MaskStats = AnalysisProvenance & Partial<Record<`${MaskClass}_${"pct" | "valid_pct" | "pixel_count"}`, number | null>>;
+export type MaskLegendInfo = { label: string; classes: { code: number; name: string }[] };
+
 type GeospatialBaseResult = {
   imagery_id: string;
   result_url: string;
@@ -77,7 +103,7 @@ export type GeospatialPreviewResult = GeospatialBaseResult & {
 
 export type GeospatialNdviResult = GeospatialBaseResult & {
   type: "ndvi";
-  stats: { min: number; max: number; mean: number; std: number };
+  stats: IndexStats;
   execution?: ToolExecutionInfo | null;
   legend?: LegendInfo | null;
 };
@@ -85,17 +111,16 @@ export type GeospatialNdviResult = GeospatialBaseResult & {
 export type GeospatialSpectralIndexResult = GeospatialBaseResult & {
   type: "spectral_index";
   index_type: string;
-  stats: {
-    index_type: string;
-    min: number;
-    max: number;
-    mean: number;
-    std: number;
-    nodata_pct?: number;
-  };
+  stats: IndexStats & { index_type: string };
   execution?: ToolExecutionInfo | null;
   legend?: LegendInfo | null;
 };
+
+export type GeospatialMaskResult = GeospatialBaseResult & {
+  stats: MaskStats;
+  execution?: ToolExecutionInfo | null;
+  legend?: MaskLegendInfo;
+} & ({ type: "water_mask" } | { type: "cloud_mask" });
 
 export type GeospatialCompositeResult = GeospatialBaseResult & {
   type: "composite";
@@ -144,6 +169,8 @@ export type GeospatialSegmentationResult = GeospatialBaseResult & {
 
 export type GeospatialInstanceSegmentationResult = GeospatialBaseResult & {
   type: "instance_segmentation";
+  inference_grid?: { width: number; height: number } | null;
+  resampled?: boolean;
   model_name: "SAM3" | string;
   device?: string | null;
   concepts: string[];
@@ -192,6 +219,7 @@ export type GeospatialResult =
   | GeospatialPreviewResult
   | GeospatialNdviResult
   | GeospatialSpectralIndexResult
+  | GeospatialMaskResult
   | GeospatialCompositeResult
   | GeospatialDetectionResult
   | GeospatialSegmentationResult
@@ -246,6 +274,7 @@ export type RasterInspectResult = {
 export type ToolResult = RasterInspectResult;
 
 export type ChatTurn = ChatMessage & {
+  historyExcluded?: boolean;
   selectedImageryId?: string;
   restored?: boolean;
   id: string;
@@ -281,6 +310,11 @@ export type ChatResponse = {
   agent_trace?: Record<string, unknown> | null;
   geospatial_result?: GeospatialResult;
   tool_result?: ToolResult;
+};
+
+export type BootstrapConfigResponse = {
+  auth_required: boolean;
+  invite_required: boolean;
 };
 
 export type ConfigResponse = {
@@ -319,12 +353,6 @@ export type StoredConfig = {
   streamEnabled?: boolean;
   useRag?: boolean;
   model?: string;
-  // provider base_url / api_key 持久化到 localStorage：本地零配置场景刷新/重开浏览器免重填。
-  // 默认空，用户自行填写；后端按 client or env 链取值（填了就用、留空回落 .env）。
-  baseUrl?: string;
-  apiKey?: string;
-  // 仅保存在当前浏览器，并按请求送到本地后端；不写入对话或服务端配置。
-  tavilyApiKey?: string;
   thinkingStrength?: ThinkingStrength;
 };
 

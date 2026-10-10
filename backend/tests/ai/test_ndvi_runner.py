@@ -23,6 +23,9 @@ def _write_test_tif(path: Path, *, count: int = 4) -> None:
         dtype="uint16",
     ) as dst:
         dst.write(data)
+        # 波段角色描述（A4 起 runner 依赖 band_roles 解析默认波段参数）
+        for index, label in enumerate(("Blue", "Green", "Red", "NIR")[:count], 1):
+            dst.set_band_description(index, label)
 
 
 @pytest.mark.asyncio

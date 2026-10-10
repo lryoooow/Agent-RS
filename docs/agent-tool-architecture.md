@@ -1,7 +1,5 @@
 # Agent-RS Agent and Tool Architecture
 
-平台全景见 [平台架构与分析流程](platform-architecture.md)，其中提供与当前实现对应的 SVG / PNG 架构图和流程图。
-
 Agent-RS 只使用 AutoGen 作为生成式 Agent 编排框架。聊天回答、标准流程路由、
 联网搜索和长期记忆判断都经过 AutoGen；embedding、rerank、资源鉴权和遥感计算保持确定性。
 
@@ -23,7 +21,7 @@ ChatRequest
 不得根据不完整请求猜测一个固定流程。当前标准流程：
 
 - `inspect_index_report`：影像质检与指数计算 → 报告
-- `mask_segment_report`：云阴影掩膜 → 分割节点 → 报告（路由文案保留“地物分类”旧称，当前工具为 SAM3 `segment_instances`）
+- `mask_segment_report`：云阴影掩膜 → 地物分类 → 报告
 - `detect_report`：目标检测 → 报告
 
 ## 单一注册表
@@ -33,7 +31,7 @@ ChatRequest
 - 唯一名称、Pydantic 参数模型和 async runner
 - `agent_name`：`scope="domain"` 时唯一持有它的 AutoGen Agent；`scope="shared"` 时为
   平台级共享工具（web_search / look_at_location / generate_report / search_imagery /
-  fetch_scene / prepare_map_roi），每个 Agent 都持有、不催生任何领域专家
+  fetch_scene），每个 Agent 都持有、不催生任何领域专家
 - `resource_kind`：`imagery`、`document`、`conversation` 或 `none`
 - 可用性判据、模型可见描述和 tags
 
@@ -57,9 +55,8 @@ Agent 清单和资源 guard 都从注册表派生，不再维护并行的 routin
 每一次工具调用都独立经过上述管线。模型不能声明用户身份；身份来自请求级 contextvar。
 影像和文档 ID 只能来自该用户的可信清单，未知、歧义或非属主资源会在执行前拒绝。
 
-栅格与目标检测 runner 通过受控的 stdio MCP 客户端调用 Docker 容器；当前 SAM3 实例分割
-通过本地 HTTP `/infer` 服务执行，详见 [SAM3 部署](segmentation-deployment.md)。
-MCP `tools/list` 不用于动态信任或注册外部工具。
+遥感 runner 继续通过受控的 stdio MCP 客户端调用 Docker 容器。MCP `tools/list` 不用于动态
+信任或注册外部工具。
 
 ## 上下文与 Memory
 

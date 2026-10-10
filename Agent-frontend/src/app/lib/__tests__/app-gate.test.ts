@@ -29,28 +29,28 @@ function cfg(overrides: Partial<ConfigResponse> = {}): ConfigResponse {
 
 describe("resolveAppGate", () => {
   it("【未就绪】serverConfig 为 null → splash（拿不到配置不预判）", () => {
-    expect(resolveAppGate({ serverConfig: null, authLoading: false, authed: false })).toBe("splash");
+    expect(resolveAppGate({ bootstrapConfig: null, authLoading: false, authed: false })).toBe("splash");
     // 即便 config 已到，但会话仍在解析也应 splash
-    expect(resolveAppGate({ serverConfig: null, authLoading: true, authed: true })).toBe("splash");
+    expect(resolveAppGate({ bootstrapConfig: null, authLoading: true, authed: true })).toBe("splash");
   });
 
   it("【历史闪烁回归】auth_required 且 authLoading=true → splash，绝不先渲染主应用", () => {
     // 旧逻辑此处会落到 app（因 !loading 为假使门控失效）→ 闪屏。新逻辑必须是 splash。
-    const gate = resolveAppGate({ serverConfig: cfg(), authLoading: true, authed: false });
+    const gate = resolveAppGate({ bootstrapConfig: cfg(), authLoading: true, authed: false });
     expect(gate).toBe("splash");
   });
 
   it("【需登录】config 就绪 + 需登录 + 未认证 → login", () => {
-    expect(resolveAppGate({ serverConfig: cfg(), authLoading: false, authed: false })).toBe("login");
+    expect(resolveAppGate({ bootstrapConfig: cfg(), authLoading: false, authed: false })).toBe("login");
   });
 
   it("【已登录】config 就绪 + 需登录 + 已认证 → app", () => {
-    expect(resolveAppGate({ serverConfig: cfg(), authLoading: false, authed: true })).toBe("app");
+    expect(resolveAppGate({ bootstrapConfig: cfg(), authLoading: false, authed: true })).toBe("app");
   });
 
   it("【兜底】auth_required=false（如 DB 关闭）→ 直接 app，即便未认证", () => {
     const gate = resolveAppGate({
-      serverConfig: cfg({ auth_required: false }),
+      bootstrapConfig: cfg({ auth_required: false }),
       authLoading: false,
       authed: false,
     });

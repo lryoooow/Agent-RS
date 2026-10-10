@@ -3,6 +3,11 @@ from pydantic import BaseModel, Field
 from app.schemas.chat import ProviderConfig
 
 
+class BootstrapConfigResponse(BaseModel):
+    auth_required: bool = False
+    invite_required: bool = False
+
+
 class ConfigResponse(BaseModel):
     provider: str
     base_url_configured: bool

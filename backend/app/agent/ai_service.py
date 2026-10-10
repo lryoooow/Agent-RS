@@ -11,7 +11,7 @@ from typing import Any, AsyncIterator
 from app.agent.config import resolve_ai_config, ResolvedAIConfig
 from app.agent.roi_buildings import is_direct_building_request
 from app.agent.engine import complete_turn, stream_turn_events
-from app.agent.errors import AIError, map_provider_error
+from app.agent.errors import AIError, EmptyResponseError, map_provider_error
 from app.agent.persistence import (
     mark_assistant_failed,
     persistence_meta,
@@ -62,8 +62,12 @@ class AIService:
                     user_id=persistence.user_id,
                     config=setup.config,
                 )
+            if not turn.content.strip():
+                raise EmptyResponseError()
         except Exception as exc:
             await mark_assistant_failed(persistence, exc)
+            if isinstance(exc, AIError):
+                raise
             raise map_provider_error(exc) from exc
 
         finish_reason = _finish_reason_from_stop(turn.stop_reason)
@@ -160,6 +164,8 @@ class AIService:
                 raise RuntimeError("AutoGen 编排没有产出最终结果")
 
             content = turn.content or "".join(parts)
+            if not content.strip():
+                raise EmptyResponseError()
             if not answering_announced:
                 yield analysis_status_event("preparing")
                 yield analysis_status_event("answering")

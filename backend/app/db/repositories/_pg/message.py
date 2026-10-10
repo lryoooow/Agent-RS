@@ -169,21 +169,31 @@ async def list_conversation_messages(
     conn,
     *,
     conversation_id: str,
+    user_id: str,
     limit: int = 100,
     before: str | None = None,
 ) -> list[dict[str, Any]]:
-    before_clause = "AND id < $3::uuid" if before else ""
-    params: list[Any] = [conversation_id, limit]
+    before_clause = """
+          AND (m.created_at, m.seq) < (
+            SELECT cursor.created_at, cursor.seq
+            FROM agent_rs.messages cursor
+            WHERE cursor.id = $4::uuid AND cursor.conversation_id = $1::uuid
+          )
+        """ if before else ""
+    params: list[Any] = [conversation_id, user_id, limit]
     if before:
         params.append(before)
     rows = await conn.fetch(
         f"""
-        SELECT id::text, role, content, status, metadata_json, tokens_in, tokens_out, created_at
-        FROM agent_rs.messages
-        WHERE conversation_id = $1::uuid
+        SELECT m.id::text, m.role, m.content, m.status, m.metadata_json,
+               m.tokens_in, m.tokens_out, m.created_at
+        FROM agent_rs.messages m
+        JOIN agent_rs.conversations c ON c.id = m.conversation_id
+        WHERE m.conversation_id = $1::uuid
+          AND c.created_by_user_id = $2::uuid
           {before_clause}
-        ORDER BY created_at DESC
-        LIMIT $2
+        ORDER BY m.created_at DESC, m.seq DESC
+        LIMIT $3
         """,
         *params,
     )

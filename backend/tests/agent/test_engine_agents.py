@@ -20,7 +20,7 @@ from app.agent.engine.agents import (
     build_report_finalizer,
     domain_specs,
 )
-from app.agent.engine.tools import RemoteSensingTool, shared_tool_names
+from app.agent.engine.tools import RemoteSensingTool, ToolExecutionFailure, shared_tool_names
 from app.agent.engine.turn_context import turn_scope
 from app.agent.search.schema import WebSearchArguments
 from app.agent.tool_registry import TOOLS
@@ -200,11 +200,13 @@ async def test_web_search_reports_failure_without_fabricating(monkeypatch, _sear
     monkeypatch.setattr("app.agent.tools.web_search.runner.run_web_search", boom)
 
     with turn_scope():
-        text = await _search_tool_ready.run(
-            WebSearchArguments(query="x", reason="y"), CancellationToken()
-        )
-    assert "检索失败" in text
-    assert "不要编造" in text
+        # 业务失败改为受控异常（AutoGen 据此标记 is_error），不再返回字符串。
+        with pytest.raises(ToolExecutionFailure) as error:
+            await _search_tool_ready.run(
+                WebSearchArguments(query="x", reason="y"), CancellationToken()
+            )
+    assert "检索失败" in str(error.value)
+    assert "不要编造" in str(error.value)
 
 
 @pytest.mark.asyncio
@@ -240,17 +242,26 @@ async def test_web_search_respects_per_turn_call_cap(monkeypatch, _search_tool_r
     monkeypatch.setattr("app.agent.tools.web_search.runner.run_web_search", counting)
 
     limit = get_settings().agent_web_search_max_calls
+    outcomes = []
     with turn_scope():
-        texts = [
-            await _search_tool_ready.run(
-                WebSearchArguments(query=f"q{i}", reason="r"), CancellationToken()
-            )
-            for i in range(limit + 2)
-        ]
+        for i in range(limit + 2):
+            try:
+                outcomes.append(
+                    await _search_tool_ready.run(
+                        WebSearchArguments(query=f"q{i}", reason="r"), CancellationToken()
+                    )
+                )
+            except ToolExecutionFailure as exc:
+                outcomes.append(exc)
 
     assert calls == limit, f"超出上限后不该再打 Tavily，实际打了 {calls} 次"
-    assert "已达上限" in texts[-1]
-    assert "不要编造" in texts[-1]
+    assert outcomes[:limit] == ["检索结果……"] * limit
+    assert all(
+        isinstance(item, ToolExecutionFailure) and item.code == "tool_quota_exceeded"
+        for item in outcomes[limit:]
+    )
+    assert "已达上限" in str(outcomes[-1])
+    assert "不要编造" in str(outcomes[-1])
 
 
 @pytest.mark.asyncio

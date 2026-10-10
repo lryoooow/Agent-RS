@@ -4,11 +4,31 @@ import json
 from typing import Any
 
 
+# 会改变文本视觉顺序或完全不可见的格式控制符。它们可以把两段肉眼相同的文本
+# 存成不同值，或让日志/审计界面显示出与真实内容不同的顺序。
+# U+200C/U+200D（ZWNJ/ZWJ）保留：它们是部分语言和 emoji 组合的合法字符。
+_INVISIBLE_OR_BIDI_CONTROLS = frozenset(
+    {
+        "\u061c",  # ARABIC LETTER MARK
+        "\u200b",  # ZERO WIDTH SPACE
+        "\u200e",  # LEFT-TO-RIGHT MARK
+        "\u200f",  # RIGHT-TO-LEFT MARK
+        "\u202a", "\u202b", "\u202c", "\u202d", "\u202e",  # bidi embedding/override
+        "\u2060",  # WORD JOINER
+        "\u2066", "\u2067", "\u2068", "\u2069",  # bidi isolates
+        "\ufeff",  # ZERO WIDTH NO-BREAK SPACE / BOM
+    }
+)
+
+
 def sanitize_text(value: str) -> str:
     return "".join(
         char
         for char in value
-        if char == "\n" or char == "\t" or char == "\r" or ord(char) >= 32
+        if (
+            char not in _INVISIBLE_OR_BIDI_CONTROLS
+            and (char == "\n" or char == "\t" or char == "\r" or ord(char) >= 32)
+        )
     )
 
 
@@ -42,4 +62,3 @@ def parse_jsonb(value: Any) -> dict[str, Any] | None:
             return None
         return parsed if isinstance(parsed, dict) else None
     return None
-

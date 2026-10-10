@@ -39,6 +39,7 @@ from __future__ import annotations
 import logging
 from typing import Any, List, Mapping, Sequence
 
+from autogen_core import FunctionCall
 from autogen_core.model_context import ChatCompletionContext
 from autogen_core.models import (
     AssistantMessage,
@@ -48,7 +49,8 @@ from autogen_core.models import (
     UserMessage,
 )
 
-from app.agent.context.budget import estimate_tokens
+from app.agent.context.budget import estimate_tokens, trim_to_budget
+from app.agent.errors import ContextBudgetError
 from app.core.settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -82,6 +84,7 @@ class BudgetedChatCompletionContext(ChatCompletionContext):
         self._max_tokens = max_tokens
         # 来源 key -> 检索块正文。见模块文档「检索块单独存放」。
         self._blocks: dict[str, str] = {}
+        self.last_budget_trace: dict[str, Any] = {}
 
     @property
     def token_budget(self) -> int:
@@ -105,10 +108,31 @@ class BudgetedChatCompletionContext(ChatCompletionContext):
             self._blocks.pop(key, None)
 
     async def get_messages(self) -> List[LLMMessage]:
-        blocks = [SystemMessage(content=text) for text in self._blocks.values()]
-        # 检索块先占预算：它们是本轮最相关的资料，比更早的对话轮次更该留。
-        remaining = self.token_budget - sum(_message_tokens(m) for m in blocks)
-        return _fit_to_budget(self._messages, max(0, remaining)) + blocks
+        budget = self.token_budget
+        required = _protected_message_tokens(self._messages)
+        if required > budget:
+            raise ContextBudgetError()
+        remaining = budget - required
+        blocks = []
+        shortened = []
+        for key, text in self._blocks.items():
+            fitted = trim_to_budget(text, remaining)
+            if fitted != text: shortened.append(key)
+            if fitted:
+                block = SystemMessage(content=fitted)
+                blocks.append(block)
+                remaining -= _message_tokens(block)
+        retained = _fit_to_budget(self._messages, budget - sum(_message_tokens(m) for m in blocks))
+        kept_ids = {id(m) for m in retained}
+        self.last_budget_trace = {
+            "dropped_message_indices": [i for i,m in enumerate(self._messages) if id(m) not in kept_ids],
+            "shortened_block_keys": shortened,
+            "estimated_tokens": sum(_message_tokens(m) for m in retained + blocks),
+            "budget": budget,
+        }
+        if shortened or self.last_budget_trace["dropped_message_indices"]:
+            logger.debug("Agent context allocation: %s", self.last_budget_trace)
+        return retained + blocks
 
     async def save_state(self) -> Mapping[str, Any]:
         state = dict(await super().save_state())
@@ -132,14 +156,25 @@ def _message_tokens(message: LLMMessage) -> int:
         if isinstance(part, str):
             total += estimate_tokens(part)
         else:
-            total += estimate_tokens(str(getattr(part, "content", "") or ""))
+            if isinstance(part, FunctionCall):
+                total += estimate_tokens(part.name + part.arguments + part.id)
+            else:
+                total += estimate_tokens(str(getattr(part, "content", "") or ""))
     return total
+
+
+def _protected_message_tokens(messages: List[LLMMessage]) -> int:
+    total = sum(_message_tokens(m) for m in messages if isinstance(m, SystemMessage))
+    latest = next((m for m in reversed(messages) if isinstance(m, UserMessage)), None)
+    return total + (_message_tokens(latest) if latest is not None else 0)
 
 
 def _fit_to_budget(messages: List[LLMMessage], budget: int) -> List[LLMMessage]:
     if not messages:
         return []
 
+    if _protected_message_tokens(messages) > budget:
+        raise ContextBudgetError()
     keep_flags = [False] * len(messages)
     for index, message in enumerate(messages):
         if isinstance(message, SystemMessage):

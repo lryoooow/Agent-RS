@@ -1,0 +1,29 @@
+# Optional dedicated-host template; not applied to the shared server.
+# Requires an explicitly provisioned service identity and accessible Python runtime.
+[Unit]
+Description=Agent-RS platform
+Wants=network-online.target docker.service postgresql-15.service
+After=network-online.target docker.service postgresql-15.service
+
+[Service]
+Type=simple
+User=agent-rs
+Group=agent-rs-data
+WorkingDirectory=/home/LRY/Agent-RS-current/backend
+EnvironmentFile=/etc/agent-rs/backend.env
+EnvironmentFile=-/etc/agent-rs/knowledge.env
+Environment="PATH=/home/LRY/.agent-rs-venv/bin:/opt/agent-rs-python/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin"
+Environment="PYTHONPATH=/home/LRY/Agent-RS-current/backend"
+Environment="PYTHONUNBUFFERED=1"
+ExecStart=/home/LRY/.agent-rs-venv/bin/python -m uvicorn serve:app --app-dir /home/LRY/Agent-RS-current/deploy --host 0.0.0.0 --port 5173 --proxy-headers --forwarded-allow-ips=127.0.0.1 --no-access-log
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=45
+UMask=0007
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+
+[Install]
+WantedBy=multi-user.target

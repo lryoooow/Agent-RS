@@ -79,7 +79,7 @@ async def list_user_conversations(
 async def list_user_conversation_messages(
     conversation_id: str,
     limit: int = Query(default=100, ge=1, le=100),
-    before: str | None = None,
+    before: str | None = Query(default=None, pattern=r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
 ) -> ConversationMessagesResponse:
     pool = await _require_db()
     user_id = get_current_user_id()
@@ -92,6 +92,7 @@ async def list_user_conversation_messages(
         rows = await list_conversation_messages(
             conn,
             conversation_id=conversation_id,
+            user_id=user_id,
             limit=limit,
             before=before,
         )

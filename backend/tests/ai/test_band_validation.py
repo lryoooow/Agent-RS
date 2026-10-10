@@ -8,7 +8,7 @@ import rasterio
 
 from app.agent.tools.band_composite.runner import run_band_composite
 from app.agent.tools.band_composite.schema import BandCompositeArguments
-from app.agent.tools.common import validate_band_indices
+from app.agent.tools.common import classify_rs_tool_failure, validate_band_indices
 from app.agent.tools.detect.runner import run_detect
 from app.agent.tools.detect.schema import DetectArguments
 from app.agent.tools.instance_segment.runner import run_instance_segment
@@ -18,6 +18,7 @@ from app.agent.tools.ndvi.schema import NDVIArguments
 from app.agent.tools.spectral_index.runner import run_spectral_index
 from app.agent.tools.spectral_index.schema import SpectralIndexArguments
 from app.core.settings import get_settings
+from app.mcp.client import MCPCallError
 
 
 IMAGERY_ID = "94e758f38ede"
@@ -92,7 +93,7 @@ async def test_validate_band_indices_accepts_valid_and_boundary(tmp_path: Path) 
     source_path = tmp_path / "source.tif"
     _write_test_tif(source_path, count=4)
 
-    assert await validate_band_indices(source_path, {"red": 1, "green": 2, "blue": 3}) is None
+    assert await validate_band_indices(source_path, {"red": 3, "green": 2, "blue": 1}) is None
     assert await validate_band_indices(source_path, {"nir": 4}) is None
 
 
@@ -119,7 +120,9 @@ async def test_validate_band_indices_rejects_zero_negative_and_overrange(tmp_pat
     [
         (run_detect, DetectArguments(imagery_id=IMAGERY_ID, red_band=99, green_band=2, blue_band=1)),
         (run_instance_segment, InstanceSegmentArguments(imagery_id=IMAGERY_ID, concepts=["building"], red_band=99, green_band=2, blue_band=1)),
-        (run_spectral_index, SpectralIndexArguments(imagery_id=IMAGERY_ID, index_type="mndwi")),
+        # swir_band=5 显式给出（A4 后未显式的参数走 band_roles 解析；该夹具没有
+        # swir 角色，显式给出才能保持本用例测的是"越界波段号拒绝"）
+        (run_spectral_index, SpectralIndexArguments(imagery_id=IMAGERY_ID, index_type="mndwi", swir1_band=5)),
         (run_band_composite, BandCompositeArguments(imagery_id=IMAGERY_ID, mode="custom", bands=[1, 2, 99])),
         (run_band_composite, BandCompositeArguments(imagery_id=IMAGERY_ID, mode="true_color")),
         (run_band_composite, BandCompositeArguments(imagery_id=IMAGERY_ID, mode="false_color")),
@@ -196,7 +199,7 @@ async def test_band_composite_false_color_passes_on_four_band_imagery(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_detect_uses_documented_roles_even_when_agent_supplies_old_mapping(monkeypatch, tmp_path: Path) -> None:
+async def test_detect_rejects_explicit_mapping_conflicting_with_documented_roles(monkeypatch, tmp_path: Path) -> None:
     _prepare_imagery(tmp_path, count=4)
     payloads: list[dict[str, Any]] = []
 
@@ -217,7 +220,56 @@ async def test_detect_uses_documented_roles_even_when_agent_supplies_old_mapping
     explicit_result = await run_detect(explicit_args)
 
     assert default_result.error is None
-    assert explicit_result.error is None
+    assert explicit_result.error == "invalid_bands"
     assert (payloads[0]["red_band"], payloads[0]["green_band"], payloads[0]["blue_band"]) == (3, 2, 1)
-    assert (payloads[1]["red_band"], payloads[1]["green_band"], payloads[1]["blue_band"]) == (3, 2, 1)
+    assert len(payloads) == 1
+    get_settings.cache_clear()
+
+
+# ---------- 定标兜底错误码映射（D3 收尾：stale_s2_composite） ----------
+# compute 侧（docker/rs_tools/raster_utils.py）对"无 REFL_* 标签 + 成像
+# >= 2022-01-25 的 S2 旧缓存"抛 "stale_s2_composite:" 前缀文本，经 MCP
+# isError 原样带回；这里锁定 runner 侧把它映射成稳定错误码与用户可读文案
+# （说明为修复前合成、需重新导入/重新合成），而不是通用 mcp_error。
+
+
+def test_classify_rs_tool_failure_maps_stale_s2_composite() -> None:
+    exc = MCPCallError(
+        "calculate_ndvi execution failed: stale_s2_composite: Sentinel-2 影像"
+        "（成像日期 2024-06-01）缺少 REFL_SCALE/REFL_OFFSET 定标标签……"
+    )
+    code, message = classify_rs_tool_failure(exc)
+    assert code == "stale_s2_composite"
+    # 用户可读文案必须给出处置方向（重新导入/重新合成），不暴露内部标签名
+    assert "重新导入" in message and ("反射率单位" in message and "逐波段定标参数" in message)
+
+
+def test_classify_rs_tool_failure_keeps_existing_codes() -> None:
+    """回归：原有两个前缀的映射不受新增分支影响。"""
+    assert classify_rs_tool_failure(MCPCallError("x failed: uncalibrated_input: …"))[0] == "uncalibrated_input"
+    assert classify_rs_tool_failure(MCPCallError("x failed: all_pixels_invalid: …"))[0] == "all_pixels_invalid"
+    assert classify_rs_tool_failure(MCPCallError("boom"))[0] == "mcp_error"
+
+
+@pytest.mark.asyncio
+async def test_ndvi_runner_surfaces_stale_s2_composite_error(monkeypatch, tmp_path: Path) -> None:
+    """端到端：MCP 带回 stale_s2_composite 文本 → ToolRunResult 的 error 与
+    metadata.error_code 都是 stale_s2_composite，tool_context 是用户可读文案。"""
+    _prepare_imagery(tmp_path)
+
+    async def fake_call_tool(self, tool_name, *, source_path=None, output_dir=None, arguments=None):
+        raise MCPCallError(
+            "calculate_ndvi execution failed: stale_s2_composite: Sentinel-2 影像"
+            "（成像日期 2024-06-01）缺少 REFL_SCALE/REFL_OFFSET 定标标签……"
+        )
+
+    monkeypatch.setenv("IMAGERY_UPLOAD_DIR", str(tmp_path))
+    get_settings.cache_clear()
+    monkeypatch.setattr("app.mcp.rs_tools_client.RSToolsMCPClient.call_tool", fake_call_tool)
+
+    result = await run_ndvi(NDVIArguments(imagery_id=IMAGERY_ID))
+
+    assert result.error == "stale_s2_composite"
+    assert result.metadata["error_code"] == "stale_s2_composite"
+    assert "重新导入" in result.tool_context
     get_settings.cache_clear()

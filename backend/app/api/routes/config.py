@@ -8,6 +8,7 @@ from app.api.deps import require_authenticated_user
 from app.core.settings import get_settings
 from app.schemas.config import (
     AvailableModel,
+    BootstrapConfigResponse,
     ConfigResponse,
     ModelListRequest,
     ModelListResponse,
@@ -16,7 +17,20 @@ from app.schemas.config import (
 router = APIRouter(tags=["config"])
 
 
-@router.get("/config", response_model=ConfigResponse)
+@router.get("/config/bootstrap", response_model=BootstrapConfigResponse)
+async def bootstrap_config() -> BootstrapConfigResponse:
+    settings = get_settings()
+    return BootstrapConfigResponse(
+        auth_required=settings.auth_required,
+        invite_required=False,
+    )
+
+
+@router.get(
+    "/config",
+    response_model=ConfigResponse,
+    dependencies=[Depends(require_authenticated_user)],
+)
 async def config() -> ConfigResponse:
     settings = get_settings()
     return ConfigResponse(

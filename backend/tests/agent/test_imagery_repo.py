@@ -187,3 +187,29 @@ async def test_iter_user_imagery_metadata_db_priority(pg_conn, pg_pool, monkeypa
     assert "f1f1f1f1f1f1" in ids      # DB 影像
     assert "0a0a0a0a0a0a" in ids      # 磁盘老影像并入
     assert "b9b9b9b9b9b9" not in ids  # 他人影像不泄漏
+
+
+async def test_upload_create_only_preserves_existing_same_owner_minio_image(pg_conn):
+    image_id = "abcde0123456"
+    await imagery_repo.insert_imagery(pg_conn, imagery_id=image_id, owner_user_id=_USER_A,
+        filename="old.tif", storage_backend="minio", metadata={"v": 1}, create_only=True)
+    with pytest.raises(imagery_repo.ImageryOwnershipConflict):
+        await imagery_repo.insert_imagery(pg_conn, imagery_id=image_id, owner_user_id=_USER_A,
+            filename="new.tif", storage_backend="local", metadata={"v": 2}, create_only=True)
+    row = await imagery_repo.get_imagery(pg_conn, imagery_id=image_id)
+    assert row["filename"] == "old.tif" and row["storage_backend"] == "minio"
+    assert row["metadata"] == {"v": 1}
+
+
+async def test_compensation_delete_requires_current_attempt_and_owner(pg_conn):
+    image_id = "12345abcdef0"
+    await imagery_repo.insert_imagery(pg_conn, imagery_id=image_id, owner_user_id=_USER_A,
+        metadata={"_persistence_attempt_id": "current-attempt"}, create_only=True)
+    assert not await imagery_repo.delete_imagery(pg_conn, imagery_id=image_id, owner_user_id=_USER_A,
+                                                persistence_attempt_id="older-attempt")
+    assert not await imagery_repo.delete_imagery(pg_conn, imagery_id=image_id, owner_user_id=_USER_B,
+                                                persistence_attempt_id="current-attempt")
+    assert await imagery_repo.get_imagery(pg_conn, imagery_id=image_id)
+    assert await imagery_repo.delete_imagery(pg_conn, imagery_id=image_id, owner_user_id=_USER_A,
+                                            persistence_attempt_id="current-attempt")
+    assert not await imagery_repo.get_imagery(pg_conn, imagery_id=image_id)

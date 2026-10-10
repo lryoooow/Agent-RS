@@ -40,6 +40,8 @@ backend/.tmp_*.log
 backend/.tmp_*/
 .tmp_*.log
 .tmp_*/
+# 公开真值评测数据（D1 Sen1Floods11 等）：路径由 SEN1FLOODS11_DIR 等环境变量指定，不入库
+.data/
 backend/.local/
 .agents/
 .codex/
@@ -73,3 +75,28 @@ AGENTS.md
 
 # Dev-session memory (local-only, per maintainer AI-files-local policy)
 .claude/
+
+# 评测录制与数据集：体积大（约 150MB）且含受限数据集的衍生内容，不入库。
+# 需要长期留存的正式成绩请用 Git LFS 或单独归档，不要直接提交目录。
+backend/tests/ai/eval/recordings/devset_runs/
+backend/tests/ai/eval/recordings/heldout_v6/
+backend/tests/ai/eval/recordings/*/live_run_*/
+backend/tests/redteam/recordings/
+backend/tests/ai/rag_eval/arxiv_corpus_pdf/
+backend/tests/ai/rag_eval/reports/
+backend/tests/ai/thinkgeo/paper_2505.23752.pdf
+backend/.tmp_*
+.data_tmp_*
+
+# 外部项目审查产物（gf2-service @172.18.0.207，防止 git add -A 误提交）
+.audit_20261008/
+影像处理服务复审报告_20261008.md
+.tmp_*
+
+# Generated evaluation runs: cover future versions without hiding hand-written fixtures.
+backend/tests/ai/eval/recordings/heldout_v*/live_run*/
+backend/tests/ai/eval/recordings/heldout_v*/stress_run*/
+backend/tests/ai/eval/recordings/*_runs/
+backend/tests/ai/eval/reports/*observations*.jsonl
+backend/tests/ai/eval/reports/*metrics*.json
+backend/tests/ai/eval/reports/*predictions*.jsonl

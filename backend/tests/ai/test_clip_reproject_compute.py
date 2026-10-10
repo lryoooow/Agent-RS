@@ -32,14 +32,15 @@ def test_compute_reproject_changes_crs(tmp_path: Path) -> None:
 
     stats = compute(input_path=str(input_path), output_dir=str(output_dir), dst_crs="EPSG:3857")
 
-    assert (output_dir / "clip_reproject.tif").exists()
-    assert (output_dir / "clip_reproject_colored.png").exists()
-    assert (output_dir / "clip_reproject_stats.json").exists()
+    assert (output_dir / stats["output_tif"]).exists()
+    assert (output_dir / stats["output_png"]).exists()
+    assert list(output_dir.glob("clip_reproject_*_stats.json"))
+    assert stats["output_tif"].startswith("clip_reproject_") and stats["output_tif"].endswith(".tif")
     assert stats["reprojected"] is True
     assert stats["clipped"] is False
     assert stats["band_count"] == 4
 
-    with rasterio.open(output_dir / "clip_reproject.tif") as src:
+    with rasterio.open(output_dir / stats["output_tif"]) as src:
         assert src.crs.to_epsg() == 3857
         assert src.count == 4
         assert src.width >= 1 and src.height >= 1
@@ -59,7 +60,7 @@ def test_compute_clip_reduces_extent(tmp_path: Path) -> None:
 
     assert stats["clipped"] is True
     assert stats["reprojected"] is False
-    with rasterio.open(output_dir / "clip_reproject.tif") as src:
+    with rasterio.open(output_dir / stats["output_tif"]) as src:
         # 裁剪后的范围应落在请求 bbox 附近，且小于原始 4x4 度
         assert (src.bounds.right - src.bounds.left) < 4.0
         assert src.crs.to_epsg() == 4326
@@ -87,6 +88,23 @@ def test_compute_requires_crs_or_bbox(tmp_path: Path) -> None:
     _write_geotiff(input_path)
     with pytest.raises(ValueError, match="at least one"):
         compute(input_path=str(input_path), output_dir=str(tmp_path / "out"))
+
+
+def test_compute_rerun_keeps_previous_output(tmp_path: Path) -> None:
+    """A6：同一影像连续运行两次产生两个不同文件，第一次的文件仍在且内容不变。"""
+    input_path = tmp_path / "in.tif"
+    output_dir = tmp_path / "out"
+    _write_geotiff(input_path)
+
+    first = compute(input_path=str(input_path), output_dir=str(output_dir), dst_crs="EPSG:3857")
+    first_tif = output_dir / first["output_tif"]
+    first_bytes = first_tif.read_bytes()
+    second = compute(input_path=str(input_path), output_dir=str(output_dir), dst_crs="EPSG:3857")
+
+    assert first["output_tif"] != second["output_tif"]
+    assert first_tif.exists() and (output_dir / second["output_tif"]).exists()
+    assert first_tif.read_bytes() == first_bytes
+    assert len(list(output_dir.glob("clip_reproject_*.tif"))) == 2
 
 
 def test_compute_rejects_invalid_crs(tmp_path: Path) -> None:

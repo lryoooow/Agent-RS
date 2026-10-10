@@ -1,2 +1,6 @@
+* text=auto eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
 # Unified diff context markers intentionally end in a space on blank context lines.
 ops/*.patch -whitespace

@@ -13,6 +13,7 @@ import {
   MapPin,
   Orbit,
   PlusCircle,
+  RefreshCw,
   Search,
   Satellite,
 } from "lucide-react";
@@ -31,6 +32,7 @@ import {
   type SceneCard,
 } from "../lib/imagery-search-api";
 import { createSatelliteStyle, REFERENCE_PREFIX } from "../lib/map-style";
+import { fetchSatelliteCatalog, type SatelliteCatalogStatus } from "../lib/satellite-catalog-api";
 import type { Roi } from "../lib/roi";
 
 export type SatelliteWorkspaceMode = "orbit" | "imagery";
@@ -104,6 +106,24 @@ export function SatelliteWorkspace({
   previewRequest?: ScenePreviewRequest | null;
 }) {
   const [orbitLoaded, setOrbitLoaded] = useState(false);
+  const [orbitReload, setOrbitReload] = useState(0);
+  const [orbitStatus, setOrbitStatus] = useState<SatelliteCatalogStatus | null>(null);
+  const [orbitError, setOrbitError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!active || mode !== "orbit") return;
+    const abort = new AbortController();
+    const check = async () => {
+      try {
+        const status = await fetchSatelliteCatalog(abort.signal);
+        if (!abort.signal.aborted) { setOrbitStatus(status); setOrbitError(null); }
+      } catch (exc) {
+        if (!abort.signal.aborted) setOrbitError(exc instanceof Error ? exc.message : "无法读取卫星目录状态");
+      }
+    };
+    void check();
+    const timer = setInterval(() => void check(), 60_000);
+    return () => { abort.abort(); clearInterval(timer); };
+  }, [active, mode, orbitReload]);
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const catalogueMapRef = useRef<maplibregl.Map | null>(null);
   const [mapReady, setMapReady] = useState(false);
@@ -358,8 +378,16 @@ export function SatelliteWorkspace({
         <Button variant="outline" size="sm" className="h-9 text-[12px]" onClick={onOpenWorkspace}>返回工作台</Button>
       </header>
 
-      <div className={`relative min-h-0 flex-1 bg-black ${mode === "orbit" ? "block" : "hidden"}`}>
-        {orbitLoaded && <iframe src={SATVIS_URL} title="Satvis 卫星轨道态势" className="absolute inset-0 size-full border-0" allow="fullscreen" />}
+      <div className={`min-h-0 flex-1 flex-col bg-black ${mode === "orbit" ? "flex" : "hidden"}`}>
+        <div role="status" className="flex min-h-8 shrink-0 flex-wrap items-center justify-between gap-x-3 border-b border-border bg-card px-4 py-1 text-[11px] text-muted-foreground">
+          <span title="卫星位置由公开轨道数据推算，轨道更新时间与影像拍摄时间不同。">
+            {orbitError ? `卫星接口暂不可用，页面会尝试备用目录。${orbitError}` : orbitStatus ? `${orbitStatus.groups.length} 个分组 · 活跃目录 ${orbitStatus.groups.find((group) => group.name === "active")!.count.toLocaleString("zh-CN")} 颗 · 更新 ${new Date(orbitStatus.updated).toLocaleString("zh-CN", { hour12: false })}${orbitStatus.stale ? (orbitStatus.refreshing ? " · 正在更新，保留有效目录" : " · 上游未更新，使用最近有效目录") : ""}` : "正在读取卫星目录…"}
+          </span>
+          <button type="button" className="inline-flex shrink-0 items-center gap-1 text-primary" title="重新加载卫星目录和轨道视图" onClick={() => setOrbitReload((value) => value + 1)}><RefreshCw className="size-3" />重新加载</button>
+        </div>
+        <div className="relative min-h-0 flex-1">
+        {orbitLoaded && <iframe key={orbitReload} src={SATVIS_URL} title="Satvis 卫星轨道态势" className="absolute inset-0 size-full border-0" allow="fullscreen" />}
+        </div>
       </div>
 
       <div className={`min-h-0 flex-1 ${mode === "imagery" ? "grid md:grid-cols-[280px_minmax(0,1fr)_350px]" : "hidden"}`}>

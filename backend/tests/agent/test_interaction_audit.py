@@ -81,7 +81,8 @@ async def test_framework_binds_selected_image_and_preserves_roi(monkeypatch):
     monkeypatch.setattr('app.agent.engine.input.get_user_imagery_metadata',AsyncMock(return_value={'band_roles':{'red':4,'nir':3}}))
     req.messages[0].content='这张影像计算 NDVI'
     turn=await build_turn_input(req,user_id='owner')
-    assert turn.trusted_tool_arguments['calculate_ndvi']=={'imagery_id':'4256dea5c68b','red_band':4,'nir_band':3}
+    # Cached role metadata cannot override the authoritative raster role resolution.
+    assert turn.trusted_tool_arguments['calculate_ndvi']=={'imagery_id':'4256dea5c68b'}
 
 @pytest.mark.asyncio
 async def test_preflight_blocks_nonintersecting_and_coarse_images(monkeypatch):

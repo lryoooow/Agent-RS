@@ -5,8 +5,8 @@ class NDVIArguments(BaseModel):
     model_config = {"extra": "forbid"}
 
     imagery_id: str = Field(pattern=r"^[a-f0-9]{12}$", description="已上传影像的ID")
-    red_band: int = Field(default=3, ge=1, description="红光波段号（GF-2默认3）")
-    nir_band: int = Field(default=4, ge=1, description="近红外波段号（GF-2默认4）")
+    red_band: int = Field(default=3, ge=1, description="红光波段号（省略时按影像真实角色解析；禁止套用默认波序）")
+    nir_band: int = Field(default=4, ge=1, description="近红外波段号（省略时按影像真实角色解析；禁止套用默认波序）")
     reason: str = Field(default="用户请求计算NDVI", description="计算原因")
 
 

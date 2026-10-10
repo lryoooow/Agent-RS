@@ -19,6 +19,7 @@ import { AnalysisReportPanel } from "./components/AnalysisReportPanel";
 import { AuthGate } from "./components/AuthGate";
 import { SplashScreen } from "./components/SplashScreen";
 import { useSettings } from "./hooks/useSettings";
+import { DEFAULT_ENDPOINT } from "./config";
 import { useChatController } from "./hooks/useChatController";
 import { useImageryUpload, type ImageryMeta } from "./hooks/useImageryUpload";
 import { useAuth } from "./hooks/useAuth";
@@ -33,8 +34,11 @@ import { getImagery, listAvailableImagery } from "./lib/imagery-api";
 import { RoiAnalysisPanel, type RoiAnalysisSource } from "./components/RoiAnalysisPanel";
 
 export default function App() {
-  const settings = useSettings();
-  const auth = useAuth(settings.endpoint);
+  const auth = useAuth(DEFAULT_ENDPOINT);
+  const settings = useSettings(
+    auth.user?.authenticated === true,
+    auth.user?.authenticated ? auth.user.id : null,
+  );
   // 框选的分析聚焦区（ROI）：geo（经纬度 bbox）或 pixel（影像内相对 0..1）。
   // 由 MapView/ImageViewer 上报；地物分类会把它作为可信工具参数执行真正的 ROI 裁切。
   const [roi, setRoi] = useState<Roi | null>(null);
@@ -105,6 +109,7 @@ export default function App() {
   const roiMismatch = roiIntersectsBounds(roi, selectedImage?.bounds) === false;
   const rememberImage = (meta: ImageryMeta) => setAvailableImagery((prev) => [meta, ...prev.filter((m) => m.imagery_id !== meta.imagery_id)]);
   useEffect(() => {
+    setAnnotations([]);
     setAvailableImagery([]);
     setSelectionError(null);
     chat.resetConversation();
@@ -269,16 +274,24 @@ export default function App() {
   // 应用门控（纯函数 resolveAppGate，可单测）：splash / login / app 三态。
   // splash 收敛"配置或会话尚未就绪"，绝不在未知态下先渲染主应用 —— 根治旧逻辑首屏闪烁。
   const gate = resolveAppGate({
-    serverConfig: settings.serverConfig,
+    bootstrapConfig: settings.bootstrapConfig,
     authLoading: auth.loading,
     authed: auth.user?.authenticated === true,
   });
+  if (settings.configError && (gate !== "login" || !settings.bootstrapConfig)) return (
+    <div role="alert" className="flex h-screen flex-col items-center justify-center gap-4 bg-background text-foreground">
+      <h1>工作台配置加载失败</h1><p>{settings.configError}</p>
+      <button onClick={settings.retryConfig} className="rounded bg-primary px-4 py-2 text-primary-foreground">重新加载</button>
+    </div>
+  );
   if (gate === "splash") return <SplashScreen />;
   if (gate === "login") return <AuthGate auth={auth} />;
 
   return (
     <div className="relative h-screen w-screen overflow-hidden bg-background text-foreground">
       <MapView
+        key={auth.user?.id ?? "anonymous"}
+        principalId={auth.user?.id ?? null}
         mapRef={mapRef}
         layers={layers}
         activeImageryId={chat.activeImageryId}

@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import asyncio
 import logging
@@ -6,7 +6,12 @@ from dataclasses import dataclass
 from typing import TypeAlias
 
 from app.agent.embedding.service import get_embedding_service
-from app.agent.errors import AIError, map_provider_error
+from app.agent.errors import (
+    AIError,
+    ConversationAccessError,
+    PersistenceUnavailableError,
+    map_provider_error,
+)
 from app.agent.memory_judge import maybe_store_memory
 from app.auth import get_current_user_id
 from app.db.errors import is_missing_schema_error
@@ -38,6 +43,7 @@ class PersistenceContext:
     user_message_id: str | None = None
     assistant_message_id: str | None = None
     user_content: str = ""
+    use_memory: bool = True
 
 
 async def prepare_persistence(
@@ -47,7 +53,7 @@ async def prepare_persistence(
     create_streaming_assistant: bool = False,
 ) -> PersistenceContext:
     user_id = get_current_user_id()
-    context = PersistenceContext(user_id=user_id, user_content=latest_user_content(request))
+    context = PersistenceContext(user_id=user_id, user_content=latest_user_content(request), use_memory=request.use_memory)
     settings = get_settings()
     if not settings.storage_active:
         context.conversation_id = request.conversation_id
@@ -55,8 +61,7 @@ async def prepare_persistence(
 
     pool = await fetch_optional_pool()
     if pool is None:
-        context.conversation_id = request.conversation_id
-        return context
+        raise PersistenceUnavailableError()
 
     selection_metadata = {}
     if request.analysis_roi is not None:
@@ -77,7 +82,10 @@ async def prepare_persistence(
                 await ensure_default_identity(conn, settings)
                 conversation_id = request.conversation_id
                 if conversation_id and not await get_conversation(conn, conversation_id, user_id):
-                    conversation_id = None
+                    # Do not silently turn an unauthorized/stale conversation ID
+                    # into a new conversation. That hides access failures and makes
+                    # streaming requests start with HTTP 200 before reporting them.
+                    raise ConversationAccessError()
                 if not conversation_id:
                     conversation_id = await create_conversation(
                         conn,
@@ -103,6 +111,8 @@ async def prepare_persistence(
                         status="streaming",
                     )
                 await touch_conversation(conn, conversation_id)
+    except ConversationAccessError:
+        raise
     except Exception as exc:
         if is_missing_schema_error(exc):
             raise AIError(
@@ -112,7 +122,7 @@ async def prepare_persistence(
         # 操作性 DB 错误（死锁/连接掉/约束冲突）不再静默降级为无状态——否则整轮问答会被
         # 永久丢弃且客户端只收到 200。向上抛出 AIError(503)，由流式/非流式错误路径告知客户端本轮未保存。
         logger.exception("Database persistence setup failed; surfacing error (no silent stateless downgrade).")
-        raise AIError("聊天持久化暂时不可用，请稍后重试。", status_code=503) from exc
+        raise PersistenceUnavailableError() from exc
     return context
 
 
@@ -242,7 +252,7 @@ def schedule_after_response(
             asyncio.create_task(_embed_messages(embedding_targets)),
             "message embedding",
         )
-    if persistence.assistant_message_id:
+    if persistence.use_memory and persistence.assistant_message_id:
         _track_background_task(
             asyncio.create_task(
                 maybe_store_memory(

@@ -21,4 +21,5 @@ class ContextAssembly:
     included_blocks: list[str] = field(default_factory=list)
     dropped_blocks: list[str] = field(default_factory=list)
     used_chars: int = 0
+    history_coverage: dict = field(default_factory=dict)
 

@@ -31,10 +31,11 @@ async def shutdown_tasks(timeout_seconds: float = 5) -> None:
 
 async def recover_document_jobs() -> None:
     pool = await fetch_optional_pool()
+    stale_paths: list[str] = []
     if pool is not None:
         try:
             async with pool.acquire() as conn:
-                await fail_stale_ingest_jobs(conn)
+                stale_paths = await fail_stale_ingest_jobs(conn)
         except Exception as exc:
             if is_missing_schema_error(exc):
                 logger.warning(
@@ -42,7 +43,31 @@ async def recover_document_jobs() -> None:
                 )
             else:
                 logger.exception("Failed to mark stale document ingest jobs.")
+    cleanup_stale_job_uploads(stale_paths)
     cleanup_orphan_uploads()
+
+
+def cleanup_stale_job_uploads(temp_paths: list[str]) -> int:
+    """Remove only files that resolve directly inside the configured upload root."""
+
+    upload_root = Path(get_settings().storage_upload_dir).resolve()
+    removed = 0
+    for value in temp_paths:
+        candidate = Path(value)
+        try:
+            resolved = candidate.resolve(strict=False)
+            if resolved.parent != upload_root:
+                logger.warning("Refused stale upload cleanup outside upload root: %s", candidate)
+                continue
+            existed = candidate.exists() or candidate.is_symlink()
+            candidate.unlink(missing_ok=True)
+            if existed:
+                removed += 1
+        except (OSError, RuntimeError, ValueError):
+            logger.warning("Failed to clean stale document upload: %s", candidate, exc_info=True)
+    if removed:
+        logger.info("Removed %d stale document upload file(s).", removed)
+    return removed
 
 
 def cleanup_orphan_uploads() -> None:

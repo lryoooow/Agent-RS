@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 
 import pytest
 
@@ -47,6 +48,12 @@ def _route_get_tool_and_bypass_access(monkeypatch):
 
     monkeypatch.setattr("app.agent.tool_execution.validate_tool_access", _no_access_error)
 
+    @asynccontextmanager
+    async def no_stage(_imagery_id, *, user_id=None):
+        # Queue semantics use synthetic image IDs; staging has its own tests.
+        yield
+    monkeypatch.setattr("app.agent.tools.staging.stage_imagery", no_stage)
+
 
 def _wrap(pool):
     """把就绪 pool 包成 awaitable，匹配 fetch_optional_pool 的 async 调用约定。"""
@@ -57,6 +64,9 @@ def _wrap(pool):
 
 class _FakeTool:
     """假工具：runner 行为可注入（成功/失败/计数）。argument_model 宽松接受任意 dict。"""
+
+    recovery_policy = "idempotent"
+    name = "calculate_ndvi"
 
     def __init__(self, runner, *, enabled: bool = True) -> None:
         self.runner = runner
@@ -120,6 +130,19 @@ async def test_finish_with_error_writes_failed(pg_conn, pg_pool, monkeypatch) ->
     assert row["status"] == "failed"
     assert row["error_code"] == "tool_runner_exception"
     assert "boom" in row["error_message"]
+
+
+@pytest.mark.parametrize("unknown", [False, True])
+async def test_interrupted_job_is_not_reopened_or_claimed(pg_conn, unknown):
+    job_id = await repo.create_tool_job(pg_conn, tool_name="prepare_map_roi", user_id="u1")
+    await repo.mark_job_running(pg_conn, job_id=job_id)
+    await repo.mark_job_interrupted(pg_conn, job_id=job_id, outcome_unknown=unknown)
+    await repo.mark_job_running(pg_conn, job_id=job_id)
+    await repo.mark_job_complete(pg_conn, job_id=job_id, result={"unexpected": True})
+    await repo.heartbeat_job(pg_conn, job_id=job_id)
+    row = await repo.get_tool_job(pg_conn, job_id=job_id)
+    assert row["status"] == ("outcome_unknown" if unknown else "cancelled")
+    assert await repo.claim_stale_job(pg_conn, stale_after_seconds=0) is None
 
 
 async def test_begin_disabled_returns_none_and_writes_nothing(pg_conn, pg_pool, monkeypatch) -> None:
@@ -189,7 +212,7 @@ async def test_failed_job_retries_until_max_then_terminal(pg_conn, pg_pool, monk
     get_settings.cache_clear()
 
     async def _always_fail(args):
-        return ToolRunResult(tool_context="", error="always", metadata={"error_code": "tool_runner_exception"})
+        return ToolRunResult(tool_context="", error="always", metadata={"error_code": "service_unavailable", "retryable": True})
 
     monkeypatch.setattr(
         "app.agent.tool_registry.get_tool",
@@ -358,7 +381,7 @@ async def test_heartbeat_tool_job_keeps_long_run_unclaimable(pg_pool, monkeypatc
             imagery_id="long", user_id="u1",
         )
         await conn.execute(
-            "UPDATE public.tool_jobs SET status='running', heartbeat_at=now() - interval '100 seconds' WHERE id=$1::uuid",
+            "UPDATE public.tool_jobs SET status='running', attempts=1, heartbeat_at=now() - interval '100 seconds' WHERE id=$1::uuid",
             job_id,
         )
 
@@ -402,6 +425,7 @@ async def test_rerun_job_rebuilds_user_context_and_revalidates_access(monkeypatc
 
     class _FakeTool:
         name = "detect_objects"
+        recovery_policy = "idempotent"
 
         async def runner(self, args) -> ToolRunResult:
             seen["runner_user"] = get_current_user_id()
@@ -465,7 +489,7 @@ async def test_requeued_job_respects_backoff_window(pg_conn, pg_pool, monkeypatc
 
     async def _fail(args):
         return ToolRunResult(
-            tool_context="", error="always", metadata={"error_code": "tool_runner_exception"}
+            tool_context="", error="always", metadata={"error_code": "service_unavailable", "retryable": True}
         )
 
     monkeypatch.setattr("app.agent.tool_registry.get_tool", lambda name: _FakeTool(_fail))
@@ -487,3 +511,127 @@ async def test_requeued_job_respects_backoff_window(pg_conn, pg_pool, monkeypatc
     )
     second = await tool_jobs.recover_one_stale_job()
     assert second == job_id
+
+
+@pytest.mark.parametrize("name", ["prepare_map_roi", "web_search", "fetch_scene", "generate_report", "segment_instances"])
+async def test_side_effecting_jobs_are_not_automatically_replayed(pg_conn, pg_pool, monkeypatch, name):
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setattr(tool_jobs, "fetch_optional_pool", lambda: _wrap(pg_pool))
+    prepare = AsyncMock()
+    monkeypatch.setattr("app.agent.tool_execution.prepare_tool_call", prepare)
+    job_id = await repo.create_tool_job(pg_conn, tool_name=name, user_id="u1")
+    await repo.mark_job_running(pg_conn, job_id=job_id)
+    await pg_conn.execute("UPDATE public.tool_jobs SET heartbeat_at=now()-interval '1000 seconds' WHERE id=$1::uuid", job_id)
+    assert await tool_jobs.recover_one_stale_job() == job_id
+    row = await repo.get_tool_job(pg_conn, job_id=job_id)
+    assert row["status"] == "outcome_unknown"
+    prepare.assert_not_awaited()
+    assert await tool_jobs.recover_one_stale_job() is None
+
+
+async def test_old_attempt_cannot_heartbeat_or_overwrite_recovered_execution(pg_conn):
+    job_id = await repo.create_tool_job(pg_conn, tool_name="raster_inspect", user_id="u1")
+    await repo.mark_job_running(pg_conn, job_id=job_id)
+    await pg_conn.execute("UPDATE public.tool_jobs SET heartbeat_at=now()-interval '1000 seconds' WHERE id=$1::uuid", job_id)
+    claimed = await repo.claim_stale_job(pg_conn, stale_after_seconds=15)
+    assert claimed["attempts"] == 2
+    before = await repo.get_tool_job(pg_conn, job_id=job_id)
+    await repo.heartbeat_job(pg_conn, job_id=job_id, expected_attempt=1)
+    await repo.mark_job_complete(pg_conn, job_id=job_id, result={"old": True}, expected_attempt=1)
+    await repo.mark_job_failed(pg_conn, job_id=job_id, error_code="old", expected_attempt=1)
+    await repo.mark_job_interrupted(pg_conn, job_id=job_id, outcome_unknown=True, expected_attempt=1)
+    await tool_jobs._requeue_job(pg_conn, job_id=job_id, expected_attempt=1)
+    after = await repo.get_tool_job(pg_conn, job_id=job_id)
+    assert after["status"] == "running"
+    assert after["heartbeat_at"] == before["heartbeat_at"]
+    assert after["result"] is None
+    await repo.mark_job_complete(pg_conn, job_id=job_id, result={"new": True}, expected_attempt=2)
+    assert (await repo.get_tool_job(pg_conn, job_id=job_id))["result"] == {"new": True}
+
+
+async def test_exhausted_orphan_reaches_explicit_unknown_terminal_state(pg_conn, pg_pool, monkeypatch):
+    monkeypatch.setattr(tool_jobs, "fetch_optional_pool", lambda: _wrap(pg_pool))
+    job_id = await repo.create_tool_job(pg_conn, tool_name="prepare_map_roi", user_id="u1", max_attempts=1)
+    await repo.mark_job_running(pg_conn, job_id=job_id)
+    await pg_conn.execute("UPDATE public.tool_jobs SET heartbeat_at=now()-interval '1000 seconds' WHERE id=$1::uuid", job_id)
+    assert await tool_jobs.recover_one_stale_job() is None
+    row = await repo.get_tool_job(pg_conn, job_id=job_id)
+    assert row["status"] == "outcome_unknown"
+    assert row["error_code"] == "tool_recovery_exhausted"
+
+
+async def test_permanent_recovery_failure_does_not_retry(pg_conn, pg_pool, monkeypatch):
+    monkeypatch.setattr(tool_jobs, "fetch_optional_pool", lambda: _wrap(pg_pool))
+    counter = {}
+
+    async def permanent(args):
+        counter["runs"] = counter.get("runs", 0) + 1
+        return ToolRunResult(tool_context="invalid", error="invalid_data", metadata={"retryable": False})
+
+    monkeypatch.setattr("app.agent.tool_registry.get_tool", lambda name: _FakeTool(permanent))
+    job_id = await repo.create_tool_job(pg_conn, tool_name="calculate_ndvi", user_id="u1")
+    assert await tool_jobs.recover_one_stale_job() == job_id
+    assert await tool_jobs.recover_one_stale_job() is None
+    assert counter["runs"] == 1
+    assert (await repo.get_tool_job(pg_conn, job_id=job_id))["status"] == "failed"
+
+
+async def test_worker_cancellation_records_unknown_outcome(pg_conn, pg_pool, monkeypatch):
+    monkeypatch.setattr(tool_jobs, "fetch_optional_pool", lambda: _wrap(pg_pool))
+    started = asyncio.Event()
+
+    async def blocked(args):
+        started.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr("app.agent.tool_registry.get_tool", lambda name: _FakeTool(blocked))
+    job_id = await repo.create_tool_job(pg_conn, tool_name="calculate_ndvi", user_id="u1")
+    task = asyncio.create_task(tool_jobs.recover_one_stale_job())
+    await asyncio.wait_for(started.wait(), 2)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, 2)
+    row = await repo.get_tool_job(pg_conn, job_id=job_id)
+    assert row["status"] == "outcome_unknown"
+    assert await tool_jobs.recover_one_stale_job() is None
+
+
+@pytest.mark.parametrize("code", ["access_denied", "storage_unavailable", "artifact_publication_failed"])
+async def test_recovery_staging_uses_owner_and_preserves_failure_code(monkeypatch, code):
+    from unittest.mock import AsyncMock
+    from app.agent.tool_execution import PreparedTool
+    from app.agent.tools.staging import ImageryStagingError, ArtifactPublicationError
+    import app.agent.tools.staging as staging
+    from pydantic import BaseModel
+
+    class Args(BaseModel):
+        imagery_id: str = "img-001"
+
+    runner = AsyncMock(return_value=ToolRunResult(tool_context="computed"))
+    tool = _FakeTool(runner)
+    prepared = PreparedTool(tool=tool, arguments=Args(), user_id="owner-recovery")
+    monkeypatch.setattr("app.agent.tool_execution.prepare_tool_call", AsyncMock(return_value=prepared))
+    seen = {}
+
+    @asynccontextmanager
+    async def failed_stage(imagery_id, *, user_id):
+        seen.update(imagery_id=imagery_id, user_id=user_id)
+        if code == "artifact_publication_failed":
+            yield
+            raise ArtifactPublicationError()
+        raise ImageryStagingError(code, "影像校验失败，本次未执行分析。")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(staging, "stage_imagery", failed_stage)
+    result = await tool_jobs._rerun_job({
+        "id": "job-1", "tool_name": tool.name, "user_id": "owner-recovery",
+        "arguments": {"imagery_id": "img-001"},
+    })
+    assert seen == {"imagery_id": "img-001", "user_id": "owner-recovery"}
+    assert result.metadata["error_code"] == code
+    assert result.geospatial_result is None
+    if code == "artifact_publication_failed":
+        runner.assert_awaited_once()
+    else:
+        runner.assert_not_awaited()

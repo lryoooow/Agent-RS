@@ -1,3 +1,4 @@
+import { automaticMarkdownImage, manualImageLink } from "../lib/markdown-media";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Components } from "react-markdown";
@@ -40,7 +41,12 @@ const COMPONENTS: Components = {
       <table className="w-full table-fixed border-collapse text-[12px]">{children}</table>
     </div>
   ),
-  img: ({src, alt}) => <img src={src} alt={alt ?? ""} loading="lazy" className="my-2 h-auto max-w-full rounded" />,
+  img: ({src, alt}) => {
+    const safe = automaticMarkdownImage(src);
+    if (safe) return <img src={safe} alt={alt ?? ""} loading="lazy" referrerPolicy="no-referrer" className="my-2 h-auto max-w-full rounded" />;
+    const link = manualImageLink(src);
+    return <span className="text-muted-foreground">{alt || "外部图片"}（未自动加载）{link && <a href={link} target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer">打开图片</a>}</span>;
+  },
   thead: ({ children }) => <thead className="bg-background/60">{children}</thead>,
   th: ({ children }) => <th className="border-b border-border px-2.5 py-1.5 text-left font-semibold text-foreground">{children}</th>,
   td: ({ children }) => <td className="border-b border-border/60 px-2.5 py-1.5 align-top">{children}</td>,

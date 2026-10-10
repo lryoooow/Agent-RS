@@ -3,15 +3,17 @@
 重点不是"能跑通"，而是几条**不能退化**的性质：
 - 鉴权在每一次调用上都生效（多步链路的每一步都是独立的攻击面）
 - 身份取自 contextvar，且未登录时不会被回退成默认用户
-- GPU 配额按回合生效，超限返回文本而不是抛异常
+- GPU 配额按回合生效，超限由 AutoGen 转成失败工具结果而不是伪成功
 - 产物进回合收集器，不混进给模型的文本
 """
 from __future__ import annotations
 
 import pytest
+from contextlib import asynccontextmanager
+from unittest.mock import AsyncMock
 from autogen_core import CancellationToken
 
-from app.agent.engine.tools import RemoteSensingTool, build_tools
+from app.agent.engine.tools import RemoteSensingTool, ToolExecutionFailure, build_tools
 from app.agent.engine.turn_context import turn_scope
 from app.agent.tool_registry import RegisteredTool
 from app.agent.tools.detect.schema import DETECT_TOOL_NAME, DetectArguments
@@ -34,6 +36,13 @@ def _no_database(monkeypatch):
     """
     monkeypatch.setenv("DATABASE_ENABLED", "false")
     get_settings.cache_clear()
+    # Fake rasters/runners in wrapper tests have no persisted source image.
+    # Ownership/storage races are tested against real staging separately.
+    @asynccontextmanager
+    async def no_stage(_imagery_id, *, user_id=None):
+        yield
+    monkeypatch.setattr("app.agent.tool_execution.stage_imagery", no_stage)
+    monkeypatch.setattr("app.agent.tool_jobs.fetch_optional_pool", AsyncMock(return_value=None))
     yield
     get_settings.cache_clear()
 
@@ -126,7 +135,9 @@ async def test_access_denied_never_runs_the_runner(monkeypatch, as_owner) -> Non
     tool = RemoteSensingTool(_ndvi_tool(fail_runner))
 
     with turn_scope():
-        text = await tool.run(NDVIArguments(imagery_id="aaaaaaaaaaaa"), CancellationToken())
+        with pytest.raises(ToolExecutionFailure) as error:
+            await tool.run(NDVIArguments(imagery_id="aaaaaaaaaaaa"), CancellationToken())
+        text = str(error.value)
 
     assert "无权访问" in text
     assert "不要编造结果" in text  # 防止模型假装执行过
@@ -185,8 +196,8 @@ async def test_identity_comes_from_contextvar_and_does_not_fall_back(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_gpu_budget_blocks_second_call_without_raising(monkeypatch, as_owner) -> None:
-    """GPU 工具超配额时返回说明文本，让模型自己收敛，不抛异常炸链路。"""
+async def test_gpu_budget_blocks_second_call_with_controlled_failure(monkeypatch, as_owner) -> None:
+    """GPU 超额通过框架的失败结果告知模型，不伪报工具执行成功。"""
     runs = 0
 
     async def counting_runner(_args) -> ToolRunResult:
@@ -201,7 +212,9 @@ async def test_gpu_budget_blocks_second_call_without_raising(monkeypatch, as_own
     limit = get_settings().agent_max_gpu_tool_calls
     with turn_scope() as state:
         first = await tool.run(DetectArguments(imagery_id="94e758f38ede"), CancellationToken())
-        second = await tool.run(DetectArguments(imagery_id="94e758f38ede"), CancellationToken())
+        with pytest.raises(ToolExecutionFailure) as error:
+            await tool.run(DetectArguments(imagery_id="94e758f38ede"), CancellationToken())
+        second = str(error.value)
 
     assert first == "检出 3 个目标"
     assert "已达上限" in second
@@ -275,10 +288,11 @@ async def test_gpu_budget_holds_under_parallel_tool_calls(monkeypatch, as_owner)
         results = await asyncio.gather(
             tool.run(DetectArguments(imagery_id="94e758f38ede"), CancellationToken()),
             tool.run(DetectArguments(imagery_id="94e758f38ede"), CancellationToken()),
+            return_exceptions=True,
         )
 
     assert peak <= limit, f"并行下同时在跑的 GPU 工具数 {peak} 超过配额 {limit}"
-    assert sum(1 for r in results if "已达上限" in r) == 2 - limit
+    assert sum(isinstance(r, ToolExecutionFailure) and r.code == "tool_quota_exceeded" for r in results) == 2 - limit
 
 
 @pytest.mark.asyncio
@@ -295,6 +309,8 @@ async def test_rejected_call_gives_the_gpu_slot_back(monkeypatch, as_owner) -> N
     tool = RemoteSensingTool(_detect_tool(runner))
 
     with turn_scope() as state:
-        rejected = await tool.run(DetectArguments(imagery_id="94e758f38ede"), CancellationToken())
+        with pytest.raises(ToolExecutionFailure) as error:
+            await tool.run(DetectArguments(imagery_id="94e758f38ede"), CancellationToken())
+        rejected = str(error.value)
         assert "未执行" in rejected
         assert state.gpu_calls == 0, "被拒的调用不该占用配额"

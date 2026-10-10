@@ -1,5 +1,6 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -9,9 +10,18 @@ logger = logging.getLogger(__name__)
 
 _pool: Any | None = None
 _pool_initialized = False
+# A single process owns one asyncpg pool. The lock covers both initialization and
+# shutdown so concurrent first requests cannot create orphan pools and shutdown
+# cannot close a pool while another coroutine is still publishing it.
+_pool_state_lock = asyncio.Lock()
 
 
 async def init_db_pool() -> None:
+    async with _pool_state_lock:
+        await _init_db_pool_locked()
+
+
+async def _init_db_pool_locked() -> None:
     global _pool, _pool_initialized
     settings = get_settings()
 
@@ -24,9 +34,7 @@ async def init_db_pool() -> None:
             "DATABASE_ENABLED=true 但 DATABASE_URL 为空；"
             "请配置数据库连接串或显式设 DATABASE_ENABLED=false。"
         )
-    if _pool is not None:
-        return
-    if _pool_initialized:
+    if _pool is not None or _pool_initialized:
         return
 
     try:
@@ -42,7 +50,6 @@ async def init_db_pool() -> None:
             min_size=settings.database_pool_min_size,
             max_size=settings.database_pool_max_size,
         )
-        _pool_initialized = True
     except Exception as exc:
         _pool = None
         _pool_initialized = False
@@ -53,34 +60,47 @@ async def init_db_pool() -> None:
             f"或设 DATABASE_ENABLED=false。原始错误：{exc}"
         ) from exc
 
-    # 启动时幂等建/补 schema：docker compose up + 启动后端即自带最新表结构，免手动 sql.apply。
-    # 已按 schema_migrations 记录跳过已应用版本，重复启动零副作用；失败只告警，不阻断启动
-    # （库刚拉起尚未就绪等场景，由后续请求经 fetch_optional_pool 容错）。
-    await _ensure_schema()
+    try:
+        # Startup schema application is part of pool readiness. Publishing a pool
+        # with a partially applied schema only moves the failure into user traffic.
+        await _ensure_schema()
+    except Exception as exc:
+        logger.exception("Schema migration on startup failed.")
+        created_pool = _pool
+        _pool = None
+        _pool_initialized = False
+        if created_pool is not None:
+            await created_pool.close()
+        raise RuntimeError(
+            "数据库 schema 迁移失败，连接池未启用；请检查迁移日志后重试。"
+        ) from exc
+
+    _pool_initialized = True
 
 
 async def _ensure_schema() -> None:
     if _pool is None:
         return
-    try:
-        from sql.apply import run_migrations
+    from sql.apply import run_migrations
 
-        async with _pool.acquire() as conn:
-            applied = await run_migrations(conn, log=None)
-        if applied:
-            logger.info("Applied %d database migration(s): %s", len(applied), ", ".join(applied))
-    except Exception:
-        logger.exception("Schema migration on startup failed; run `python -m sql.apply` manually.")
+    async with _pool.acquire() as conn:
+        applied = await run_migrations(conn, log=None)
+    if applied:
+        logger.info(
+            "Applied %d database migration(s): %s",
+            len(applied),
+            ", ".join(applied),
+        )
 
 
 async def close_db_pool() -> None:
     global _pool, _pool_initialized
-    if _pool is None:
+    async with _pool_state_lock:
+        pool = _pool
+        _pool = None
         _pool_initialized = False
-        return
-    await _pool.close()
-    _pool = None
-    _pool_initialized = False
+        if pool is not None:
+            await pool.close()
 
 
 async def get_db_pool() -> Any | None:

@@ -16,12 +16,14 @@ async def list_relevant_memories(
 ) -> list[dict[str, Any]]:
     rows = await conn.fetch(
         """
+        WITH owned AS MATERIALIZED (
+            SELECT id, content, memory_type, importance, metadata, embedding
+            FROM public.memories WHERE user_id = $1 AND embedding IS NOT NULL
+        )
         SELECT id::text, content, memory_type, importance, metadata,
                1 - (embedding <=> $2::vector) AS score
-        FROM public.memories
-        WHERE user_id = $1
-          AND embedding IS NOT NULL
-        ORDER BY embedding <=> $2::vector
+        FROM owned
+        ORDER BY embedding <=> $2::vector, id
         LIMIT $3
         """,
         user_id,

@@ -6,6 +6,9 @@ FROM python:3.11.9-slim
 
 WORKDIR /app
 
+ARG PIP_INDEX_URL=https://pypi.org/simple
+ENV PIP_PROGRESS_BAR=off
+
 COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir --timeout 300 --retries 10 -r requirements.txt
 
@@ -14,7 +17,7 @@ RUN pip install --no-cache-dir --timeout 300 --retries 10 -r requirements.txt
 # network. Replace it with the headless build: uninstall every opencv variant
 # (they share the cv2/ dir), then force-reinstall headless so cv2 lands cleanly.
 RUN (pip uninstall -y opencv-python opencv-contrib-python opencv-python-headless opencv-contrib-python-headless || true) \
-    && pip install --no-cache-dir --timeout 300 --retries 10 --force-reinstall "opencv-python-headless>=4.8.0,<5.0.0" \
+    && pip install --no-cache-dir --timeout 300 --retries 10 --force-reinstall "opencv-python-headless>=4.8.0,<4.12" "numpy>=1.24.0,<2.0.0" \
     && python -c "import cv2; print('cv2', cv2.__version__)"
 
 COPY compute_ocr.py /app/compute_ocr.py
@@ -25,7 +28,7 @@ COPY mcp_server.py /app/mcp_server.py
 # `import mcp_server` also guards the `from compute_ocr import ...` chain so a
 # missing COPY fails the build instead of crashing at container runtime.
 RUN python -c "import mcp_server" \
-    && python -c "from rapidocr_onnxruntime import RapidOCR; RapidOCR()"
+    && python -c "from compute_ocr import _engine; _engine()"
 
 RUN useradd --create-home --shell /usr/sbin/nologin appuser
 USER appuser

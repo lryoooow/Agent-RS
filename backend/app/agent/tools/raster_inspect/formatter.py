@@ -20,7 +20,9 @@ def format_raster_inspect_context(imagery_id: str, result: dict[str, Any]) -> st
             f"Green={bool(capabilities.get('has_green'))}, "
             f"Red={bool(capabilities.get('has_red'))}, "
             f"NIR={bool(capabilities.get('has_nir'))}, "
-            f"SWIR={bool(capabilities.get('has_swir'))}"
+            f"SWIR={bool(capabilities.get('has_swir'))}, "
+            f"SWIR1={bool(capabilities.get('has_swir1'))}, "
+            f"SWIR2={bool(capabilities.get('has_swir2'))}"
         ),
     ]
     lines.extend(format_grids(result))

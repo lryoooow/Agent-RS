@@ -27,7 +27,7 @@ async def run_scene_fetch(args: SceneFetchArguments) -> ToolRunResult:
         )
 
     try:
-        result = await import_scene_as_imagery(record, user_id)
+        result = await import_scene_as_imagery(record, user_id, bbox=args.bbox)
     except SceneImportError as exc:
         return ToolRunResult(
             tool_context=f"场景导入失败：{exc}。请如实告知用户，不要编造结果。",

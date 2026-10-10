@@ -2,3 +2,6 @@ rapidocr_onnxruntime>=1.3.0,<2.0.0
 rasterio>=1.4.0,<1.5.0
 numpy>=1.24.0,<2.0.0
 Pillow>=10.0.0,<13.0.0
+
+# Keep the initial RapidOCR dependency solve on the same NumPy 1.x ABI.
+opencv-python>=4.8.0,<4.12

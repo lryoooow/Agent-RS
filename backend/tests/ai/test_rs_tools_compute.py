@@ -56,11 +56,12 @@ def test_spectral_index_ndwi_matches_ground_truth(tmp_path: Path) -> None:
     expected = (data[1].astype(np.float32) - data[3].astype(np.float32)) / (
         data[1].astype(np.float32) + data[3].astype(np.float32)
     )
-    with rasterio.open(output_dir / "ndwi.tif") as src:
+    with rasterio.open(output_dir / stats["output_tif"]) as src:
         actual = src.read(1)
     np.testing.assert_allclose(actual, expected, rtol=1e-4)
     np.testing.assert_allclose(stats["mean"], float(np.mean(expected)), rtol=1e-4)
-    assert (output_dir / "ndwi_colored.png").exists()
+    assert (output_dir / stats["output_png"]).exists()
+    assert stats["output_tif"].startswith("ndwi_") and stats["output_tif"].endswith(".tif")
 
 
 def test_spectral_index_requires_swir_for_ndbi(tmp_path: Path) -> None:
@@ -73,16 +74,16 @@ def test_spectral_index_requires_swir_for_ndbi(tmp_path: Path) -> None:
 
 
 def test_spectral_index_zero_denominator_has_no_nan_stats(tmp_path: Path) -> None:
+    """Undefined index pixels must fail explicitly instead of reporting zero statistics."""
+    from raster_utils import AllPixelsInvalidError
     input_path = tmp_path / "input.tif"
-    data = np.zeros((4, 2, 2), dtype=np.uint16)
+    data = np.zeros((4, 2, 2), dtype=np.float32)
+    data[1] = .05
+    data[3] = -.05
     _write_tif(input_path, data)
-
-    stats = compute(input_path=str(input_path), output_dir=str(tmp_path / "output"), index_type="ndwi")
-
-    assert stats["min"] == 0.0
-    assert stats["max"] == 0.0
-    assert stats["mean"] == 0.0
-    assert stats["nodata_pct"] == 100.0
+    with pytest.raises(AllPixelsInvalidError, match="all_pixels_invalid"):
+        compute(input_path=str(input_path),output_dir=str(tmp_path/"output"),index_type="ndwi")
+    assert not list((tmp_path/"output").glob("*.tif"))
 
 
 def test_spectral_index_gndvi_matches_ground_truth(tmp_path: Path) -> None:
@@ -98,11 +99,11 @@ def test_spectral_index_gndvi_matches_ground_truth(tmp_path: Path) -> None:
     green = data[1].astype(np.float32)
     nir = data[3].astype(np.float32)
     expected = (nir - green) / (nir + green)
-    with rasterio.open(output_dir / "gndvi.tif") as src:
+    with rasterio.open(output_dir / stats["output_tif"]) as src:
         actual = src.read(1)
     np.testing.assert_allclose(actual, expected, rtol=1e-4)
     np.testing.assert_allclose(stats["mean"], float(np.mean(expected)), rtol=1e-4)
-    assert (output_dir / "gndvi_colored.png").exists()
+    assert (output_dir / stats["output_png"]).exists()
 
 
 def test_spectral_index_ndmi_and_nbr_share_formula(tmp_path: Path) -> None:
@@ -117,30 +118,39 @@ def test_spectral_index_ndmi_and_nbr_share_formula(tmp_path: Path) -> None:
     expected = (nir - swir) / (nir + swir)
     for index_type in ("ndmi", "nbr"):
         stats = compute(input_path=str(input_path), output_dir=str(tmp_path / index_type), index_type=index_type)
-        with rasterio.open(tmp_path / index_type / f"{index_type}.tif") as src:
+        with rasterio.open(tmp_path / index_type / stats["output_tif"]) as src:
             actual = src.read(1)
         np.testing.assert_allclose(actual, expected, rtol=1e-4)
         np.testing.assert_allclose(stats["mean"], float(np.mean(expected)), rtol=1e-4)
 
 
 def test_spectral_index_msavi_matches_ground_truth(tmp_path: Path) -> None:
+    """MSAVI 必须在反射率域计算（A5）：float 反射率输入，期望值手算。
+
+    手算（Qi et al. 1994: (2N+1-sqrt((2N+1)^2-8(N-R)))/2）：
+    - red=0.10, nir=0.30: 2N+1=1.6, (1.6)^2-8*0.2=0.96, sqrt=0.979796
+      -> (1.6-0.979796)/2 = 0.310102
+    - red=0.20, nir=0.40: 2N+1=1.8, 3.24-1.6=1.64, sqrt=1.280625
+      -> (1.8-1.280625)/2 = 0.259688
+    均值 = (0.310102+0.259688)/2 = 0.284895
+    """
     input_path = tmp_path / "input.tif"
     output_dir = tmp_path / "output"
-    data = np.zeros((4, 2, 2), dtype=np.uint16)
-    data[2] = np.array([[10, 20], [30, 40]], dtype=np.uint16)  # red
-    data[3] = np.array([[60, 70], [80, 90]], dtype=np.uint16)  # nir
+    data = np.zeros((4, 1, 2), dtype=np.float32)
+    data[2] = np.array([[0.10, 0.20]], dtype=np.float32)  # red
+    data[3] = np.array([[0.30, 0.40]], dtype=np.float32)  # nir
     _write_tif(input_path, data)
+    with rasterio.open(input_path, "r+") as src:
+        src.units = ("reflectance",) * src.count
 
     stats = compute(input_path=str(input_path), output_dir=str(output_dir), index_type="msavi")
 
-    red = data[2].astype(np.float32)
-    nir = data[3].astype(np.float32)
-    expected = (2 * nir + 1 - np.sqrt(np.maximum((2 * nir + 1) ** 2 - 8 * (nir - red), 0.0))) / 2
-    expected = np.clip(expected, -1.0, 1.0)
-    with rasterio.open(output_dir / "msavi.tif") as src:
+    with rasterio.open(output_dir / stats["output_tif"]) as src:
         actual = src.read(1)
-    np.testing.assert_allclose(actual, expected, rtol=1e-4)
-    np.testing.assert_allclose(stats["mean"], float(np.mean(expected)), rtol=1e-4)
+    np.testing.assert_allclose(actual[0, 0], 0.310102, rtol=1e-4)
+    np.testing.assert_allclose(actual[0, 1], 0.259688, rtol=1e-4)
+    np.testing.assert_allclose(stats["mean"], 0.284895, rtol=1e-4)
+    assert stats["calibrated"] is True
 
 
 def test_spectral_index_bsi_matches_ground_truth(tmp_path: Path) -> None:
@@ -160,7 +170,7 @@ def test_spectral_index_bsi_matches_ground_truth(tmp_path: Path) -> None:
     nir = data[3].astype(np.float32)
     swir = data[4].astype(np.float32)
     expected = ((swir + red) - (nir + blue)) / ((swir + red) + (nir + blue))
-    with rasterio.open(output_dir / "bsi.tif") as src:
+    with rasterio.open(output_dir / stats["output_tif"]) as src:
         actual = src.read(1)
     np.testing.assert_allclose(actual, expected, rtol=1e-4)
     np.testing.assert_allclose(stats["mean"], float(np.mean(expected)), rtol=1e-4)

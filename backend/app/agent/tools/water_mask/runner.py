@@ -5,7 +5,9 @@ import logging
 
 from app.agent.tools.common import (
     IMAGERY_ID_PATTERN,
+    classify_rs_tool_failure,
     execution_metadata,
+    provenance_stats,
     imagery_not_found_result,
     invalid_bands_result,
     invalid_imagery_id_result,
@@ -20,6 +22,7 @@ from app.core.settings import get_settings
 from app.mcp.client import MCPCallError
 from app.mcp.rs_tools_client import RSToolsMCPClient
 from app.schemas.chat import ToolExecutionInfo
+from app.services.raster_semantics import resolve_spectral_bands
 
 logger = logging.getLogger(__name__)
 
@@ -32,13 +35,19 @@ async def run_water_mask(args: WaterMaskArguments) -> ToolRunResult:
         return imagery_not_found_result(args.imagery_id)
     results_dir.mkdir(parents=True, exist_ok=True)
 
-    band_error = await validate_band_indices(
-        source_path,
-        {
-            "green": args.green_band,
-            "nir": args.nir_band,
-        },
-    )
+    # 波段角色解析（A4）：模型显式给出的波段参数优先；未显式给出的用影像
+    # band_roles 覆盖 GF-2 默认值。
+    try:
+        bands = await asyncio.to_thread(
+            resolve_spectral_bands,
+            source_path,
+            {"green": args.green_band, "nir": args.nir_band},
+            explicit={"green_band", "nir_band"} & args.model_fields_set,
+        )
+    except ValueError as exc:
+        return _error_result(f"水体掩膜失败: {exc}", getattr(exc, "code", "band_roles_unknown"))
+
+    band_error = await validate_band_indices(source_path, bands)
     if band_error:
         return invalid_bands_result("水体掩膜", band_error)
 
@@ -46,8 +55,9 @@ async def run_water_mask(args: WaterMaskArguments) -> ToolRunResult:
     if not settings.rs_tools_mcp_use_docker:
         return _error_result("水体掩膜失败: RS Tools Docker MCP 未启用。", "mcp_disabled")
     payload = {
-        "green_band": args.green_band,
-        "nir_band": args.nir_band,
+        "green_band": bands["green"],
+        "nir_band": bands["nir"],
+        "threshold": args.threshold,
     }
     try:
         stats = await _client(settings).call_tool(
@@ -58,11 +68,15 @@ async def run_water_mask(args: WaterMaskArguments) -> ToolRunResult:
         )
     except (FileNotFoundError, asyncio.TimeoutError, MCPCallError) as exc:
         logger.warning("Water mask failed: %s", exc)
-        return _error_result("水体掩膜失败，请稍后重试或检查影像与服务状态。", "mcp_error")
+        code, classified_message = classify_rs_tool_failure(exc)
+        return _error_result(
+            classified_message or "水体掩膜失败，请稍后重试或检查影像与服务状态。", code
+        )
     except Exception as exc:
         logger.exception("Water mask unexpected error: %s", exc)
         return _error_result("水体掩膜失败，请稍后重试或检查影像与服务状态。", "unexpected_error")
 
+    stats = {**stats, "resolved_bands": bands}
     result_filename = str(stats.get("output_png") or "water_mask_colored.png")
     execution_info = ToolExecutionInfo(mode="docker_mcp", fallback_used=False)
     geospatial_result = {
@@ -71,10 +85,13 @@ async def run_water_mask(args: WaterMaskArguments) -> ToolRunResult:
         "result_url": f"/api/imagery/{args.imagery_id}/results/{result_filename}",
         "bounds": read_bounds(imagery_dir / "metadata.json"),
         "stats": {
+            **provenance_stats(stats, bands),
             "water_pct": stats.get("water_pct"),
             "non_water_pct": stats.get("non_water_pct"),
             "nodata_pct": stats.get("nodata_pct"),
             "ndwi_threshold": stats.get("ndwi_threshold"),
+            "threshold_method": stats.get("threshold_method"),
+            "threshold_value": stats.get("threshold_value"),
         },
         "execution": execution_info.model_dump(exclude_none=True),
         "legend": {

@@ -1,6 +1,7 @@
 // 卫星影像检索 API（免账号公共数据源：Sentinel-2 / Landsat）。
 // 统一走 lib/http.ts 客户端：同源 cookie、错误归一、按调用点超时。
 import { apiFetch } from "./http";
+export { absoluteUrl } from "./urls";
 
 export interface SceneCard {
   key: string;
@@ -79,11 +80,6 @@ export async function fetchScenePreview(
     throw new Error("影像预览响应格式异常。");
   }
   return blob;
-}
-
-// 相对 /api 路径 → 同源绝对地址（<img> 与下载链接用；cookie 同源自动携带）。
-export function absoluteUrl(path: string): string {
-  return path.startsWith("http") ? path : `${window.location.origin}${path}`;
 }
 
 // 下载场景 TIF：fetch → blob → 保存。

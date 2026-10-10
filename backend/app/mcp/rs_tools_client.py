@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+import tempfile
+import os
+from hashlib import sha256
 from typing import Any
 
-from app.mcp.client import StdioMCPClient
+from app.mcp.client import MCPCallError, StdioMCPClient
 from app.mcp.concurrency import tool_semaphore
 
 logger = logging.getLogger(__name__)
@@ -69,6 +72,11 @@ class RSToolsMCPClient:
             "--cpus",
             str(self.cpus),
         ]
+        # Native Linux bind mounts keep request-private directories at 0700.
+        # Use the service process identity so a container's baked-in appuser
+        # can read staged inputs and write outputs without opening them to others.
+        if hasattr(os, "getuid") and hasattr(os, "getgid"):
+            command.extend(["--user", f"{os.getuid()}:{os.getgid()}"])
         if self.accelerator == "hygon":
             command.extend(["--device=/dev/kfd", "--device=/dev/mkfd", "--device=/dev/dri", "-v", "/opt/hyhal:/opt/hyhal:ro"])
         elif self.accelerator == "nvidia" and self.gpus:
@@ -85,9 +93,74 @@ class RSToolsMCPClient:
         # acquire 排在 StdioMCPClient 的 wait_for 计时之前，故排队等待不蚕食工具 timeout。
         # async with 确保异常路径也释放槽位，杜绝"异常吞槽"导致后续任务永久饿死。
         async with tool_semaphore():
-            return await StdioMCPClient(
+            client = StdioMCPClient(
                 command=command,
                 timeout_seconds=self.timeout_seconds,
                 client_name=CLIENT_NAME,
                 client_version=CLIENT_VERSION,
-            ).call_tool(tool_name, payload)
+            )
+            if output_dir is None:
+                return await client.call_tool(tool_name, payload)
+            # Each execution writes outside the public results directory. Only
+            # complete, successful outputs are promoted; cancelled/failed calls
+            # cannot leave half-files available through result download routes.
+            output_dir.mkdir(parents=True, exist_ok=True)
+            with tempfile.TemporaryDirectory(prefix=".tool-output-", dir=mount_root) as directory:
+                work_dir = Path(directory)
+                work_dir.resolve().relative_to(mount_root)
+                payload["output_dir"] = self.host_to_container(work_dir, mount_root=mount_root)
+                result = await client.call_tool(tool_name, payload)
+                _publish_outputs(work_dir, output_dir.resolve(), result)
+                return result
+
+
+def _publish_outputs(work_dir: Path, output_dir: Path, result: dict[str, Any]) -> None:
+    """Atomically publish complete files and roll back this call on disk failure.
+
+    Runtime filenames carry execution UUIDs. Existing names are never replaced;
+    this also rejects legacy containers that would overwrite a historical result.
+    """
+    files = sorted(work_dir.iterdir())
+    for path in files:
+        if path.is_symlink() or not path.is_file() or path.resolve().parent != work_dir.resolve():
+            raise MCPCallError("artifact_publication_failed: invalid tool output entry")
+        if (output_dir / path.name).exists():
+            raise MCPCallError("artifact_publication_failed: output name already exists")
+    for key in ("output_png", "output_tif", "output_json", "output_geojson"):
+        if key not in result or (key == "output_geojson" and result[key] is None):
+            continue
+        value = result[key]
+        if not isinstance(value, str) or Path(value).name != value or not (work_dir / value).is_file():
+            raise MCPCallError("artifact_publication_failed: declared output file is missing or invalid")
+    published: list[Path] = []
+    # Cooperating server workers reserve each target outside the public folder.
+    # A legacy fixed-name output is rejected rather than racing another worker.
+    lock_dir = output_dir.parent / ".artifact-locks"
+    lock_dir.mkdir(exist_ok=True)
+    locks: list[Path] = []
+    try:
+        for source in files:
+            target = output_dir / source.name
+            digest = sha256(os.path.normcase(str(target)).encode("utf-8")).hexdigest()
+            lock_path = lock_dir / digest
+            with lock_path.open("xb"):
+                pass
+            locks.append(lock_path)
+            if target.exists():
+                raise FileExistsError("output name already exists")
+        for source in files:
+            target = output_dir / source.name
+            source.replace(target)
+            published.append(target)
+    except OSError as exc:
+        for path in published:
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                logger.exception("Unable to remove this execution's unreferenced output: %s", path.name)
+        raise MCPCallError("artifact_publication_failed: unable to publish tool outputs") from exc
+    finally:
+        for path in locks:
+            path.unlink(missing_ok=True)
+        # Keep this single small directory: another process can be between
+        # mkdir and acquiring its first lock. Only this call's lock files are removed.

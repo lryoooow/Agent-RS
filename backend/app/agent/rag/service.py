@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
+import logging
 import time
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
@@ -13,6 +15,8 @@ from app.agent.rerank import get_rerank_service
 from app.db.repositories.document import fetch_adjacent_chunks
 from app.db.repositories.vector_search import search_hybrid_rrf
 from app.core.settings import get_settings
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -49,7 +53,24 @@ async def retrieve_rag_context(
     trace["relevance_rejected"] = len(chunks) - len(qualified)
     trace["min_similarity"] = threshold
     chunks = qualified
+    # E4/E5 费用实耗（登记 §5）：rerank 实际输入字符量 = 题面 + 过阈值候选块正文；
+    # 无过阈值候选（未调用 rerank）记 0。仅观测，不改变任何检索行为。
+    trace["rerank_input_chars"] = (
+        len(query) + sum(len(str(chunk.get("content") or "")) for chunk in chunks)
+    ) if chunks else 0
     if not chunks:
+        # 空检索告警（纯可观测性，零行为变更）：候选非空但全部被相似度阈值滤掉——
+        # E4 实测空检索 100% 属此型（126/126 candidates>0、rerank 未调用、静默交付空上下文）。
+        # 只打查询哈希与候选数，不打用户原文（查询内容属用户数据）。
+        if (trace.get("candidates") or 0) > 0:
+            logger.warning(
+                "rag empty retrieval: all %d candidates filtered by min_similarity=%.2f "
+                "query_sha256=%s relevance_rejected=%s",
+                trace.get("candidates"),
+                threshold,
+                hashlib.sha256(query.encode("utf-8")).hexdigest()[:16],
+                trace.get("relevance_rejected"),
+            )
         return RAGResult(context=None, retrieved_chunks=0, trace=trace)
     started = time.perf_counter()
     chunks = await get_rerank_service().rerank(
@@ -91,6 +112,25 @@ async def retrieve_rag_context(
         except Exception:
             trace["expansion_error"] = True
     retrieved_chunks = sum(1 for chunk in chunks if str(chunk.get("content") or "").strip())
+    # 最终排名块清单（可观测性，E4 评测用）：rerank/MMR/扩展之后的顺序与块身份，
+    # 供检索评测按块计算 gold 区间覆盖率；不改变任何检索行为。
+    # 扩展块附 merged_chunk_indices（E7 §1.5）：评测按全部组成块区间计分。
+    retrieved_entries = []
+    for chunk in chunks:
+        entry = {
+            "document_id": str(chunk.get("document_id")),
+            "chunk_index": _chunk_index_of(chunk),
+            "chars": len(str(chunk.get("content") or "")),
+            # 可观测性（E7 登记 §13 事后修订，零行为变更）：该块 rerank 分数（扩展块=
+            # 最靠前锚点的分数）。翻位诊断用——近并列分数可直接看出是哪两项接近；
+            # 无分数（rerank 失败回退原序等）为 None。不参与任何检索/拼接逻辑。
+            "rerank_score": chunk.get("rerank_score"),
+        }
+        merged_indices = chunk.get("merged_chunk_indices")
+        if merged_indices is not None:
+            entry["merged_chunk_indices"] = merged_indices
+        retrieved_entries.append(entry)
+    trace["retrieved"] = retrieved_entries
     documents = format_retrieved_blocks(chunks, title="document") or ""
     budget = max(0, settings.ai_context_max_rag_chars)
     graph = _limit_context(graph_context, min(1500, budget // 3))
@@ -187,6 +227,9 @@ async def _expand_context(
         total_neighbors += max(0, len(pieces) - len(set(anchors.get(doc_id, []))))
         merged = dict(chunk)
         merged["content"] = merged_text
+        # 可观测性（E7 §1.5，零行为变更）：记录扩展块的组成原始块编号（升序），
+        # 供检索评测按全部组成块区间计覆盖分；不参与任何检索/拼接逻辑。
+        merged["merged_chunk_indices"] = [piece["chunk_index"] for piece in pieces]
         expanded.append(merged)
         emitted_docs.add(doc_id)
 

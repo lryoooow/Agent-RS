@@ -105,10 +105,17 @@ class TurnToolState:
             for invocation in reversed(self.succeeded):
                 geo = invocation.result.geospatial_result
                 if invocation.name in {"fetch_scene", "prepare_map_roi"} and geo and geo.get("imagery_id"):
+                    if trusted["imagery_id"] != geo["imagery_id"]:
+                        trusted = {key: value for key, value in trusted.items() if not key.endswith("_band")}
+                    roles = invocation.result.metadata.get("band_roles") or {}
+                    # Only server-produced, explicit roles override model arguments.
+                    # Do not guess missing roles after changing the imagery resource.
+                    for role in ("red", "green", "blue", "nir", "swir", "swir1", "swir2"):
+                        index = roles.get(role)
+                        key = role + "_band"
+                        if key in arguments and isinstance(index, int) and not isinstance(index, bool) and index > 0:
+                            trusted[key] = index
                     trusted["imagery_id"] = geo["imagery_id"]
-                    for role, index in ((invocation.result.metadata or {}).get("band_roles") or {}).items():
-                        if role + "_band" in arguments:
-                            trusted[role + "_band"] = index
                     break
         return {**arguments, **trusted} if trusted else arguments
 

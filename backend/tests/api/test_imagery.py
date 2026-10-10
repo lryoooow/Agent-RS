@@ -4,21 +4,29 @@ import json
 from datetime import datetime, timedelta, timezone
 
 import numpy as np
+import pytest
 import rasterio
 from fastapi.testclient import TestClient
 from rasterio.transform import from_origin
 
 from app.main import create_app
-from app.core.settings import get_settings
+from app.core.settings import Settings, get_settings
 from app.db.repositories._pg.imagery import ImageryOwnershipConflict
 
 
-def make_client(monkeypatch, tmp_path: Path) -> TestClient:
+def make_client(monkeypatch, tmp_path: Path, *, admin: bool = False) -> TestClient:
     monkeypatch.setenv("IMAGERY_UPLOAD_DIR", str(tmp_path / "imagery"))
     monkeypatch.setenv("IMAGERY_WORKING_MAX_DIMENSION", "4")
     monkeypatch.setenv("IMAGERY_PREVIEW_MAX_DIMENSION", "3")
     get_settings.cache_clear()
-    return TestClient(create_app())
+    app = create_app()
+    if admin:
+        # 2026-10-07 require_admin 收紧（auth 关闭不再匿名放行，见 test_admin.py）。
+        # cleanup 用例只测清理逻辑，管理员语义经标准依赖覆盖注入。
+        from app.api.deps import require_admin
+
+        app.dependency_overrides[require_admin] = lambda: {"id": "admin-test"}
+    return TestClient(app)
 
 
 def make_geotiff(*, width: int = 6, height: int = 4, count: int = 4) -> bytes:
@@ -227,7 +235,7 @@ def test_imagery_delete_removes_directory(monkeypatch, tmp_path: Path) -> None:
 
 
 def test_imagery_cleanup_removes_old_orphan_directory(monkeypatch, tmp_path: Path) -> None:
-    client = make_client(monkeypatch, tmp_path)
+    client = make_client(monkeypatch, tmp_path, admin=True)
     orphan_dir = tmp_path / "imagery" / "94e758f38ede"
     orphan_dir.mkdir(parents=True)
     old_timestamp = (datetime.now(timezone.utc) - timedelta(hours=48)).timestamp()
@@ -270,6 +278,10 @@ class _FakeObjectStore:
 
         return _iter()
 
+    async def delete_keys(self, keys: list[str]) -> None:
+        for key in keys:
+            self.objects.pop(key, None)
+
     async def delete_prefix(self, key_prefix: str) -> None:
         self.deleted_prefixes.append(key_prefix)
         for key in [k for k in self.objects if k.startswith(f"{key_prefix}/")]:
@@ -286,11 +298,11 @@ class _FakeImageryDB:
 
     async def insert(self, conn, *, imagery_id, owner_user_id, workspace_id=None,
                      filename=None, sha256=None, bounds=None, bands=None,
-                     storage_backend="local", metadata=None) -> str:
+                     storage_backend="local", metadata=None, create_only=False) -> str:
         if self.fail_insert:
             raise RuntimeError("synthetic DB insert failure")
         existing = self.rows.get(imagery_id)
-        if existing and existing["owner_user_id"] != owner_user_id:
+        if existing and (create_only or existing["owner_user_id"] != owner_user_id):
             raise ImageryOwnershipConflict(imagery_id)  # #4：归属不可转移
         self.rows[imagery_id] = {
             "id": imagery_id, "imagery_id": imagery_id, "owner_user_id": owner_user_id,
@@ -307,9 +319,10 @@ class _FakeImageryDB:
             return None
         return dict(row)
 
-    async def delete(self, conn, *, imagery_id, owner_user_id) -> bool:
+    async def delete(self, conn, *, imagery_id, owner_user_id, persistence_attempt_id=None) -> bool:
         row = self.rows.get(imagery_id)
-        if row and row["owner_user_id"] == owner_user_id:
+        if (row and row["owner_user_id"] == owner_user_id and
+                (persistence_attempt_id is None or row["metadata"].get("_persistence_attempt_id") == persistence_attempt_id)):
             del self.rows[imagery_id]
             return True
         return False
@@ -365,12 +378,14 @@ def make_minio_client(
         # 持久化逻辑下沉后，patch 面向服务模块
         monkeypatch.setattr("app.services.imagery_persist.fetch_optional_pool", lambda: _wrap(_FakePool()))
         monkeypatch.setattr("app.services.imagery_persist.db_insert_imagery", db.insert)
+        monkeypatch.setattr("app.services.imagery_persist.db_get_imagery", db.get)
         monkeypatch.setattr("app.api.routes.imagery.db_get_imagery", db.get)
         monkeypatch.setattr("app.api.routes.imagery.db_delete_imagery", db.delete)
         monkeypatch.setattr("app.services.imagery_persist.db_delete_imagery", db.delete)
         monkeypatch.setattr("app.api.routes.imagery.db_list_imagery", db.list)
     else:
         monkeypatch.setattr("app.api.routes.imagery.fetch_optional_pool", lambda: _wrap(None))
+        monkeypatch.setattr("app.services.imagery_persist.fetch_optional_pool", lambda: _wrap(None))
     client = TestClient(create_app())
     return client, store, db
 
@@ -558,3 +573,299 @@ def test_per_row_backend_routes_delete_minio_row_under_local_global(monkeypatch,
     assert minio_id in store.deleted_prefixes          # 按行后端删了对象存储
     assert f"{minio_id}/source.tif" not in store.objects
     assert minio_id not in db.rows
+
+
+# ───────────────────────── G2 波段预算校验与逐波段工作图（bugfix-plan-G，2026-10-09）─────────────────────────
+# 历史 bug：_create_working_tif 无波段数/体积上限且一次性 src.read 全部波段——
+# 517KB 的 1000 波段 deflate 全零上传即迫使后端分配 750MB（tracemalloc 复现）；
+# 放大到 4096 工作上限 × 64+ 波段可数 GB 拖垮进程。
+# 修复：_validate_band_budget 在 _extract_metadata 后校验（count ≤ 64 且
+# count×工作宽×工作高×itemsize ≤ 1GB，均可配置）→ 413；工作图逐波段读写。
+
+from fastapi import HTTPException  # noqa: E402
+
+from app.api.routes.imagery import (  # noqa: E402
+    _create_working_tif as _g2_create_working_tif,
+)
+from app.api.routes.imagery import _validate_band_budget  # noqa: E402
+
+
+def _make_zero_tif(*, count: int, width: int, height: int, dtype: str = "uint16") -> bytes:
+    """全零 deflate 小 TIFF：文件极小、解压后 count×W×H×itemsize，用于波段预算复现。"""
+    buffer = BytesIO()
+    with rasterio.open(
+        buffer,
+        "w",
+        driver="GTiff",
+        height=height,
+        width=width,
+        count=count,
+        dtype=dtype,
+        crs="EPSG:4326",
+        transform=from_origin(100, 20, 0.01, 0.01),
+        compress="deflate",
+    ) as dst:
+        dst.write(np.zeros((count, height, width), dtype=dtype))
+    return buffer.getvalue()
+
+
+def test_imagery_upload_rejects_thousand_band_tiff_413(monkeypatch, tmp_path: Path) -> None:
+    """非法：1000 波段 deflate 全零小 TIFF → 413 IMAGERY_TOO_MANY_BANDS（修复前会整读 512MB+）。"""
+    client = make_client(monkeypatch, tmp_path)
+    bomb = _make_zero_tif(count=1000, width=6, height=4)
+
+    response = client.post(
+        "/api/imagery/upload",
+        files={"file": ("many_bands.tif", bomb, "image/tiff")},
+    )
+
+    assert response.status_code == 413
+    assert response.json()["error"]["code"] == "IMAGERY_TOO_MANY_BANDS"
+    imagery_root = tmp_path / "imagery"
+    assert not imagery_root.exists() or list(imagery_root.iterdir()) == []  # 无残留目录
+
+
+def test_imagery_upload_rejects_oversized_working_budget_413(monkeypatch, tmp_path: Path) -> None:
+    """非法：波段数合规但 count×工作宽×工作高×itemsize 超限 → 413 IMAGERY_WORKING_TOO_LARGE。
+
+    make_client 固定 WORKING_MAX_DIMENSION=4：6x4 源 → 工作 4x3；5 波段 uint16
+    = 5×4×3×2 = 120 字节 > 上限 100。
+    """
+    monkeypatch.setenv("IMAGERY_MAX_WORKING_BYTES", "100")
+    client = make_client(monkeypatch, tmp_path)
+
+    response = client.post(
+        "/api/imagery/upload",
+        files={"file": ("budget.tif", make_geotiff(count=5), "image/tiff")},
+    )
+
+    assert response.status_code == 413
+    assert response.json()["error"]["code"] == "IMAGERY_WORKING_TOO_LARGE"
+    imagery_root = tmp_path / "imagery"
+    assert not imagery_root.exists() or list(imagery_root.iterdir()) == []
+
+
+def test_imagery_upload_working_budget_boundary_passes(monkeypatch, tmp_path: Path) -> None:
+    """边界：预算恰好等于上限（120 == 120）放行——上限含边界值。"""
+    monkeypatch.setenv("IMAGERY_MAX_WORKING_BYTES", "120")
+    client = make_client(monkeypatch, tmp_path)
+
+    response = client.post(
+        "/api/imagery/upload",
+        files={"file": ("exact.tif", make_geotiff(count=5), "image/tiff")},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["band_count"] == 5
+
+
+def test_validate_band_budget_unit_boundaries(tmp_path: Path) -> None:
+    """单元级：波段数 64 过/65 拒；体积恰等上限过；元数据缺失字段不炸（视为 0）。"""
+    settings = get_settings()
+    meta_ok = {"band_count": 64, "width": 4, "height": 4, "dtype": "uint8"}
+    _validate_band_budget(meta_ok, settings)  # 64×4×4×1 = 1024B，两项均在上限内
+
+    with pytest.raises(HTTPException) as exc:
+        _validate_band_budget({**meta_ok, "band_count": 65}, settings)
+    assert exc.value.status_code == 413
+    assert exc.value.detail["code"] == "IMAGERY_TOO_MANY_BANDS"
+
+    # 体积恰等上限：63 波段 × 4×4 × uint16 = 2016 == 上限
+    exact = Settings(_env_file=None, imagery_max_working_bytes=2016)
+    _validate_band_budget({"band_count": 63, "width": 4, "height": 4, "dtype": "uint16"}, exact)
+    # 超一字节即拒
+    with pytest.raises(HTTPException) as exc:
+        _validate_band_budget({"band_count": 63, "width": 5, "height": 4, "dtype": "uint16"}, exact)
+    assert exc.value.detail["code"] == "IMAGERY_WORKING_TOO_LARGE"
+
+    # Missing dimensions must fail closed with 422, not bypass the budget.
+    with pytest.raises(HTTPException) as error:
+        _validate_band_budget({"dtype": "uint16"}, settings)
+    assert error.value.status_code == 422
+
+
+def _reference_working_bands(source_path: Path, working_width: int, working_height: int, resampled: bool) -> np.ndarray:
+    """参考实现 = 修复前的整读语义（git 历史 1afc02c 之前）：整栈 read + alpha 波段
+    nearest 覆写。独立于被测的逐波段新实现，用于逐像素等价对照。"""
+    from rasterio.enums import Resampling
+
+    with rasterio.open(source_path) as src:
+        data = src.read(
+            out_shape=(src.count, working_height, working_width),
+            resampling=Resampling.bilinear if resampled else Resampling.nearest,
+        )
+        if resampled:
+            for index, interpretation in enumerate(src.colorinterp, 1):
+                if interpretation.name == "alpha":
+                    data[index - 1] = src.read(
+                        index, out_shape=(working_height, working_width), resampling=Resampling.nearest
+                    )
+    return data
+
+
+def test_working_tif_matches_pre_fix_reference_pixels(tmp_path: Path) -> None:
+    """回归：逐波段写入与修复前整读算法逐像素一致（含缩放与非 alpha 波段）。
+
+    24x16 源、工作上限 4 → 工作 4x3，bilinear 重采样路径；3 波段非平凡值。
+    """
+    source = tmp_path / "src_ref.tif"
+    count, width, height = 3, 24, 16
+    rng = np.random.default_rng(20261009)
+    data = rng.integers(0, 4000, (count, height, width), dtype=np.uint16)
+    with rasterio.open(
+        source, "w", driver="GTiff", height=height, width=width, count=count,
+        dtype="uint16", crs="EPSG:4326", transform=from_origin(100.0, 20.0, 0.01, 0.01),
+    ) as dst:
+        dst.write(data)
+
+    settings = Settings(_env_file=None, imagery_working_max_dimension=4)
+    working = tmp_path / "working_ref.tif"
+    _g2_create_working_tif(source, working, settings)
+
+    reference = _reference_working_bands(source, 4, 3, resampled=True)
+    with rasterio.open(working) as got:
+        assert (got.width, got.height, got.count) == (4, 3, count)
+        actual = got.read()
+    assert np.array_equal(actual, reference), "逐波段写入与整读参考实现逐像素不一致"
+
+
+def test_working_tif_no_rescale_rgba_pixels_identical(monkeypatch, tmp_path: Path) -> None:
+    """回归：不缩放时工作图波段值与源逐像素一致（nearest 恒等），含 RGBA alpha 波段。"""
+    source = tmp_path / "src_rgba.tif"
+    count, width, height = 4, 8, 8
+    rng = np.random.default_rng(20261010)
+    data = rng.integers(0, 255, (count, height, width), dtype=np.uint8)
+    with rasterio.open(
+        source, "w", driver="GTiff", height=height, width=width, count=count,
+        dtype="uint8", crs="EPSG:4326", transform=from_origin(100.0, 20.0, 0.01, 0.01),
+        photometric="rgb",
+    ) as dst:
+        # colorinterp（含 alpha ExtraSamples）须在写数据之前设置，GDAL 不允许写后改
+        dst.colorinterp = (
+            rasterio.enums.ColorInterp.red,
+            rasterio.enums.ColorInterp.green,
+            rasterio.enums.ColorInterp.blue,
+            rasterio.enums.ColorInterp.alpha,
+        )
+        dst.write(data)
+
+    settings = Settings(_env_file=None, imagery_working_max_dimension=16)  # 8<16 不缩放
+    working = tmp_path / "working_rgba.tif"
+    _g2_create_working_tif(source, working, settings)
+
+    with rasterio.open(working) as got:
+        assert [c.name for c in got.colorinterp] == ["red", "green", "blue", "alpha"]
+        actual = got.read()
+    with rasterio.open(source) as src:
+        expected = src.read()
+    assert np.array_equal(actual, expected)
+
+
+def test_working_tif_mask_equals_dataset_mask(tmp_path: Path) -> None:
+    """G2 等价性：逐波段累积 mask 与 dataset_mask 逐位一致（无 nodata/命中/alpha/缩放）。
+
+    期望值独立来源：dataset_mask 本身（修复前实现写入工作图的数据）。
+    """
+    from rasterio.enums import Resampling
+
+    def build(path: Path, *, nodata=None, alpha=False, fill=None) -> None:
+        count = 4 if alpha else 3
+        data = np.full((count, 8, 8), 7, dtype="uint16")
+        if fill is not None:
+            data[:, :4, :] = fill  # 左半为无效值
+        kwargs = dict(driver="GTiff", height=8, width=8, count=count, dtype="uint16",
+                      crs="EPSG:4326", transform=from_origin(100, 20, 0.01, 0.01))
+        if nodata is not None:
+            kwargs["nodata"] = nodata
+        if alpha:
+            kwargs["photometric"] = "rgb"
+        with rasterio.open(path, "w", **kwargs) as dst:
+            if alpha:
+                dst.colorinterp = (rasterio.enums.ColorInterp.red, rasterio.enums.ColorInterp.green,
+                                   rasterio.enums.ColorInterp.blue, rasterio.enums.ColorInterp.alpha)
+            dst.write(data)
+
+    cases = {
+        "no_nodata": dict(),
+        "nodata_left_half": dict(nodata=99, fill=99),
+        "nodata_miss": dict(nodata=99),
+        "alpha": dict(alpha=True),
+    }
+    for name, kwargs in cases.items():
+        source = tmp_path / f"{name}.tif"
+        build(source, **kwargs)
+        working = tmp_path / f"{name}_working.tif"
+        _g2_create_working_tif(source, working, Settings(_env_file=None, imagery_working_max_dimension=16))
+        with rasterio.open(source) as src, rasterio.open(working) as got:
+            expected = src.dataset_mask(resampling=Resampling.nearest)
+            # write_mask 将非二值 mask（alpha 派生值）归一化为 255/0——修复前同款行为，
+            # 对比基准做同样的二值归一。
+            expected = np.where(expected > 0, 255, 0).astype("uint8")
+            actual = got.read_masks(1)
+            assert np.array_equal(actual, expected), f"mask 不一致：{name}"
+
+    # 缩放路径（8x8 → 4x4 nearest 重采样 mask）
+    source = tmp_path / "nodata_left_half.tif"
+    working = tmp_path / "resampled_working.tif"
+    _g2_create_working_tif(source, working, Settings(_env_file=None, imagery_working_max_dimension=4))
+    with rasterio.open(source) as src, rasterio.open(working) as got:
+        expected = src.dataset_mask(out_shape=(4, 4), resampling=Resampling.nearest)
+        assert np.array_equal(got.read_masks(1), expected)
+
+
+def test_working_tif_band_by_band_memory_bounded(tmp_path: Path) -> None:
+    """G2 内存回归：多波段工作图生成不整读全栈——峰值远小于 count×H×W（tracemalloc）。
+
+    120 波段 × 512x512 uint16：整栈 = 60MB（修复前整读 + mask 栈会 ≥60MB）；
+    逐波段实现峰值应为单波段量级（~0.5MB × 少量常数）。
+    """
+    import tracemalloc
+
+    source = tmp_path / "stack.tif"
+    buffer = _make_zero_tif(count=120, width=512, height=512)
+    source.write_bytes(buffer)
+    del buffer
+
+    settings = Settings(_env_file=None, imagery_max_band_count=128)  # Explicit 120-band resource test; default upload remains capped at 64.
+    working = tmp_path / "stack_working.tif"
+    tracemalloc.start()
+    tracemalloc.reset_peak()
+    _g2_create_working_tif(source, working, settings)
+    _, peak = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+
+    full_stack_bytes = 120 * 512 * 512 * 2
+    assert peak < full_stack_bytes // 4, (
+        f"peak {peak / 1024 / 1024:.1f}MB 不应超过整栈 {full_stack_bytes / 1024 / 1024:.0f}MB 的 1/4——疑似回退为整读"
+    )
+    with rasterio.open(working) as got:  # 产物完整可用（非空壳）
+        assert (got.count, got.width, got.height) == (120, 512, 512)
+        assert got.read(1, out_shape=(8, 8)).max() == 0
+
+
+@pytest.mark.parametrize("max_dimension", [2, 1])
+def test_working_mask_preserves_per_dataset_union_of_partial_band_nodata(tmp_path, max_dimension):
+    from app.api.routes.imagery import _create_working_tif
+    from rasterio.enums import Resampling
+    source, working = tmp_path / "partial.tif", tmp_path / "working.tif"
+    data = np.full((3, 2, 2), 7, dtype="uint16")
+    data[0, :, :] = 0  # only the unused blue band is missing; red/NIR remain valid
+    with rasterio.open(source, "w", driver="GTiff", width=2, height=2, count=3,
+                       dtype="uint16", nodata=0, transform=from_origin(100, 20, .01, .01)) as dst:
+        dst.write(data)
+    _create_working_tif(source, working, Settings(_env_file=None, imagery_working_max_dimension=max_dimension))
+    with rasterio.open(source) as original, rasterio.open(working) as result:
+        expected = original.dataset_mask(out_shape=(max_dimension, max_dimension), resampling=Resampling.nearest)
+        assert np.all(expected == 255)
+        np.testing.assert_array_equal(result.dataset_mask(), expected)
+
+
+def test_preview_rejects_over_budget_before_allocating_output(monkeypatch,tmp_path):
+    from app.api.routes.imagery import _generate_preview
+    from fastapi import HTTPException
+    source=tmp_path/"source.tif";source.write_bytes(_make_zero_tif(count=3,width=16,height=16))
+    monkeypatch.setenv("IMAGERY_PREPROCESS_MAX_BYTES","1048576");get_settings.cache_clear()
+    with pytest.raises(HTTPException) as caught:
+        _generate_preview(source,tmp_path/"preview.png",16)
+    assert caught.value.status_code==413 and caught.value.detail["code"]=="IMAGERY_MEMORY_BUDGET"
+    assert not (tmp_path/"preview.png").exists()

@@ -46,7 +46,9 @@ async def run_raster_inspect(args: RasterInspectArguments) -> ToolRunResult:
     result["band_roles_source"] = semantics.get("band_roles_source")
     # This is the same resolver used by inventory, preview and inference.
     roles = semantics.get("band_roles") or {}
-    result["capabilities"] = {f"has_{role}": role in roles for role in ("blue", "green", "red", "nir", "swir")}
+    confirmed = {role for role, index in roles.items() if index not in (semantics.get("alpha_bands") or [])}
+    result["capabilities"] = {f"has_{role}": role in confirmed for role in ("blue", "green", "red", "nir", "swir1", "swir2")}
+    result["capabilities"]["has_swir"] = bool(confirmed & {"swir", "swir1", "swir2"})
     tool_result = _tool_result(args.imagery_id, result)
     return ToolRunResult(
         tool_context=format_raster_inspect_context(args.imagery_id, result),

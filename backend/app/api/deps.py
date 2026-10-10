@@ -31,13 +31,11 @@ async def require_authenticated_user() -> str:
 
 
 async def require_admin() -> dict:
-    """管理员依赖：解析当前用户，邮箱∈admin_emails 才放行，否则 403。
-
-    先经 require_authenticated_user 的等价校验（未登录→401），再查库取邮箱比对名单。
-    返回用户行，供管理路由按需使用。
-    """
+    """Require an authenticated, active, server-configured administrator ID."""
     settings = get_settings()
     user_id = await require_authenticated_user()
+    if not settings.auth_required or not settings.is_admin_user_id(user_id):
+        raise HTTPException(status_code=403, detail={"code": "ADMIN_REQUIRED", "message": "需要管理员权限。"})
     pool = await fetch_optional_pool()
     user: dict | None = None
     if pool is not None:
@@ -47,7 +45,7 @@ async def require_admin() -> dict:
         except Exception as exc:
             if not is_missing_schema_error(exc):
                 raise
-    if user is None or not settings.is_admin_email(user.get("email")):
+    if user is None or not user.get("is_active"):
         raise HTTPException(
             status_code=403,
             detail={"code": "ADMIN_REQUIRED", "message": "需要管理员权限。"},

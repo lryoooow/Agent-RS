@@ -1,3 +1,4 @@
+import { maskNotice, maskRows, maskTitle, provenanceRows } from "./analysis-results";
 import type {
   ChatTurn,
   GeospatialResult,
@@ -46,6 +47,7 @@ function entryFromGeospatial(turn: ChatTurn, r: GeospatialResult): ReportEntry |
           { label: "max", value: fmt(r.stats.max) },
           { label: "mean", value: fmt(r.stats.mean) },
           { label: "std", value: fmt(r.stats.std) },
+          ...provenanceRows(r.stats),
         ],
         execution: r.execution,
       };
@@ -59,12 +61,17 @@ function entryFromGeospatial(turn: ChatTurn, r: GeospatialResult): ReportEntry |
           { label: "max", value: fmt(r.stats.max) },
           { label: "mean", value: fmt(r.stats.mean) },
           { label: "std", value: fmt(r.stats.std) },
+          ...provenanceRows(r.stats),
           ...(r.stats.nodata_pct != null
             ? [{ label: "nodata%", value: fmt(r.stats.nodata_pct) }]
             : []),
         ],
         execution: r.execution,
       };
+    case "water_mask":
+    case "cloud_mask":
+      return { ...base, kind: maskTitle(r), title: maskTitle(r),
+        stats: [...maskRows(r), { label: "使用边界", value: maskNotice(r) }], execution: r.execution };
     case "composite":
       return {
         ...base,

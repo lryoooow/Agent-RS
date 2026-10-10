@@ -1,4 +1,6 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from app.agent.stac_search.composition_cache import normalize_bbox
 
 
 class SceneFetchArguments(BaseModel):
@@ -8,13 +10,20 @@ class SceneFetchArguments(BaseModel):
         pattern=r"^[a-f0-9]{12}$",
         description="search_imagery 结果中的场景 key（12 位十六进制）",
     )
+    bbox: list[float] | None = Field(default=None, description="可选导入范围[w,s,e,n]，EPSG:4326；省略导入整景，不与已有不同选区缓存混用")
+
+    @field_validator("bbox", mode="before")
+    @classmethod
+    def valid_bbox(cls, value):
+        return normalize_bbox(value)
+
     reason: str = Field(default="用户请求导入该场景影像", description="导入原因")
 
 
 SCENE_FETCH_TOOL_NAME = "fetch_scene"
 SCENE_FETCH_TOOL_DESCRIPTION = (
     "把 search_imagery 找到的某一景卫星影像合成为多波段 GeoTIFF 并导入平台影像库"
-    "（Sentinel-2/Landsat 五波段：蓝/绿/红/近红外/短波红外），导入后即可用现有"
+    "（Sentinel-2/Landsat：蓝/绿/红/近红外/短波红外1及2（依源资产）），导入后即可用现有"
     "分析工具（NDVI、地物分类、目标检测等）直接分析。scene_key 必须来自本轮"
     "search_imagery 的结果；场景过期时请让用户重新搜索。单轮默认只能导入一景。"
 )

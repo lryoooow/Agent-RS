@@ -24,6 +24,7 @@ def autogen_environment(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("DATABASE_ENABLED", "false")
     monkeypatch.setenv("AI_API_KEY", "test-key")
     monkeypatch.setenv("TAVILY_API_KEY", "")
+    monkeypatch.setenv("ALLOW_CLIENT_PROVIDER_CONFIG", "true")
     # P0-1：这些用例的 provider 用不可解析假域名 client.example，加入白名单跳过 SSRF 的 DNS 校验。
     monkeypatch.setenv("AI_PROVIDER_ALLOWED_HOSTS", "client.example")
     get_settings.cache_clear()
@@ -50,6 +51,38 @@ def _turn_output(*, content: str = "NDVI 是归一化植被指数。", **kw) -> 
         rag_trace={"use_rag": False, "use_memory": True},
         **kw,
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("content", ["", "  \n"])
+async def test_empty_visible_answer_is_failed_instead_of_saved_as_success(monkeypatch, streaming, content):
+    from app.agent.errors import EmptyResponseError
+    from app.agent.persistence import PersistenceContext
+
+    persistence = PersistenceContext(user_id="u1", conversation_id="c1", user_message_id="um1", assistant_message_id="am1", user_content="hello")
+    marked = AsyncMock()
+    saved = AsyncMock()
+    monkeypatch.setattr("app.agent.ai_service.prepare_persistence", AsyncMock(return_value=persistence))
+    monkeypatch.setattr("app.agent.ai_service.mark_assistant_failed", marked)
+    monkeypatch.setattr("app.agent.ai_service.save_assistant_response", saved)
+    monkeypatch.setattr("app.agent.ai_service.save_streamed_assistant", saved)
+    monkeypatch.setattr("app.agent.ai_service.schedule_after_response", lambda *a, **kw: pytest.fail("Empty answers must not schedule success processing"))
+    if streaming:
+        async def events(**kwargs):
+            yield "final", _turn_output(content=content)
+        monkeypatch.setattr("app.agent.ai_service.stream_turn_events", events)
+        chunks = [chunk async for chunk in ChatService().stream_chat(_request())]
+        assert not any(chunk.startswith("event: done\n") for chunk in chunks)
+        errors = [chunk for chunk in chunks if chunk.startswith("event: error\n")]
+        assert len(errors) == 1
+        assert _data(errors[0])["code"] == "EMPTY_AI_RESPONSE"
+    else:
+        monkeypatch.setattr("app.agent.ai_service.complete_turn", AsyncMock(return_value=_turn_output(content=content)))
+        with pytest.raises(EmptyResponseError):
+            await ChatService().chat(_request())
+    saved.assert_not_awaited()
+    marked.assert_awaited_once()
 
 
 # ================================================================ 非流式

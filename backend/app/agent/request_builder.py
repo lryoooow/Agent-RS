@@ -102,7 +102,7 @@ async def build_provider_request_context(
             build_imagery_inventory(user_id),
             build_document_inventory(user_id) if mentions_documents(query) else asyncio.sleep(0, result=None),
         )
-    memory_context = retrieved_context.memory_context
+    memory_context = retrieved_context.memory_context if request.use_memory else None
     rag_context = retrieved_context.rag_context
     retrieved_chunks = retrieved_context.retrieved_chunks
     rag_trace = retrieved_context.rag_trace
@@ -121,7 +121,7 @@ async def build_provider_request_context(
         enable_dynamic_modules=settings.ai_prompt_enable_dynamic_modules,
         include_reasoning_boundary=settings.ai_prompt_include_reasoning_boundary,
         has_conversation_summary=bool(summaries.conversation_summary),
-        has_memory=bool(summaries.memory),
+        has_memory=bool(memory_context),
         has_rag_context=bool(rag_context),
         has_tool_context=bool(tool_context),
         max_core_chars=settings.ai_prompt_max_core_chars,
@@ -136,7 +136,7 @@ async def build_provider_request_context(
             request.system_prompt if settings.allow_user_extra_instructions else None
         ),
         conversation_summary=summaries.conversation_summary,
-        memory=memory_context or summaries.memory,
+        memory=memory_context if request.use_memory else None,
         rag_context=rag_context,
         tool_context=tool_context,
         prior_analysis_results=prior_analysis_results,
@@ -159,6 +159,7 @@ async def build_provider_request_context(
         max_imagery_chars=settings.ai_context_max_imagery_chars,
         max_document_chars=settings.ai_context_max_document_chars,
         max_geo_chars=settings.ai_context_max_geo_chars,
+        auto_history_summary=True,
     )
     return ProviderRequestContext(
         context=context,
@@ -368,7 +369,9 @@ _BAND_ROLE_LABELS: dict[str, str] = {
     "green": "绿",
     "red": "红",
     "nir": "近红外",
-    "swir": "短波红外",
+    "swir": "短波红外（波长未区分）",
+    "swir1": "短波红外1（1.6µm）",
+    "swir2": "短波红外2（2.2µm）",
 }
 
 _BAND_ROLES_SOURCE_LABELS: dict[str, str] = {
@@ -390,7 +393,7 @@ def _format_imagery_line(imagery_id: str, meta: dict) -> str:
     """
     roles = meta.get("band_roles") or {}
     if roles:
-        ordered = ["blue", "green", "red", "nir", "swir"]
+        ordered = ["blue", "green", "red", "nir", "swir1", "swir2", "swir"]
         table = ",".join(
             f"B{roles[role]}{_BAND_ROLE_LABELS[role]}" for role in ordered if role in roles
         )
