@@ -95,3 +95,33 @@ S2 场景合成缓存带版本号（`composition_cache.COMPOSITION_VERSION`，�
 另（随 G23）：同步 `ops/agent-rs.service` 到生产机后执行
 `sudo systemctl daemon-reload && sudo systemctl restart agent-rs`，
 `ss -tlnp | grep 5173` 应只显示 `127.0.0.1:5173`（详见 `docs/deployment.md`）。
+
+## 7. 发布包内容规则（每次发布必须遵守）
+
+发布目录（当前生产为 `/home/LRY/Agent-RS-current`）只允许包含平台运行所需文件。
+发布包一律按**白名单**打包，禁止整仓复制。
+
+### 7.1 白名单（只打包以下内容）
+
+| 部分 | 允许内容 |
+|---|---|
+| 后端 | `backend/app/`、`backend/sql/`、`backend/pyproject.toml`、`backend/uv.lock` |
+| 运维 | `deploy/`、`ops/` 中的运行文件（systemd unit、推理服务及其运行时、卫星目录准备脚本、发布校验脚本） |
+| 容器 | `docker/` 中构建所需文件 |
+| 前端 | 仅构建产物 `Agent-frontend/dist/`（含 satvis 资产） |
+
+### 7.2 明确排除（包内出现即打包失败）
+
+- `backend/tests/`，以及任何 `test_*.py`、`conftest.py` 文件
+- 前端 `__tests__/` 目录、`*.test.ts(x)` 文件、`Agent-frontend/tests/`
+- `docs/test-results/`、`.data/`、`recordings/`
+- 各类评测脚本，以及工作规划与整改类文档（`docs/next-plan-*`、`docs/bugfix-plan-*`、`docs/test-remediation-*` 等）
+- 前端源码与 `node_modules/`、本地存储目录（`storage/`、`backend/storage/`）
+
+### 7.3 打包与部署方式
+
+1. 打包脚本在打包完成后必须列出包内全部文件并逐条核对，命中 7.2 任一路径即终止报错，
+   不允许带警告继续。
+2. 禁止在服务器上以 `git clone` / `git pull` 整个仓库作为部署方式；服务器发布目录内容
+   只能来自白名单发布包。
+3. 前端只在发布机上执行 `ops/build_release_frontend.sh` 产出 `dist/`，服务器不执行前端构建。
