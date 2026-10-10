@@ -100,3 +100,20 @@ backend/tests/ai/eval/recordings/*_runs/
 backend/tests/ai/eval/reports/*observations*.jsonl
 backend/tests/ai/eval/reports/*metrics*.json
 backend/tests/ai/eval/reports/*predictions*.jsonl
+
+# 本地内容（2026-10-10 起）：以下目录与文件只存本地，由本地测试仓库管理，公开仓库停止跟踪
+/backend/tests/
+/Agent-frontend/src/**/__tests__/
+/Agent-frontend/src/**/*.test.ts
+/Agent-frontend/src/**/*.test.tsx
+/Agent-frontend/tests/
+/docs/test-results/
+/docs/test-remediation-*.md
+/docs/next-plan-*.md
+/docs/bugfix-plan-*.md
+/docs/remediation-*.md
+/docs/audit-*.md
+/docs/interaction-audit.md
+/docs/report-generation-fix.md
+/Agent-frontend/src/test/
+/scripts/local/
