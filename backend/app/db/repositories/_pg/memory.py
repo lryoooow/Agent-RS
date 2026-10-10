@@ -5,6 +5,7 @@ from typing import Any
 
 from app.db.sanitize import parse_jsonb, sanitize_json, sanitize_text
 from app.db.vector import encode_vector
+from app.db.repositories._pg.hnsw import fetch_tenant_nearest
 
 
 async def list_relevant_memories(
@@ -14,8 +15,18 @@ async def list_relevant_memories(
     embedding: list[float],
     limit: int,
 ) -> list[dict[str, Any]]:
-    rows = await conn.fetch(
+    # G9：与 document_chunks 相同的召回保障——索引友好形交给
+    # fetch_tenant_nearest（>=0.8 开 iterative_scan；<0.8 调大 ef_search、
+    # 不足时回退 MATERIALIZED 精确扫描），详见 _pg/hnsw.py。
+    sql_index = """
+        SELECT id::text, content, memory_type, importance, metadata,
+               1 - (embedding <=> $2::vector) AS score
+        FROM public.memories
+        WHERE user_id = $1 AND embedding IS NOT NULL
+        ORDER BY embedding <=> $2::vector, id
+        LIMIT $3
         """
+    sql_exact = """
         WITH owned AS MATERIALIZED (
             SELECT id, content, memory_type, importance, metadata, embedding
             FROM public.memories WHERE user_id = $1 AND embedding IS NOT NULL
@@ -25,10 +36,13 @@ async def list_relevant_memories(
         FROM owned
         ORDER BY embedding <=> $2::vector, id
         LIMIT $3
-        """,
-        user_id,
-        encode_vector(embedding),
-        limit,
+        """
+    rows = await fetch_tenant_nearest(
+        conn,
+        sql_index=sql_index,
+        sql_exact=sql_exact,
+        params=(user_id, encode_vector(embedding), limit),
+        limit=limit,
     )
     return [dict(row) for row in rows]
 
