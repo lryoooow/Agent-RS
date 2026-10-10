@@ -11,6 +11,8 @@ PROTOCOL_VERSION = "2024-11-05"
 
 logger = logging.getLogger(__name__)
 
+# G11：stderr 后台持续读取时保留的尾部字节上限（报错信息只用末尾若干 KB）。
+STDERR_TAIL_LIMIT = 16 * 1024
 # G10：docker kill 的等待上限；容器已退出/不存在时 docker kill 非零返回，忽略。
 CONTAINER_KILL_TIMEOUT_SECONDS = 10.0
 
@@ -46,6 +48,9 @@ class StdioMCPClient:
         # G10：docker run 的本地客户端进程被 kill 并不会停止容器本体；
         # 命令带 --name 时超时/取消改为（并）按名 docker kill 容器。
         self._container_name = _container_name_from_command(command)
+        # G11：stderr 持续读取后保留的尾部（报错时取用；无并发共享）。
+        self._stderr_tail = bytearray()
+        self._stderr_drain: asyncio.Task | None = None
 
     async def call_tool(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         try:
@@ -58,6 +63,11 @@ class StdioMCPClient:
         except NotImplementedError:
             return await self._call_tool_sync_with_timeout(tool_name, arguments)
         completed = False
+        # G11：后台持续读取 stderr。OS 管道缓冲有限（Linux ~64KB），只写不读
+        # 时子进程会在写满后阻塞，永不产出 stdout 应答——表现为"假超时"。
+        self._stderr_tail = bytearray()
+        drain = asyncio.create_task(self._drain_stderr(proc))
+        self._stderr_drain = drain
         try:
             result = await asyncio.wait_for(
                 self._handshake_and_call(proc, tool_name, arguments),
@@ -66,11 +76,15 @@ class StdioMCPClient:
             completed = True
             return result
         except (asyncio.CancelledError, Exception):
-            # G10：先按名杀容器，再回收本地 docker 客户端进程。
+            # G10：先按名杀容器（容器退出后其占用的 stdin/stdout/stderr 管道
+            # 写端关闭，stderr 读取与本地进程回收才能正常收尾），再回收本地进程。
             await self._kill_container()
             await self._kill_process(proc)
             raise
         finally:
+            drain.cancel()
+            await asyncio.gather(drain, return_exceptions=True)
+            self._stderr_drain = None
             if completed:
                 await self._close_stdin_and_wait(proc)
 
@@ -146,16 +160,47 @@ class StdioMCPClient:
         proc.stdin.write(line)
         await proc.stdin.drain()
 
-    @staticmethod
-    async def _recv(proc: asyncio.subprocess.Process) -> dict[str, Any]:
+    async def _drain_stderr(self, proc: asyncio.subprocess.Process) -> None:
+        """G11：持续读空 stderr，仅保留尾部若干 KB 供报错。
+
+        历史 bug：stderr=PIPE 却只在失败路径 read()——子进程 stderr 写满 OS
+        管道缓冲后阻塞，无法继续产出 stdout，健康调用被误判为超时。
+        """
+        if proc.stderr is None:
+            return
+        while True:
+            chunk = await proc.stderr.read(65536)
+            if not chunk:
+                break
+            self._stderr_tail.extend(chunk)
+            if len(self._stderr_tail) > STDERR_TAIL_LIMIT:
+                del self._stderr_tail[:-STDERR_TAIL_LIMIT]
+
+    def _stderr_tail_text(self) -> str:
+        return bytes(self._stderr_tail[-2000:]).decode("utf-8", errors="replace")
+
+    async def _await_stderr_drain(self, proc: asyncio.subprocess.Process) -> None:
+        """stdout 关闭时给后台 stderr 读取一个有界收尾窗口（0.2s）。
+
+        进程可能已退出（管道将 EOF，读取很快完成），也可能还活着并仍在写
+        stderr——两种情况都只等 0.2s，超时即用已收集的尾部，不阻塞报错路径。
+        """
+        task = self._stderr_drain
+        if task is None or task.done():
+            return
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=0.2)
+        except (asyncio.TimeoutError, Exception):  # noqa: BLE001 - 诊断信息尽力而为
+            pass
+
+    async def _recv(self, proc: asyncio.subprocess.Process) -> dict[str, Any]:
         if proc.stdout is None:
             raise MCPCallError("MCP process stdout is not available")
         line = await proc.stdout.readline()
         if not line:
-            stderr = ""
-            if proc.stderr is not None:
-                stderr = (await proc.stderr.read()).decode(errors="replace")
-            raise MCPCallError(f"MCP server closed stdout. stderr: {stderr[:500]}")
+            await self._await_stderr_drain(proc)
+            # 取尾部而非开头：stderr 的末尾通常是致命错误的落点。
+            raise MCPCallError(f"MCP server closed stdout. stderr: {self._stderr_tail_text()[-500:]}")
         try:
             return json.loads(line.decode("utf-8"))
         except json.JSONDecodeError as exc:
@@ -262,6 +307,10 @@ class StdioMCPClient:
         )
         if proc_holder is not None:
             proc_holder["proc"] = proc
+        # G11：后台线程持续读空 stderr（同异步路径的 drain 任务）。
+        self._stderr_tail = bytearray()
+        drain = threading.Thread(target=self._drain_stderr_sync, args=(proc,), daemon=True)
+        drain.start()
         completed = False
         try:
             # Popen can finish after the caller has already cancelled. Do not
@@ -272,13 +321,26 @@ class StdioMCPClient:
             completed = True
             return result
         except Exception:
-            # G10：先按名杀容器，再回收本地进程（同异步路径的顺序）。
             self._kill_container_sync()
             self._kill_process_sync(proc)
             raise
         finally:
             if completed:
                 self._close_stdin_and_wait_sync(proc)
+            # 进程退出后 stderr 写端关闭，读取线程随即 EOF 结束。
+            drain.join(timeout=CONTAINER_KILL_TIMEOUT_SECONDS)
+
+    def _drain_stderr_sync(self, proc: subprocess.Popen) -> None:
+        stream = proc.stderr
+        if stream is None:
+            return
+        while True:
+            chunk = stream.read(65536)
+            if not chunk:
+                break
+            self._stderr_tail.extend(chunk.encode("utf-8", errors="replace"))
+            if len(self._stderr_tail) > STDERR_TAIL_LIMIT:
+                del self._stderr_tail[:-STDERR_TAIL_LIMIT]
 
     def _handshake_and_call_sync(
         self,
@@ -351,16 +413,15 @@ class StdioMCPClient:
         proc.stdin.write(json.dumps(msg) + "\n")
         proc.stdin.flush()
 
-    @staticmethod
-    def _recv_sync(proc: subprocess.Popen) -> dict[str, Any]:
+    def _recv_sync(self, proc: subprocess.Popen) -> dict[str, Any]:
         if proc.stdout is None:
             raise MCPCallError("MCP process stdout is not available")
         line = proc.stdout.readline()
         if not line:
-            stderr = ""
-            if proc.stderr is not None:
-                stderr = proc.stderr.read()
-            raise MCPCallError(f"MCP server closed stdout. stderr: {stderr[:500]}")
+            # G11：不再在这里 read() 到 EOF——若子进程因 stderr 管道写满而阻塞，
+            # 该调用本身就会挂死。改用后台读取线程攒下的尾部。
+            stderr = bytes(self._stderr_tail[-2000:]).decode("utf-8", errors="replace")
+            raise MCPCallError(f"MCP server closed stdout. stderr: {stderr[-500:]}")
         try:
             return json.loads(line)
         except json.JSONDecodeError as exc:
