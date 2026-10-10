@@ -29,6 +29,17 @@ async def get_user_by_id(conn, *, user_id: str) -> dict[str, Any] | None:
     return dict(row) if row else None
 
 
+async def lock_user_for_login(conn, *, user_id: str) -> dict[str, Any] | None:
+    row = await conn.fetchrow(
+        """
+        SELECT id::text, email, password_hash, name, email_verified, is_active, created_at
+        FROM agent_rs.users WHERE id = $1::uuid AND is_active = true FOR UPDATE
+        """,
+        user_id,
+    )
+    return dict(row) if row else None
+
+
 async def create_user(conn, *, email: str, password_hash: str, name: str) -> dict[str, Any]:
     user_id = str(uuid.uuid4())
     row = await conn.fetchrow(
@@ -158,3 +169,22 @@ async def update_user_password_hash(conn, *, user_id: str, password_hash: str) -
         user_id,
         password_hash,
     )
+
+
+async def limit_user_sessions(conn, *, user_id: str, keep: int) -> int:
+    """Keep only the newest active sessions for one user."""
+    result = await conn.execute(
+        """
+        DELETE FROM agent_rs.sessions
+        WHERE id IN (
+          SELECT id
+          FROM agent_rs.sessions
+          WHERE user_id = $1::uuid
+          ORDER BY created_at DESC, id DESC
+          OFFSET $2
+        )
+        """,
+        user_id,
+        max(1, keep),
+    )
+    return int(result.rsplit(" ", 1)[-1])

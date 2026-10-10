@@ -1,0 +1,319 @@
+{
+  "groups": [
+    {
+      "name": "active",
+      "sources": [
+        {
+          "celestrak": "active"
+        }
+      ]
+    },
+    {
+      "name": "cubesat",
+      "sources": [
+        {
+          "celestrak": "cubesat"
+        }
+      ]
+    },
+    {
+      "name": "globalstar",
+      "sources": [
+        {
+          "celestrak": "active"
+        }
+      ],
+      "select": {
+        "namePattern": "^GLOBALSTAR"
+      }
+    },
+    {
+      "name": "gnss",
+      "sources": [
+        {
+          "celestrak": "gnss"
+        }
+      ]
+    },
+    {
+      "name": "iridium-NEXT",
+      "sources": [
+        {
+          "celestrak": "active"
+        }
+      ],
+      "select": {
+        "namePattern": "^IRIDIUM"
+      }
+    },
+    {
+      "name": "last-30-days",
+      "sources": [
+        {
+          "celestrak": "last-30-days"
+        }
+      ]
+    },
+    {
+      "name": "oneweb",
+      "sources": [
+        {
+          "celestrak": "active"
+        }
+      ],
+      "select": {
+        "namePattern": "^ONEWEB"
+      }
+    },
+    {
+      "name": "planet",
+      "sources": [
+        {
+          "celestrak": "active"
+        }
+      ],
+      "select": {
+        "namePattern": "^(FLOCK|SKYSAT|PELICAN|TANAGER|EDDA)"
+      }
+    },
+    {
+      "name": "resource",
+      "sources": [
+        {
+          "celestrak": "resource"
+        }
+      ]
+    },
+    {
+      "name": "science",
+      "sources": [
+        {
+          "celestrak": "science"
+        }
+      ]
+    },
+    {
+      "name": "spire",
+      "sources": [
+        {
+          "celestrak": "active"
+        }
+      ],
+      "select": {
+        "namePattern": "^LEMUR"
+      },
+      "satellites": [
+        {
+          "noradId": 66678,
+          "upstreamName": "OTTER SDM"
+        },
+        {
+          "noradId": 67364,
+          "upstreamName": "TWILIGHT-1 OBJECT B"
+        }
+      ]
+    },
+    {
+      "name": "starlink",
+      "sources": [
+        {
+          "celestrak": "active"
+        }
+      ],
+      "select": {
+        "namePattern": "^STARLINK"
+      }
+    },
+    {
+      "name": "stations",
+      "sources": [
+        {
+          "celestrak": "stations"
+        }
+      ]
+    },
+    {
+      "name": "weather",
+      "sources": [
+        {
+          "celestrak": "weather"
+        }
+      ]
+    },
+    {
+      "name": "eutelsat",
+      "sources": [
+        {
+          "celestrak": "active"
+        }
+      ],
+      "select": {
+        "namePattern": "^EUTELSAT"
+      },
+      "satellites": [
+        {
+          "noradId": 39612,
+          "upstreamName": "EXPRESS-AT1"
+        },
+        {
+          "noradId": 39613,
+          "upstreamName": "EXPRESS-AT2"
+        }
+      ]
+    }
+  ],
+  "satellites": [
+    {
+      "noradId": 25994,
+      "name": "TERRA",
+      "metadata": {
+        "swathStarboardKm": 1175,
+        "swathPortKm": 1175
+      }
+    },
+    {
+      "noradId": 27424,
+      "name": "AQUA",
+      "metadata": {
+        "swathStarboardKm": 1175,
+        "swathPortKm": 1175
+      }
+    },
+    {
+      "noradId": 37849,
+      "name": "SUOMI NPP",
+      "metadata": {
+        "swathStarboardKm": 1565,
+        "swathPortKm": 1565
+      }
+    },
+    {
+      "noradId": 38771,
+      "name": "METOP-B",
+      "metadata": {
+        "swathStarboardKm": 1450,
+        "swathPortKm": 1450
+      }
+    },
+    {
+      "noradId": 39084,
+      "name": "LANDSAT 8",
+      "metadata": {
+        "swathStarboardKm": 92.5,
+        "swathPortKm": 92.5
+      }
+    },
+    {
+      "noradId": 40697,
+      "name": "SENTINEL-2A",
+      "metadata": {
+        "swathStarboardKm": 150,
+        "swathPortKm": 150
+      }
+    },
+    {
+      "noradId": 41335,
+      "name": "SENTINEL-3A",
+      "metadata": {
+        "swathStarboardKm": 1000,
+        "swathPortKm": 500
+      }
+    },
+    {
+      "noradId": 42063,
+      "name": "SENTINEL-2B",
+      "metadata": {
+        "swathStarboardKm": 150,
+        "swathPortKm": 150
+      }
+    },
+    {
+      "noradId": 42969,
+      "name": "SENTINEL-5P",
+      "metadata": {
+        "swathStarboardKm": 1375,
+        "swathPortKm": 1375
+      }
+    },
+    {
+      "noradId": 43010,
+      "name": "FENGYUN 3D",
+      "metadata": {
+        "swathStarboardKm": 1450,
+        "swathPortKm": 1450
+      }
+    },
+    {
+      "noradId": 43013,
+      "name": "NOAA 20 (JPSS-1)",
+      "metadata": {
+        "swathStarboardKm": 1565,
+        "swathPortKm": 1565
+      }
+    },
+    {
+      "noradId": 43065,
+      "name": "GCOM-C (SHIKISAI)",
+      "metadata": {
+        "swathStarboardKm": 575,
+        "swathPortKm": 575
+      }
+    },
+    {
+      "noradId": 43437,
+      "name": "SENTINEL-3B",
+      "metadata": {
+        "swathStarboardKm": 1000,
+        "swathPortKm": 500
+      }
+    },
+    {
+      "noradId": 43689,
+      "name": "METOP-C",
+      "metadata": {
+        "swathStarboardKm": 1450,
+        "swathPortKm": 1450
+      }
+    },
+    {
+      "noradId": 49008,
+      "name": "FENGYUN 3E",
+      "metadata": {
+        "swathStarboardKm": 1450,
+        "swathPortKm": 1450
+      }
+    },
+    {
+      "noradId": 49260,
+      "name": "LANDSAT 9",
+      "metadata": {
+        "swathStarboardKm": 92.5,
+        "swathPortKm": 92.5
+      }
+    },
+    {
+      "noradId": 54234,
+      "name": "NOAA 21 (JPSS-2)",
+      "metadata": {
+        "swathStarboardKm": 1565,
+        "swathPortKm": 1565
+      }
+    },
+    {
+      "noradId": 57490,
+      "name": "FENGYUN 3F",
+      "metadata": {
+        "swathStarboardKm": 1450,
+        "swathPortKm": 1450
+      }
+    },
+    {
+      "noradId": 60989,
+      "name": "SENTINEL-2C",
+      "metadata": {
+        "swathStarboardKm": 150,
+        "swathPortKm": 150
+      }
+    }
+  ]
+}

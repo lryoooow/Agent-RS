@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import subprocess
+import threading
 from typing import Any
 
 PROTOCOL_VERSION = "2024-11-05"
@@ -44,7 +45,7 @@ class StdioMCPClient:
             )
             completed = True
             return result
-        except Exception:
+        except (asyncio.CancelledError, Exception):
             await self._kill_process(proc)
             raise
         finally:
@@ -171,12 +172,14 @@ class StdioMCPClient:
         arguments: dict[str, Any],
     ) -> dict[str, Any]:
         proc_holder: dict[str, subprocess.Popen] = {}
+        cancelled = threading.Event()
         try:
             return await asyncio.wait_for(
-                asyncio.to_thread(self._call_tool_sync, tool_name, arguments, proc_holder),
+                asyncio.to_thread(self._call_tool_sync, tool_name, arguments, proc_holder, cancelled),
                 timeout=self.timeout_seconds,
             )
-        except asyncio.TimeoutError:
+        except (asyncio.TimeoutError, asyncio.CancelledError):
+            cancelled.set()
             proc = proc_holder.get("proc")
             if proc is not None:
                 await asyncio.to_thread(self._kill_process_sync, proc)
@@ -187,6 +190,7 @@ class StdioMCPClient:
         tool_name: str,
         arguments: dict[str, Any],
         proc_holder: dict[str, subprocess.Popen] | None = None,
+        cancelled: threading.Event | None = None,
     ) -> dict[str, Any]:
         proc = subprocess.Popen(
             self.command,
@@ -200,6 +204,10 @@ class StdioMCPClient:
             proc_holder["proc"] = proc
         completed = False
         try:
+            # Popen can finish after the caller has already cancelled. Do not
+            # start the handshake/tool in that race; the exception closes it.
+            if cancelled is not None and cancelled.is_set():
+                raise MCPCallError("MCP execution cancelled before startup completed")
             result = self._handshake_and_call_sync(proc, tool_name, arguments)
             completed = True
             return result

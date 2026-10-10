@@ -1,3 +1,5 @@
+import { maskPayload } from "../lib/__tests__/mask-fixtures";
+import { layersFromTurns } from "../lib/layers";
 import { act, renderHook } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
 import { useChatController } from "./useChatController";
@@ -40,4 +42,34 @@ it("late completion of an aborted conversation cannot write into the new convers
  expect(result.current.turns.filter(t=>t.role==="user").map(t=>t.content)).toEqual(["new"]);
  expect(result.current.turns.filter(t=>t.role==="assistant")).toHaveLength(1);
  expect(result.current.loading).toBe(false);
+});
+
+it.each(["cloud_mask", "water_mask"])("restores %s metadata into a result card and map layer", (type) => {
+ const { result } = renderHook(() => useChatController(settings));
+ const payload = maskPayload(type);
+ act(() => result.current.loadConversation("mask-history", [{ role: "assistant", content: "历史质量分析", metadata: { geospatial_result: payload } }]));
+ expect(result.current.turns[0]).toMatchObject({ restored: true, geospatialResult: payload });
+ expect(layersFromTurns(result.current.turns, {})[0].url).toBe(payload.result_url);
+ expect(result.current.activeImageryId).toBe("image");
+});
+
+
+it("an oversized first request never poisons the next valid request", async () => {
+ vi.mocked(postChat).mockResolvedValue(response());
+ const {result}=renderHook(()=>useChatController(settings));
+ await act(async()=>{await result.current.sendMessage("😀".repeat(16001));});
+ expect(postChat).not.toHaveBeenCalled();
+ expect(result.current.turns.some(t=>t.role==="user")).toBe(false);
+ await act(async()=>{await result.current.sendMessage("valid request");});
+ expect(postChat).toHaveBeenCalledTimes(1);
+ expect(vi.mocked(postChat).mock.calls[0][0].messages[vi.mocked(postChat).mock.calls[0][0].messages.length-1]?.content).toBe("valid request");
+});
+
+it("a server-rejected message is excluded from the next request history", async () => {
+ const {ApiError}=await import("../lib/http");
+ vi.mocked(postChat).mockRejectedValueOnce(new ApiError(422,"VALIDATION_ERROR","rejected")).mockResolvedValueOnce(response());
+ const {result}=renderHook(()=>useChatController(settings));
+ await act(async()=>{await result.current.sendMessage("rejected request");});
+ await act(async()=>{await result.current.sendMessage("valid request");});
+ expect(vi.mocked(postChat).mock.calls[1][0].messages.some(m=>m.content==="rejected request")).toBe(false);
 });

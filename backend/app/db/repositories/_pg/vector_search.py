@@ -20,14 +20,19 @@ async def search_vector_only(
     # user_id 缺失时拒绝返回（防跨租户泄漏，M1）：无归属约束的全库召回是安全漏洞。
     if not user_id:
         return []
+    # Materialize the tenant filter before distance ordering: exact tenant recall
+    # cannot be starved by a global HNSW index's post-filter candidates.
     sql = """
-        SELECT c.id::text, c.document_id::text, c.chunk_index, c.content, c.metadata, c.embedding::text AS embedding,
-               1 - (c.embedding <=> $1::vector) AS vector_score
-        FROM public.document_chunks c
-        JOIN public.documents d ON d.id = c.document_id
-        WHERE d.created_by_user_id = $2
-        AND c.embedding IS NOT NULL
-        ORDER BY c.embedding <=> $1::vector
+        WITH owned AS MATERIALIZED (
+            SELECT c.id, c.document_id, c.chunk_index, c.content, c.metadata, c.embedding
+            FROM public.document_chunks c
+            JOIN public.documents d ON d.id = c.document_id
+            WHERE d.created_by_user_id = $2 AND c.embedding IS NOT NULL
+        )
+        SELECT id::text, document_id::text, chunk_index, content, metadata, embedding::text AS embedding,
+               1 - (embedding <=> $1::vector) AS vector_score
+        FROM owned
+        ORDER BY embedding <=> $1::vector, id
         LIMIT $3
         """
     rows = await conn.fetch(sql, encode_vector(embedding), user_id, limit)

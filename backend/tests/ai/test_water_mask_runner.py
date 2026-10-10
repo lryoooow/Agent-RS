@@ -18,6 +18,9 @@ def _write_test_tif(path: Path, *, count: int = 4) -> None:
         path, "w", driver="GTiff", height=2, width=2, count=count, dtype="uint16"
     ) as dst:
         dst.write(data)
+        # 波段角色描述（A4 起 runner 依赖 band_roles 解析默认波段参数）
+        for index, label in enumerate(("Blue", "Green", "Red", "NIR")[:count], 1):
+            dst.set_band_description(index, label)
 
 
 # ---------- schema ----------
@@ -113,8 +116,10 @@ async def test_water_mask_runner_success(monkeypatch, tmp_path: Path) -> None:
         "non_water_pct": 78.0,
         "nodata_pct": 0.0,
         "ndwi_threshold": 0.12,
-        "output_tif": "water_mask.tif",
-        "output_png": "water_mask_colored.png",
+        "threshold_method": "fixed_ndwi",
+        "threshold_value": 0.12,
+        "output_tif": "water_mask_ab12cd34ef56ab12.tif",
+        "output_png": "water_mask_ab12cd34ef56ab12_colored.png",
     }
 
     class _OkClient:
@@ -123,7 +128,7 @@ async def test_water_mask_runner_success(monkeypatch, tmp_path: Path) -> None:
 
         async def call_tool(self, tool_name, *, source_path, output_dir, arguments):
             assert tool_name == "extract_water_mask"
-            assert arguments == {"green_band": 2, "nir_band": 4}
+            assert arguments == {"green_band": 2, "nir_band": 4, "threshold": 0.0}
             return stub_stats
 
     monkeypatch.setattr("app.agent.tools.water_mask.runner.RSToolsMCPClient", _OkClient)
@@ -134,9 +139,10 @@ async def test_water_mask_runner_success(monkeypatch, tmp_path: Path) -> None:
     assert result.result_count == 1
     geo = result.geospatial_result
     assert geo["type"] == "water_mask"
-    assert geo["result_url"].endswith("water_mask_colored.png")
+    assert geo["result_url"].endswith("water_mask_ab12cd34ef56ab12_colored.png")
     assert geo["stats"]["water_pct"] == 22.0
     assert geo["stats"]["ndwi_threshold"] == 0.12
+    assert geo["stats"]["threshold_method"] == "fixed_ndwi"
     assert result.artifacts and result.artifacts[0].type == "geospatial"
     assert result.metadata["execution_mode"] == "docker_mcp"
     assert "水体占比" in result.tool_context

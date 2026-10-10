@@ -211,27 +211,33 @@ export function TopBar({ settings, auth, navigation }: { settings: Settings; aut
                 {settings.availableModels.map((item) => <option key={item.id} value={item.id} />)}
               </datalist>
             </Field>
-            {/* API Key / Base URL 无条件常显，默认空。env 配了用 env，留空则用这里填的值，
-                都没有时后端抛 CONFIG_ERROR 提醒。是否采用前端值由后端降级链决定，前端不门控。 */}
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="API Key（留空用服务端 .env）">
-                <Input
-                  type="password"
-                  value={apiKey}
-                  placeholder="sk-..."
-                  onChange={(e) => setApiKey(e.target.value)}
-                  className="bg-input-background font-mono text-[12px]"
-                />
-              </Field>
-              <Field label="Provider Base URL（留空用服务端 .env）">
-                <Input
-                  value={baseUrl}
-                  placeholder="https://.../v1"
-                  onChange={(e) => setBaseUrl(e.target.value)}
-                  className="bg-input-background font-mono text-[12px]"
-                />
-              </Field>
-            </div>
+            {settings.serverConfig?.allow_client_provider_config ? (
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="API Key（当前用户·仅本页会话）">
+                  <Input
+                    type="password"
+                    value={apiKey}
+                    placeholder="sk-..."
+                    onChange={(e) => setApiKey(e.target.value)}
+                    autoComplete="off"
+                    className="bg-input-background font-mono text-[12px]"
+                  />
+                </Field>
+                <Field label="Provider Base URL（当前用户·仅本页会话）">
+                  <Input
+                    value={baseUrl}
+                    placeholder="https://.../v1"
+                    onChange={(e) => setBaseUrl(e.target.value)}
+                    autoComplete="off"
+                    className="bg-input-background font-mono text-[12px]"
+                  />
+                </Field>
+              </div>
+            ) : (
+              <div className="rounded-lg border border-border bg-input-background px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">
+                模型供应商和 API Key 由服务器统一管理，浏览器不能覆盖。
+              </div>
+            )}
             <Field label="Tavily API Key（联网搜索）">
               <Input
                 type="password"
@@ -242,7 +248,7 @@ export function TopBar({ settings, auth, navigation }: { settings: Settings; aut
                 className="bg-input-background font-mono text-[12px]"
               />
               <p className="text-[10px] leading-relaxed text-muted-foreground">
-                保存于当前浏览器；需要实时信息时由智能体的联网搜索工具调用，不写入对话记录。
+                仅保存在当前页面内存，刷新或关闭页面后清除；不写入对话记录。
               </p>
             </Field>
             <Field label="思考强度（思考预算：影响速度与精度）">

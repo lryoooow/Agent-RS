@@ -12,10 +12,12 @@ from app.api.routes.imagery import router as imagery_router
 from app.api.routes.memories import router as memories_router
 from app.api.routes.report import router as report_router
 from app.api.routes.scenes import router as scenes_router
+from app.api.routes.satellites import router as satellites_router
 
 router = APIRouter()
 
-# 开放路由：无需登录。health/config 给前端启动探测，auth 是登录入口本身。
+# 路由模块在这里注册；各模块对公开探活、启动配置和认证端点分别声明依赖。
+# 完整 config 与 health/details 在生产模式下由 require_authenticated_user 保护。
 router.include_router(health_router)
 router.include_router(config_router)
 router.include_router(auth_router)
@@ -31,3 +33,5 @@ router.include_router(memories_router, dependencies=_auth_dep)
 router.include_router(imagery_router, dependencies=_auth_dep)
 router.include_router(report_router, dependencies=_auth_dep)
 router.include_router(scenes_router, dependencies=_auth_dep)
+
+router.include_router(satellites_router, dependencies=_auth_dep)

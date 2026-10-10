@@ -20,6 +20,7 @@ from app.core.settings import get_settings
 from app.mcp.client import MCPCallError
 from app.mcp.rs_tools_client import RSToolsMCPClient
 from app.schemas.chat import ToolExecutionInfo
+from app.services.raster_semantics import resolve_rgb
 
 logger = logging.getLogger(__name__)
 
@@ -32,12 +33,16 @@ async def run_ocr(args: OcrArguments) -> ToolRunResult:
         return imagery_not_found_result(args.imagery_id)
     results_dir.mkdir(parents=True, exist_ok=True)
 
-    # 灰度模式只用 red_band，RGB 模式校验三波段。
-    bands = (
-        {"red": args.red_band}
-        if args.grayscale
-        else {"red": args.red_band, "green": args.green_band, "blue": args.blue_band}
-    )
+    try:
+        requested = {"red": args.red_band} if args.grayscale else {"red": args.red_band, "green": args.green_band, "blue": args.blue_band}
+        if args.grayscale and "red_band" in args.model_fields_set:
+            bands = {"channel_gray": args.red_band}  # An explicitly chosen display channel is not claimed to be red light.
+        else:
+            bands = await asyncio.to_thread(resolve_rgb, source_path, requested,
+                explicit={name + "_band" for name in requested} & args.model_fields_set)
+            args = args.model_copy(update={name + "_band": index for name, index in bands.items()})
+    except ValueError as exc:
+        return invalid_bands_result("影像 OCR", str(exc))
     band_error = await validate_band_indices(source_path, bands)
     if band_error:
         return invalid_bands_result("影像 OCR", band_error)

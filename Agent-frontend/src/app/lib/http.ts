@@ -14,6 +14,9 @@
 
 /// <reference types="vite/client" />
 
+import { readErrorMessage } from "./errors";
+import { currentAuthEpoch, notifyAuthFailure } from "./auth-session";
+
 export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
@@ -50,7 +53,19 @@ interface ApiFetchOptions {
 function composeSignal(timeoutMs: number, signal?: AbortSignal): AbortSignal {
   const timeout = AbortSignal.timeout(timeoutMs);
   if (!signal) return timeout;
-  return AbortSignal.any([signal, timeout]);
+  try { return AbortSignal.any([signal, timeout]); } catch {
+    // Older browsers and cross-realm signals need a portable composition.
+    const combined = new AbortController();
+    const inputs = [signal, timeout];
+    const abort = () => {
+      const source = inputs.find((item) => item.aborted);
+      combined.abort(source?.reason);
+      inputs.forEach((item) => item.removeEventListener("abort", abort));
+    };
+    inputs.forEach((item) => item.addEventListener("abort", abort, { once: true }));
+    if (inputs.some((item) => item.aborted)) abort();
+    return combined.signal;
+  }
 }
 
 function looksLikeHtml(text: string): boolean {
@@ -66,16 +81,13 @@ async function toApiError(response: Response): Promise<ApiError> {
       const payload = JSON.parse(text) as Record<string, unknown>;
       const error = payload.error;
       if (error && typeof error === "object") {
-        const { code: c, message: m } = error as Record<string, unknown>;
+        const { code: c } = error as Record<string, unknown>;
         if (typeof c === "string" && c) code = c;
-        if (typeof m === "string" && m) message = m;
-      } else if (typeof payload.detail === "string") {
-        message = payload.detail;
       } else if (payload.detail && typeof payload.detail === "object") {
-        const { code: c, message: m } = payload.detail as Record<string, unknown>;
+        const { code: c } = payload.detail as Record<string, unknown>;
         if (typeof c === "string" && c) code = c;
-        if (typeof m === "string" && m) message = m;
       }
+      message = readErrorMessage(payload) ?? message;
     } else if (text && looksLikeHtml(text)) {
       // 反向代理错误页（nginx 502 等）：拿不到结构化信息，用状态码语义。
       message = `网关错误（HTTP ${response.status}），请稍后重试。`;
@@ -106,6 +118,7 @@ export async function apiFetch(
     retryOnNetworkError = method === "GET",
   } = options;
 
+  const authEpoch = currentAuthEpoch();
   const url = `${apiBase()}${path.startsWith("/") ? path : `/${path}`}`;
   const init: RequestInit = {
     method,
@@ -117,7 +130,11 @@ export async function apiFetch(
 
   const attempt = async (): Promise<Response> => {
     const response = await fetch(url, init);
-    if (!response.ok) throw await toApiError(response);
+    if (!response.ok) {
+      const error = await toApiError(response);
+      if (response.status === 401) notifyAuthFailure(error.code, authEpoch);
+      throw error;
+    }
     return response;
   };
 

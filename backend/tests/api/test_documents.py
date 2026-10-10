@@ -396,3 +396,22 @@ def test_create_document_still_rejects_beyond_new_limit(monkeypatch) -> None:
 class FakeDate:
     def isoformat(self):
         return "2026-05-27T00:00:00+00:00"
+
+
+def test_documents_upload_rejects_oversized_file_without_residue(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    upload_dir = tmp_path / "uploads"
+    monkeypatch.setenv("DOCUMENT_MAX_FILE_BYTES", "8")
+    monkeypatch.setenv("STORAGE_UPLOAD_DIR", str(upload_dir))
+    client = make_client()
+
+    response = client.post(
+        "/api/documents/upload",
+        files={"file": ("large.txt", b"0123456789", "text/plain")},
+    )
+
+    assert response.status_code == 413
+    assert response.json()["error"]["code"] == "FILE_TOO_LARGE"
+    assert not upload_dir.exists() or list(upload_dir.iterdir()) == []

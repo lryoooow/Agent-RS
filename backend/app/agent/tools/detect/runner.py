@@ -37,7 +37,7 @@ async def run_detect(args: DetectArguments) -> ToolRunResult:
         rgb = await asyncio.to_thread(
             resolve_rgb, source_path,
             {"red": args.red_band, "green": args.green_band, "blue": args.blue_band},
-            explicit={"red_band", "green_band", "blue_band"}.issubset(args.model_fields_set),
+            explicit={"red_band", "green_band", "blue_band"} & args.model_fields_set,
         )
     except ValueError as exc:
         return invalid_bands_result("RGB 分析", str(exc))

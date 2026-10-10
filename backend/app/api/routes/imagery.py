@@ -6,7 +6,6 @@ import json
 import logging
 import re
 import shutil
-import tempfile
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -18,13 +17,16 @@ from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 from app.auth.current_user import get_current_user_id
+from app.uploads import UploadSizeExceeded, stream_upload_to_temp
 from app.core.paths import imagery_root
 from app.services.imagery_persist import (
     _extract_metadata,
     _file_sha256,
     _persist_imagery_record,
+    await_settled_operation,
 )
 from app.core.settings import get_settings
+from app.core.resource_limits import resource_semaphore
 from app.db.errors import is_missing_schema_error
 from app.db.pool import fetch_optional_pool
 from app.db.repositories.imagery import (
@@ -35,7 +37,7 @@ from app.db.repositories.imagery import (
 )
 from app.db.repositories._pg.imagery import ImageryOwnershipConflict
 from app.storage.object_store import get_object_store, object_store_for
-from app.api.deps import require_authenticated_user
+from app.api.deps import require_admin, require_authenticated_user
 from app.agent.roi_buildings import BuildingReadiness, RoiBuildingRequest, building_readiness
 
 router = APIRouter(prefix="/imagery", tags=["imagery"])
@@ -136,20 +138,60 @@ def _rescaled_shape(width: int, height: int, max_dimension: int) -> tuple[int, i
     return max(1, int(round(width * scale))), max(1, int(round(height * scale))), True
 
 
+def _validate_band_budget(meta: dict[str, Any], settings) -> None:
+    """上传影像的波段数/工作图体积预算校验（G2，防多波段 OOM）→ 413。
+
+    在 _extract_metadata 之后、_create_working_tif 之前执行：只读已提取的
+    width/height/band_count/dtype 元数据（不再触盘），按与工作图同一缩放规则
+    （_rescaled_shape）预估 count × 工作宽 × 工作高 × itemsize，超限即拒。
+    防复发：新增影像处理入口若绕过本路由，必须复用本校验。
+    """
+    import numpy as np
+
+    band_count = int(meta.get("band_count") or 0)
+    if band_count > settings.imagery_max_band_count:
+        raise api_error(
+            413,
+            "IMAGERY_TOO_MANY_BANDS",
+            f"影像波段数 {band_count} 超过上限 {settings.imagery_max_band_count}。",
+        )
+
+    width = int(meta.get("width") or 0)
+    height = int(meta.get("height") or 0)
+    working_width, working_height, _ = _rescaled_shape(
+        width, height, settings.imagery_working_max_dimension
+    )
+    itemsize = np.dtype(str(meta.get("dtype") or "uint8")).itemsize
+    if min(width, height, band_count) <= 0:
+        raise api_error(422, "INVALID_GEOTIFF", "影像尺寸和波段数必须为正数。")
+    peak_bytes = working_width * working_height * (2 * itemsize + 3) + 64 * 1024 * 1024
+    if peak_bytes > getattr(settings, "imagery_preprocess_max_bytes", 384 * 1024 * 1024):
+        raise api_error(413, "IMAGERY_MEMORY_BUDGET", "影像预处理超过内存预算，请缩小范围或调整工作图尺寸。")
+    working_bytes = band_count * working_width * working_height * itemsize
+    if working_bytes > settings.imagery_max_working_bytes:
+        raise api_error(
+            413,
+            "IMAGERY_WORKING_TOO_LARGE",
+            f"影像工作图预算 {working_bytes} 字节超过上限 {settings.imagery_max_working_bytes}。",
+        )
+
+
 def _create_working_tif(source_path: Path, working_path: Path, settings) -> dict[str, Any]:
+    """生成缩放/压缩后的工作图。逐波段读写（G2）：峰值内存 = 单波段工作数组，
+    不再一次性读入全部波段（修复前 1000 波段 512x512 的 517KB 上传即可致 750MB 峰值；
+    其中 dataset_mask 亦会物化 count×H×W 的整栈 mask，改为逐波段累积，与
+    dataset_mask 在无 nodata/命中 nodata/未命中 nodata/alpha/缩放 5 类输入下逐位一致）。"""
     import numpy as np
     import rasterio
-    from rasterio.enums import Resampling
+    from rasterio.enums import ColorInterp, MaskFlags, Resampling
 
-    with rasterio.open(source_path) as src:
+    with rasterio.Env(GDAL_CACHEMAX=64 * 1024 * 1024), rasterio.open(source_path) as src:
+        _validate_band_budget({"width": src.width, "height": src.height,
+            "band_count": src.count, "dtype": src.dtypes[0]}, settings)
         working_width, working_height, resampled = _rescaled_shape(
             src.width,
             src.height,
             settings.imagery_working_max_dimension,
-        )
-        data = src.read(
-            out_shape=(src.count, working_height, working_width),
-            resampling=Resampling.bilinear if resampled else Resampling.nearest,
         )
         transform = src.transform * src.transform.scale(
             src.width / working_width,
@@ -173,12 +215,48 @@ def _create_working_tif(source_path: Path, working_path: Path, settings) -> dict
         colorinterp = src.colorinterp
         descriptions = src.descriptions
         tags = src.tags()
+        band_tags = [src.tags(index) for index in src.indexes]
+        scales, offsets, units = src.scales, src.offsets, src.units
 
-    with rasterio.open(working_path, "w", **profile) as dst:
-        dst.write(data)
-        dst.colorinterp = colorinterp
-        dst.descriptions = descriptions
-        dst.update_tags(**tags)
+        with rasterio.Env(GDAL_TIFF_INTERNAL_MASK=True), rasterio.open(working_path, "w", **profile) as dst:
+            # 逐波段读写：每波段单独 read→write，重采样规则与修复前的整读语义一致
+            # （resampled 时普通波段 bilinear、alpha 波段 nearest；未 resampled 时 nearest）。
+            # Match rasterio.dataset_mask without allocating a count×H×W stack:
+            # explicit/shared mask first; shadow RGBA uses B4; otherwise OR.
+            # The analysis tool later intersects only its required bands.
+            # https://rasterio.readthedocs.io/en/stable/topics/masks.html#dataset-masks
+            mask_index = (1 if MaskFlags.per_dataset in src.mask_flag_enums[0]
+                          else 4 if src.count == 4 and colorinterp[0] == ColorInterp.red else None)
+            valid_mask = np.zeros((working_height, working_width), dtype="uint8")
+            for index, interpretation in enumerate(colorinterp, 1):
+                if resampled and interpretation.name != "alpha":
+                    resampling = Resampling.bilinear
+                else:
+                    resampling = Resampling.nearest
+                band = src.read(
+                    index,
+                    out_shape=(working_height, working_width),
+                    resampling=resampling,
+                )
+                dst.write(band, index)
+                if mask_index is None or index == mask_index:
+                    band_mask = src.read_masks(
+                        index, out_shape=(working_height, working_width), resampling=Resampling.nearest,
+                    )
+                    if mask_index is None:
+                        valid_mask |= band_mask > 0
+                    else:
+                        valid_mask = band_mask
+                del band
+            dst.write_mask(valid_mask)
+            dst.colorinterp = colorinterp
+            dst.descriptions = descriptions
+            dst.update_tags(**tags)
+            dst.scales, dst.offsets = scales, offsets
+            if any(units):
+                dst.units = tuple(unit or "" for unit in units)
+            for index, metadata in enumerate(band_tags, 1):
+                dst.update_tags(index, **metadata)
 
     from app.services.raster_semantics import grid_context
     grids = grid_context(working_path)
@@ -209,26 +287,23 @@ def _stretch_to_byte(values):
 
 
 def _generate_preview(source_path: Path, output_path: Path, max_dimension: int) -> None:
-    from app.services.raster_preview import generate_preview
-    generate_preview(source_path, output_path, max_dimension)
+    from app.services.raster_preview import generate_preview, RasterPreviewBudgetError
+    try:
+        generate_preview(source_path, output_path, max_dimension)
+    except RasterPreviewBudgetError as exc:
+        raise api_error(413, "IMAGERY_MEMORY_BUDGET", "影像预览超过内存预算，请缩小预览尺寸。") from exc
 
 
 async def _write_upload_to_temp(file: UploadFile, max_bytes: int, suffix: str) -> Path:
-    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
-    temp_path = Path(temp_file.name)
-    temp_file.close()
-    total_bytes = 0
     try:
-        with open(temp_path, "wb") as target:
-            while chunk := await file.read(1024 * 1024):
-                total_bytes += len(chunk)
-                if total_bytes > max_bytes:
-                    raise api_error(413, "FILE_TOO_LARGE", "文件超过大小限制")
-                target.write(chunk)
-    except Exception:
-        _safe_unlink(temp_path)
-        raise
-    return temp_path
+        uploaded = await stream_upload_to_temp(
+            file,
+            max_bytes=max_bytes,
+            suffix=suffix,
+        )
+    except UploadSizeExceeded as exc:
+        raise api_error(413, "FILE_TOO_LARGE", "文件超过大小限制") from exc
+    return uploaded.path
 
 
 def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
@@ -329,48 +404,89 @@ async def upload_imagery(file: UploadFile = File(...)) -> ImageryMetadata:
     suffix = Path(file.filename).suffix.lower()
     temp_path = await _write_upload_to_temp(file, settings.imagery_max_file_bytes, suffix)
     try:
-        meta = await asyncio.to_thread(_extract_metadata, temp_path)
+        meta = await await_settled_operation(asyncio.to_thread(_extract_metadata, temp_path))
+    except asyncio.CancelledError:
+        _safe_unlink(temp_path)
+        raise
     except Exception as exc:
         _safe_unlink(temp_path)
         logger.warning("Failed to parse uploaded GeoTIFF: %s", file.filename, exc_info=True)
         raise api_error(422, "INVALID_GEOTIFF", "无法解析 GeoTIFF，请确认文件格式和影像完整性") from exc
 
+    # G2 波段预算校验（413，不得落入下方 422 转换）：超限拒绝并清理临时文件。
+    try:
+        _validate_band_budget(meta, settings)
+    except HTTPException:
+        _safe_unlink(temp_path)
+        raise
+
     imagery_id = uuid.uuid4().hex[:12]
-    dest_dir = _imagery_dir(imagery_id)
-    results_dir = dest_dir / "results"
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    results_dir.mkdir(exist_ok=True)
+    dest_dir: Path | None = None
+    directory_created = False
+    try:
+        dest_dir = _imagery_dir(imagery_id)
+        dest_dir.mkdir(parents=True, exist_ok=False)
+        directory_created = True
+        results_dir = dest_dir / "results"
+        results_dir.mkdir(exist_ok=True)
+    except FileExistsError as exc:
+        _safe_unlink(temp_path)
+        if directory_created:
+            _safe_rmtree(dest_dir)
+        raise api_error(409, "CONFLICT", "影像 ID 冲突，请重试上传。") from exc
+    except OSError as exc:
+        _safe_unlink(temp_path)
+        if directory_created:
+            _safe_rmtree(dest_dir)
+        raise api_error(503, "STORAGE_UNAVAILABLE", "影像存储目录暂不可用，本次没有完成导入。") from exc
 
     source_path = dest_dir / "source.tif"
     working_path = dest_dir / "working.tif"
     preview_path = results_dir / "preview.png"
     try:
-        await asyncio.to_thread(shutil.move, str(temp_path), source_path)
-        working_meta = await asyncio.to_thread(_create_working_tif, source_path, working_path, settings)
-        await asyncio.to_thread(_generate_preview, source_path, preview_path, settings.imagery_preview_max_dimension)
+        await await_settled_operation(asyncio.to_thread(shutil.move, str(temp_path), source_path))
+        async with resource_semaphore("raster", getattr(settings, "raster_preprocess_max_concurrent", 2)):
+            working_meta = await await_settled_operation(asyncio.to_thread(_create_working_tif, source_path, working_path, settings))
+            await await_settled_operation(asyncio.to_thread(_generate_preview, source_path, preview_path, settings.imagery_preview_max_dimension))
+    except (asyncio.CancelledError, HTTPException):
+        _safe_unlink(temp_path)
+        _safe_rmtree(dest_dir)
+        raise
     except Exception as exc:
         _safe_unlink(temp_path)
         _safe_rmtree(dest_dir)
         logger.warning("Failed to process uploaded GeoTIFF: %s", file.filename, exc_info=True)
         raise api_error(422, "INVALID_GEOTIFF", "无法处理 GeoTIFF，请确认影像波段、尺寸和压缩格式") from exc
 
+    try:
+        sha256 = await await_settled_operation(asyncio.to_thread(_file_sha256, source_path))
+    except OSError as exc:
+        _safe_rmtree(dest_dir)
+        raise api_error(503, "STORAGE_UNAVAILABLE", "影像校验读取失败，本次没有完成导入。") from exc
+    except BaseException:
+        _safe_rmtree(dest_dir)
+        raise
     meta = {
         **meta,
         **working_meta,
         "filename": file.filename,
         "preview_url": f"/api/imagery/{imagery_id}/results/preview.png",
-        "sha256": await asyncio.to_thread(_file_sha256, source_path),
+        "sha256": sha256,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "owner_user_id": owner_user_id,
     }
-    _write_json_atomic(dest_dir / "metadata.json", meta)
     try:
+        _write_json_atomic(dest_dir / "metadata.json", meta)
         await _persist_imagery_record(imagery_id, dest_dir, meta, owner_user_id)
-    except HTTPException:
-        # minio 模式持久化失败（DB 不可用/对象上传失败，已在内部回滚 DB 行与对象）：
-        # 清掉本地已写目录，避免留下"上传成功"假象的孤儿本地目录，再把错误抛给客户端。
-        _safe_rmtree(dest_dir)
+    except (asyncio.CancelledError, HTTPException) as exc:
+        # Pending compensation keeps private evidence. If retaining that evidence
+        # itself failed, preserve the sole local copy for an operator to inspect.
+        if not getattr(exc, "preserve_local_directory", False):
+            _safe_rmtree(dest_dir)
         raise
+    except OSError as exc:
+        _safe_rmtree(dest_dir)
+        raise api_error(503, "STORAGE_UNAVAILABLE", "影像元信息保存失败，本次没有完成导入。") from exc
 
     logger.info(
         "Imagery uploaded: %s, %s, %s bands, working=%sx%s",
@@ -426,7 +542,7 @@ async def list_imagery() -> list[ImageryMetadata]:
 
 
 @router.post("/cleanup", response_model=CleanupResult)
-async def cleanup_imagery() -> CleanupResult:
+async def cleanup_imagery(_admin: dict = Depends(require_admin)) -> CleanupResult:
     root = _imagery_root()
     settings = get_settings()
     cutoff = datetime.now(timezone.utc) - timedelta(hours=settings.storage_orphan_max_age_hours)

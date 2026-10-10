@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -83,6 +84,9 @@ STUB_MCP_RESULTS = {
         "bands_used": [3, 2, 1],
     },
     "cloud_shadow_mask": {
+        "method": "quality_mask",
+        "method_validation": "product_flags",
+        "quality_type": "sentinel2_scl",
         "cloud_pct": 3.0,
         "shadow_pct": 2.0,
         "clear_pct": 95.0,
@@ -201,10 +205,17 @@ async def test_actual_backend_mcp_payload_fields_are_accepted_by_container_schem
     imagery_dir = tmp_path / imagery_id
     imagery_dir.mkdir()
     _write_contract_tif(imagery_dir / "working.tif")
-    (imagery_dir / "metadata.json").write_text(
-        '{"crs":"EPSG:4326","bounds":[100.0,19.98,100.02,20.0]}',
-        encoding="utf-8",
-    )
+    (imagery_dir / "metadata.json").write_text(json.dumps({
+        "crs": "EPSG:4326", "bounds": [100.0, 19.98, 100.02, 20.0],
+        "source_origin": "stac_composition", "source_item_id": "qa-scene",
+        "source_scene_key": "112233445566", "sensor": "Sentinel-2B",
+        "quality_mask": {"filename": "quality.tif", "type": "sentinel2_scl", "source": "sentinel2",
+                         "item_id": "qa-scene", "scene_key": "112233445566"},
+    }), encoding="utf-8")
+    with rasterio.open(imagery_dir / "quality.tif", "w", driver="GTiff", height=2, width=2, count=1,
+                       dtype="uint8", crs="EPSG:4326", transform=from_origin(100.0, 20.0, 0.01, 0.01)) as qa:
+        qa.write(np.full((2, 2), 5, dtype=np.uint8), 1)
+        qa.update_tags(QA_TYPE="sentinel2_scl", QA_SENSOR="Sentinel-2B", QA_SOURCE="sentinel2", QA_ITEM_ID="qa-scene")
 
     async def fake_call_tool(self, tool_name, *, source_path, output_dir=None, arguments=None):
         keys = set(arguments or {})
@@ -241,6 +252,8 @@ async def test_actual_backend_mcp_payload_fields_are_accepted_by_container_schem
 
             for tool_name in tool_names:
                 properties = set(schema_by_name[tool_name]["properties"])
-                assert captured_payload_keys[tool_name] == properties, tool_name
+                # quality and heuristic arguments are intentionally alternative paths.
+                assert captured_payload_keys[tool_name].issubset(properties), tool_name
+                assert set(schema_by_name[tool_name]["required"]).issubset(captured_payload_keys[tool_name]), tool_name
     finally:
         get_settings.cache_clear()

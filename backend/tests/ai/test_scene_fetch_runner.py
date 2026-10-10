@@ -36,7 +36,7 @@ def _clean_cache():
 async def test_fetch_success_reports_imagery_and_roles(monkeypatch) -> None:
     put_scenes("u1", [_record()])
 
-    async def fake_import(record, user_id):
+    async def fake_import(record, user_id, *, bbox=None):
         return {
             "imagery_id": "0123456789ab",
             "item_id": record.item_id,
@@ -74,7 +74,7 @@ async def test_fetch_expired_scene_tells_model_to_research(monkeypatch) -> None:
 async def test_fetch_failure_is_honest(monkeypatch) -> None:
     put_scenes("u1", [_record()])
 
-    async def boom(_record, _user_id):
+    async def boom(_record, _user_id, *, bbox=None):
         raise SceneImportError("远程读取失败")
 
     monkeypatch.setattr(

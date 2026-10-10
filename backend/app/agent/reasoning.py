@@ -40,6 +40,7 @@ class ThinkTagParser:
         self.in_reasoning = False
         self.buffer = ""
         self._closing_tag: str | None = None
+        self._code_fence: str | None = None
 
     def feed(self, text: str | None) -> list[ReasoningPart]:
         if not text:
@@ -51,17 +52,21 @@ class ThinkTagParser:
         cursor = 0
 
         while cursor < len(data):
-            tags = (
-                (self._closing_tag or THINK_END,)
-                if self.in_reasoning
-                else tuple(start for start, _end in REASONING_TAGS)
-            )
+            if self.in_reasoning:
+                tags = (self._closing_tag or THINK_END,)
+            elif self._code_fence:
+                tags = (self._code_fence,)
+            else:
+                tags = tuple(start for start, _end in REASONING_TAGS) + ("```", "~~~")
             match = _first_tag(data, cursor, tags)
 
             if match is not None:
                 tag_index, tag = match
                 self._append(parts, data[cursor:tag_index])
-                if self.in_reasoning:
+                if tag in ("```", "~~~"):
+                    self._append(parts, data[tag_index:tag_index + len(tag)])
+                    self._code_fence = None if self._code_fence else tag
+                elif self.in_reasoning:
                     self.in_reasoning = False
                     self._closing_tag = None
                 else:
@@ -102,9 +107,9 @@ def _first_tag(data: str, cursor: int, tags: tuple[str, ...]) -> tuple[int, str]
     return min(found, default=None, key=lambda item: item[0])
 
 
-_NARRATED_HEADINGS = ("思考过程", "内部推理", "分析过程", "reasoning", "analysis")
+_NARRATED_HEADINGS = ("思考过程", "内部推理", "internal reasoning", "private reasoning", "thinking process")
 _NARRATED_START = re.compile(
-    r"^\s*(?:#{1,6}\s*)?(?:思考过程|内部推理|分析过程|reasoning|analysis)"
+    r"^\s*(?:#{1,6}\s*)?(?:思考过程|内部推理|internal reasoning|private reasoning|thinking process)"
     r"\s*(?::|：|\r?\n)",
     re.IGNORECASE,
 )

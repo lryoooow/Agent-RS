@@ -3,6 +3,8 @@
 import hashlib
 import re
 import shutil
+import zipfile
+import zlib
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
@@ -68,15 +70,20 @@ def parse_uploaded_document(
     elif extension == ".pdf":
         content, doc_type, metadata = _parse_pdf(data, base_metadata, settings)
     elif extension == ".pptx":
+        _check_office_zip(data, extension, settings)
         content, metadata = _parse_pptx(data, base_metadata)
         doc_type = "pptx"
     elif extension == ".xlsx":
-        content, metadata = _parse_xlsx(data, base_metadata)
+        _check_office_zip(data, extension, settings)
+        content, metadata = _parse_xlsx(data, base_metadata, settings)
         doc_type = "xlsx"
     else:
+        _check_office_zip(data, extension, settings)
         content, metadata = _parse_docx(data, base_metadata)
         doc_type = "docx"
 
+    if len(content) > settings.document_max_text_chars:
+        raise DocumentParseError("DOCUMENT_TEXT_TOO_LARGE", "Extracted document text exceeds the configured limit.", 413)
     content = _normalize_content(content)
     if not content:
         raise DocumentParseError("DOCUMENT_TEXT_EMPTY", "No readable text was extracted from the document.")
@@ -103,6 +110,25 @@ def _parse_text(data: bytes) -> tuple[str, str]:
     if match is None:
         raise DocumentParseError("DOCUMENT_DECODE_FAILED", "Could not detect text encoding.")
     return str(match), f"charset-normalizer:{match.encoding or 'unknown'}"
+
+
+# 非法/损坏 zip（含伪装成 Office 的非 zip 文件）与各格式的既有解析失败码一一对应，
+# 保持修复前"伪 docx/pptx/xlsx → 400 <FORMAT>_PARSE_FAILED"的用户可见行为不变。
+_OFFICE_PARSE_FAILED_CODES = {
+    ".docx": ("DOCX_PARSE_FAILED", "Could not parse the docx file."),
+    ".pptx": ("PPTX_PARSE_FAILED", "Could not parse the pptx file."),
+    ".xlsx": ("XLSX_PARSE_FAILED", "Could not parse the xlsx file."),
+}
+
+
+def _check_office_zip(data: bytes, extension: str, settings: Settings) -> None:
+    from app.documents.office_archive import validate_office_archive
+    failed_code, failed_message = _OFFICE_PARSE_FAILED_CODES[extension]
+    try:
+        validate_office_archive(data, settings, DocumentParseError)
+    except (zipfile.BadZipFile, zlib.error, ValueError, OSError) as exc:
+        if isinstance(exc, DocumentParseError): raise
+        raise DocumentParseError(failed_code, failed_message) from exc
 
 
 def _parse_pdf(
@@ -340,7 +366,7 @@ def _parse_pptx(data: bytes, base_metadata: dict[str, Any]) -> tuple[str, dict[s
     }
 
 
-def _parse_xlsx(data: bytes, base_metadata: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+def _parse_xlsx(data: bytes, base_metadata: dict[str, Any], settings: Settings) -> tuple[str, dict[str, Any]]:
     from openpyxl import load_workbook
 
     try:
@@ -352,12 +378,20 @@ def _parse_xlsx(data: bytes, base_metadata: dict[str, Any]) -> tuple[str, dict[s
     try:
         sheet_blocks: list[str] = []
         sheet_count = 0
+        text_chars = 0
         for worksheet in workbook.worksheets:
+            if (worksheet.max_row or 0) > settings.document_max_sheet_rows or (worksheet.max_column or 0) > settings.document_max_sheet_columns:
+                raise DocumentParseError("WORKSHEET_TOO_LARGE", "Worksheet dimensions exceed the configured limit.", 413)
             sheet_count += 1
             row_texts: list[str] = []
-            for row in worksheet.iter_rows(values_only=True):
+            for index, row in enumerate(worksheet.iter_rows(values_only=True), 1):
+                if index > settings.document_max_sheet_rows or len(row) > settings.document_max_sheet_columns:
+                    raise DocumentParseError("WORKSHEET_TOO_LARGE", "Actual worksheet dimensions exceed the configured limit.", 413)
                 cells = [str(value).strip() for value in row if value is not None and str(value).strip()]
                 if cells:
+                    text_chars += sum(len(c) for c in cells) + len(cells)
+                    if text_chars > settings.document_max_text_chars:
+                        raise DocumentParseError("DOCUMENT_TEXT_TOO_LARGE", "Extracted document text exceeds the configured limit.", 413)
                     row_texts.append("\t".join(cells))
             if row_texts:
                 sheet_blocks.append(f"# {worksheet.title}\n" + "\n".join(row_texts))
@@ -374,4 +408,19 @@ def _parse_xlsx(data: bytes, base_metadata: dict[str, Any]) -> tuple[str, dict[s
 
 
 def _normalize_content(content: str) -> str:
-    return "\n".join(line.strip() for line in content.splitlines() if line.strip()).strip()
+    """规范化解析文本：行去首尾空白；**保留单个空行、连续多空行压缩为一个**。
+
+    历史缺陷（整改工作单 E0，2026-10-08 复现）：旧实现 ``if line.strip()``
+    删光所有空行，下游 chunker._split_to_atoms 的 ``re.split(r"\n{2,}", ...)``
+    段落切分永不触发——多段落正文被并成单原子，切块边界退化为句切/字符窗。
+    修复：空行是段落边界信号，必须保留一个；开头空行丢弃，结尾空行由
+    strip() 去除，连续空行只留一个（既有压缩语义不变）。
+    """
+    normalized_lines: list[str] = []
+    for line in content.splitlines():
+        stripped = line.strip()
+        if stripped:
+            normalized_lines.append(stripped)
+        elif normalized_lines and normalized_lines[-1] != "":
+            normalized_lines.append("")  # 连续空行压缩为一个；不产生开头空行
+    return "\n".join(normalized_lines).strip()

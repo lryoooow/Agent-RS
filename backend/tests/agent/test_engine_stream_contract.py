@@ -31,6 +31,7 @@ import app.agent.engine.orchestrator as orchestrator
 from app.agent.engine.router import RouteResult
 from app.agent.engine.service import stream_turn_events
 from app.agent.types import ToolRunResult
+from app.api.routes.chat import stream_with_heartbeat
 from app.schemas.chat import ChatMessage, ChatRequest
 
 
@@ -132,14 +133,14 @@ async def _run(monkeypatch, replies, *, query: str = "这张图的影像质量�
     deltas: list[str] = []
     statuses: list[str] = []
     final = None
-    async for kind, payload in stream_turn_events(
+    async for kind, payload in stream_with_heartbeat(stream_turn_events(
         request=ChatRequest(
             messages=[ChatMessage(role="user", content=query)],
             use_rag=False,
             use_memory=False,
         ),
         user_id=None,
-    ):
+    )):
         if kind == "delta":
             deltas.append(payload)
         elif kind == "status":
@@ -206,6 +207,9 @@ async def test_tool_loop_emits_trace_events_and_final_answer(monkeypatch) -> Non
         return object()  # 非 PrepareRejected 即视为通过（真实校验另有专测）
 
     async def fake_run(_prepared) -> ToolRunResult:
+        from app.agent.engine.turn_context import current_turn_state
+
+        assert current_turn_state() is not None, "HTTP 心跳包装后工具仍应处于本回合作用域"
         return ToolRunResult(tool_context="影像质检：4 波段，CRS EPSG:32650，无 nodata。")
 
     monkeypatch.setattr("app.agent.engine.tools.prepare_tool_call", fake_prepare)
@@ -227,11 +231,10 @@ async def test_tool_loop_emits_trace_events_and_final_answer(monkeypatch) -> Non
 
 
 @pytest.mark.asyncio
-async def test_disconnect_drains_without_leaking_tasks(monkeypatch) -> None:
+async def test_disconnect_closes_without_leaking_tasks(monkeypatch) -> None:
     """前端断连后收尾必须干净：不留永不结束的任务。
 
-    主 Agent 路径没有"后续步骤"可停；断连后由 `_abandon` 在后台排空在飞
-    调用并关闭模型客户端。
+    断连直接关闭源流和模型客户端，不再靠消费后续业务步骤收尾。
     """
     import asyncio
 
@@ -255,7 +258,7 @@ async def test_disconnect_drains_without_leaking_tasks(monkeypatch) -> None:
             break                                  # 模拟前端断连
     await gen.aclose()
 
-    # 给后台排空任务跑完的机会
+    # 给已取消的在飞调用完成清理的机会
     for _ in range(50):
         await asyncio.sleep(0.02)
         if not [t for t in asyncio.all_tasks() if id(t) not in before and not t.done()]:
@@ -350,3 +353,119 @@ async def test_model_client_is_closed_after_non_streaming_turn(monkeypatch) -> N
     )
 
     assert closed, "非流式回合结束也必须关闭模型客户端"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("strategy", ["main", "graph"])
+@pytest.mark.parametrize("cancel_mode", ["disconnect", "token"])
+@pytest.mark.parametrize("streaming", [True, False])
+async def test_real_agent_cancels_inflight_tool_without_followup_model_call(monkeypatch, strategy, cancel_mode, streaming):
+    import asyncio
+    from unittest.mock import AsyncMock
+    from autogen_core import CancellationToken
+
+    started, stopped = asyncio.Event(), asyncio.Event()
+    tool_name = "detect_objects" if strategy == "graph" else "raster_inspect"
+    client = _ScriptedClient([
+        [FunctionCall(id="inflight", name=tool_name, arguments=json.dumps({"imagery_id": "94e758f38ede"}))],
+        "This followup must never run",
+    ])
+    client.close = AsyncMock()
+    _route_main(monkeypatch, client)
+    if strategy == "graph":
+        async def route(*args, **kwargs):
+            return RouteResult(strategy="graph", flow_name="detect_report", reason="test")
+        monkeypatch.setattr(orchestrator, "choose_route", route)
+
+    async def tool(_prepared):
+        try:
+            started.set()
+            await asyncio.Event().wait()
+        finally:
+            stopped.set()
+
+    monkeypatch.setattr("app.agent.engine.tools.prepare_tool_call", AsyncMock(return_value=object()))
+    monkeypatch.setattr("app.agent.engine.tools.run_prepared_tool", tool)
+    token = CancellationToken()
+    before = set(asyncio.all_tasks())
+
+    async def consume():
+        request = ChatRequest(messages=[ChatMessage(role="user", content="执行影像分析")], use_rag=False, use_memory=False)
+        if not streaming:
+            from app.agent.engine.service import complete_turn
+            await complete_turn(request=request, user_id=None, cancellation_token=token)
+            return
+        events = stream_turn_events(
+            request=request,
+            user_id=None, cancellation_token=token,
+        )
+        async for _ in stream_with_heartbeat(events):
+            pass
+
+    reader = asyncio.create_task(consume())
+    try:
+        await asyncio.wait_for(started.wait(), 2)
+        if cancel_mode == "token":
+            token.cancel()
+        else:
+            reader.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(reader, 2)
+        await asyncio.wait_for(stopped.wait(), 2)
+        for _ in range(20):
+            await asyncio.sleep(0)
+            if not [t for t in asyncio.all_tasks() if t not in before and not t.done()]:
+                break
+        assert client.stream_calls == 1
+        client.close.assert_awaited_once()
+        assert not [t for t in asyncio.all_tasks() if t not in before and not t.done()]
+    finally:
+        reader.cancel()
+        await asyncio.gather(reader, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["business_failure", "access_denied", "zero_results"])
+async def test_real_agent_business_status_reaches_trace_without_breaking_answer(monkeypatch, outcome):
+    from unittest.mock import AsyncMock
+    from app.agent.tool_execution import PrepareRejected
+
+    failure = ToolRunResult(tool_context="业务服务失败", error="inference_failed", metadata={"error_code": "inference_failed"})
+    prepared = PrepareRejected(failure="access_denied", error_detail="not_owner", result=failure) if outcome == "access_denied" else object()
+    monkeypatch.setattr("app.agent.engine.tools.prepare_tool_call", AsyncMock(return_value=prepared))
+    monkeypatch.setattr("app.agent.engine.tools.run_prepared_tool", AsyncMock(return_value=failure if outcome == "business_failure" else ToolRunResult(tool_context="0 targets", result_count=0)))
+    call = FunctionCall(id="business", name="raster_inspect", arguments=json.dumps({"imagery_id": "94e758f38ede"}))
+    answer = "任务结果已说明。"
+    streamed, final, stages, _ = await _run(monkeypatch, [[call], answer])
+    assert streamed == final.content == answer
+    events = final.trace.events
+    if outcome == "zero_results":
+        assert "tool_execution_completed" in stages
+        assert "tool_execution_failed" not in stages
+    else:
+        assert "tool_execution_failed" in stages
+        assert "tool_execution_completed" not in stages
+        failed = next(e for e in events if e.stage == "tool_execution_failed")
+        assert failed.metadata["execution_status"] == ("rejected" if outcome == "access_denied" else "failed")
+        assert failed.metadata["error_code"] == ("access_denied" if outcome == "access_denied" else "inference_failed")
+
+
+@pytest.mark.asyncio
+async def test_parallel_calls_to_same_tool_keep_individual_success_and_failure(monkeypatch):
+    from types import SimpleNamespace
+
+    async def prepare(name, arguments, *, user_id):
+        return SimpleNamespace(reason=arguments["reason"])
+
+    async def run(prepared):
+        return ToolRunResult(tool_context=prepared.reason, error="failed" if prepared.reason == "bad" else None)
+
+    monkeypatch.setattr("app.agent.engine.tools.prepare_tool_call", prepare)
+    monkeypatch.setattr("app.agent.engine.tools.run_prepared_tool", run)
+    calls = [FunctionCall(id=f"parallel-{reason}", name="raster_inspect", arguments=json.dumps({"imagery_id": "94e758f38ede", "reason": reason})) for reason in ("good", "bad")]
+    _, final, stages, _ = await _run(monkeypatch, [calls, "已汇总各自状态。"])
+    assert stages.count("tool_execution_completed") == 1
+    assert stages.count("tool_execution_failed") == 1
+    requested = [e for e in final.trace.events if e.stage == "tool_requested"]
+    failed = next(e for e in final.trace.events if e.stage == "tool_execution_failed")
+    assert failed.metadata["child_run_id"] == requested[1].metadata["child_run_id"]

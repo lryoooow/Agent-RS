@@ -50,16 +50,14 @@ async def validate_band_indices(source_path: Path, bands: dict[str, int]) -> str
     over_range = {name: index for name, index in bands.items() if index > band_count}
     if over_range:
         return f"影像只有 {band_count} 个波段，无法使用 {over_range}"
-    def alpha_error():
-        import rasterio
-        from app.services.imagery_persist import _match_band_role
-        with rasterio.open(source_path) as src:
-            for name, index in bands.items():
-                declared = _match_band_role(src.descriptions[index - 1] or "")
-                if src.colorinterp[index - 1].name == "alpha" and declared != name:
-                    return f"B{index} 是透明度 Alpha 波段，不能作为 {name} 光谱波段。请使用真实光谱波段或上传包含近红外的原始影像。"
+    def semantic_error():
+        from app.services.raster_semantics import band_semantics, validate_spectral_selection
+        try:
+            validate_spectral_selection(band_semantics(source_path), bands)
+        except ValueError as exc:
+            return str(exc)
         return None
-    return await asyncio.to_thread(alpha_error)
+    return await asyncio.to_thread(semantic_error)
 
 
 def invalid_bands_result(tool_name: str, detail: str) -> ToolRunResult:
@@ -100,3 +98,62 @@ def execution_metadata(mode: str, *, fallback_used: bool = False, error_code: st
         "fallback_used": fallback_used,
         "error_code": error_code,
     }
+
+
+def classify_rs_tool_failure(exc: Exception) -> tuple[str, str]:
+    """把 rs_tools 容器带回的错误文本映射成 (错误码, 面向用户文案)。
+
+    compute 侧在 raster_utils.py 里用 "uncalibrated_input:" /
+    "all_pixels_invalid:" / "stale_s2_composite:" 前缀标记确定性输入问题，
+    文本经 MCP isError 消息原样带回；不匹配任何前缀时归为通用 mcp_error
+    （保留原日志侧详情）。
+    """
+    text = str(exc)
+    if "artifact_publication_failed" in text:
+        return "artifact_publication_failed", "分析计算已结束，但产物保存失败；尚未生成可用下载入口，请检查存储状态。"
+    if "invalid_calibration" in text:
+        return "invalid_calibration", "影像定标参数不完整、非法或存在冲突，本次没有执行可信指数分析；请提供一致的逐波段定标信息。"
+    if "stale_s2_composite" in text:
+        return (
+            "stale_s2_composite",
+            "该 Sentinel-2 影像缺少可靠反射率定标来源；成像日期不能证明处理基线，"
+            "本次未直接使用原始DN计算。平台导入的场景请重新导入；自行上传的文件请提供反射率单位或逐波段定标参数。",
+        )
+    if "uncalibrated_input" in text:
+        return (
+            "uncalibrated_input",
+            "影像缺少定标信息（无法换算反射率），该计算需要反射率输入；"
+            "请提供明确的反射率单位或逐波段定标参数，传感器名称本身不能证明已定标。",
+        )
+    if "all_pixels_invalid" in text:
+        return (
+            "all_pixels_invalid",
+            "影像没有数学有效像素（无效掩膜、NaN、零分母或非法计算域），无法提供可信统计；请检查数据和参数。",
+        )
+    return "mcp_error", ""
+
+
+PROVENANCE_FIELDS = ("calibration", "calibrated", "method_version", "valid_pixels", "total_pixels",
+                     "nodata_pixels", "input_valid_pixels", "math_invalid_pixels", "nodata_pct", "percentage_denominator", "out_of_range_pct")
+
+
+def provenance_stats(stats: dict[str, Any], resolved_bands: dict[str, int]) -> dict[str, Any]:
+    return {**{key: stats[key] for key in PROVENANCE_FIELDS if key in stats},
+            "resolved_bands": dict(resolved_bands)}
+
+
+def format_spectral_provenance(stats: dict[str, Any]) -> list[str]:
+    lines = []
+    if "calibrated" in stats:
+        label = "反射率（已有明确单位或已按来源参数校准）" if stats["calibrated"] else "未校准DN的相对指数；不能作为定量反射率指标"
+        lines.append(f"- 输入量纲: {label}")
+    if stats.get("resolved_bands"):
+        lines.append(f"- 实际波段: {stats['resolved_bands']}")
+    if stats.get("method_version"):
+        lines.append(f"- 方法版本: {stats['method_version']}")
+    if "valid_pixels" in stats:
+        lines.append(f"- 数学有效像素: {stats['valid_pixels']} / {stats.get('total_pixels', '未知')}；输入有效但计算无定义: {stats.get('math_invalid_pixels', 0)}")
+    calibration = stats.get("calibration") or {}
+    for role, record in (calibration.get("bands") or {}).items():
+        lines.append(f"- {role} 定标依据: {record}")
+    return lines

@@ -214,3 +214,23 @@ async def test_mark_assistant_failed_inserts_failed_row_when_no_assistant_id(
         "error_type": "RuntimeError",
     }
     assert ctx.assistant_message_id == "new-failed-id"
+
+
+@pytest.mark.asyncio
+async def test_prepare_persistence_fails_closed_when_pool_is_unavailable(monkeypatch) -> None:
+    from app.agent.errors import PersistenceUnavailableError
+    from app.agent.persistence import prepare_persistence
+    from app.core.settings import get_settings
+    from app.schemas.chat import ChatRequest, ChatMessage
+
+    monkeypatch.setenv("DATABASE_ENABLED", "true")
+    get_settings.cache_clear()
+
+    async def no_pool():
+        return None
+
+    monkeypatch.setattr("app.agent.persistence.fetch_optional_pool", no_pool)
+    request = ChatRequest(messages=[ChatMessage(role="user", content="hi")])
+
+    with pytest.raises(PersistenceUnavailableError):
+        await prepare_persistence(request, model_name="m")

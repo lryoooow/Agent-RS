@@ -1,9 +1,11 @@
+import { maskNotice, maskRows, maskTitle, provenanceRows } from "../lib/analysis-results";
 import { BarChart3, CheckCircle2, Crosshair, Download, Eye, FileText, Image as ImageIcon, Layers3, Loader2, PlusCircle, Satellite } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import type {
   GeospatialCompositeResult,
   GeospatialDetectionResult,
   GeospatialInstanceSegmentationResult,
+  GeospatialMaskResult,
   GeospatialNdviResult,
   GeospatialReportResult,
   GeospatialResult,
@@ -61,6 +63,7 @@ export function GeospatialSummary({
   if (result.type === "instance_segmentation") {
     return <InstanceSegmentationRow result={result} footer={reportButton} />;
   }
+  if (result.type === "water_mask" || result.type === "cloud_mask") return <MaskRow result={result} footer={reportButton} />;
   return <IndexRow result={result} footer={reportButton} />;
 }
 
@@ -133,9 +136,23 @@ function IndexRow({
         <span>mean {fmt(result.stats.mean)}</span>
         <span>std {fmt(result.stats.std)}</span>
       </div>
+      <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-muted-foreground">
+        {provenanceRows(result.stats).map(row => <span key={row.label}>{row.label}：{row.value}</span>)}
+      </div>
       {footer}
     </div>
   );
+}
+
+function MaskRow({ result, footer }: { result: GeospatialMaskResult; footer?: ReactNode }) {
+  return <div className="mt-2 rounded-lg border border-border bg-background/50 p-2.5 text-[12px]">
+    <div className="flex items-center gap-2"><Layers3 className="size-3.5 shrink-0 text-primary" /><span>{maskTitle(result)}</span><span className="ml-auto font-mono text-[10px] text-muted-foreground">{result.imagery_id.slice(0, 8)}</span></div>
+    <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+      {maskRows(result).map(row => <span key={row.label}>{row.label}：{row.value}</span>)}
+    </div>
+    <p className="mt-2 text-[10px] leading-relaxed text-muted-foreground">{maskNotice(result)}</p>
+    {footer}
+  </div>;
 }
 
 function CompositeRow({ result, footer }: { result: GeospatialCompositeResult; footer?: ReactNode }) {

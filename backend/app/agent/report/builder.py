@@ -12,18 +12,23 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import os
+import tempfile
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
-from app.agent.imagery_access import read_imagery_metadata
+from app.agent.imagery_access import IMAGERY_ID_PATTERN, imagery_owner_id, read_imagery_metadata
 from app.core.paths import imagery_root
+from app.db.errors import is_missing_schema_error
 from app.db.pool import fetch_optional_pool
 from app.db.repositories.conversation import get_conversation
 from app.db.repositories.message import list_recent_analysis_results
+from app.db.repositories.imagery import get_imagery as db_get_imagery
+from app.storage.object_store import object_store_for
 
 logger = logging.getLogger(__name__)
 
@@ -103,34 +108,148 @@ async def build_conversation_report(
             code="no_analysis",
         )
 
-    imagery_meta = read_imagery_metadata(selected_id) if selected_id else None
+    if not selected_id or not IMAGERY_ID_PATTERN.fullmatch(selected_id):
+        raise ReportError("未找到该影像或无权访问，无法生成报告。", code="imagery_forbidden")
+    backend, imagery_meta = await _report_imagery_storage(pool, selected_id, user_id)
     generated_at = datetime.now(timezone.utc)
-    results_dir = imagery_root() / selected_id / "results"
+    filename = f"report_{generated_at.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:16]}.docx"
+    workspace = None
+    active_operation = None
+    phase = "read"
+
+    async def owned(operation):
+        # File rendering and SDK transfers may run in non-cancellable threads.
+        # Keep their private workspace alive until actual completion even if
+        # the user disconnects; they must never publish a partial local report.
+        nonlocal active_operation
+        task = asyncio.create_task(operation)
+        active_operation = task
+        try:
+            return await asyncio.shield(task)
+        finally:
+            if task.done():
+                active_operation = None
 
     try:
-        results_dir.mkdir(parents=True, exist_ok=True)
-        filename = f"report_{generated_at.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}.docx"
-        output_path = results_dir / filename
-        # docx 写入是同步 CPU/IO，offload 到线程，避免阻塞事件循环（与上传/解析一致）。
-        await asyncio.to_thread(
+        results_dir = imagery_root() / selected_id / "results"
+        if backend == "local":
+            results_dir.mkdir(parents=True, exist_ok=True)
+            workspace = tempfile.TemporaryDirectory(prefix=".report_", dir=results_dir)
+            artifact_dir = results_dir
+            store = None
+        else:
+            workspace = tempfile.TemporaryDirectory(prefix="agent_rs_report_")
+            artifact_dir = Path(workspace.name) / "results"
+            artifact_dir.mkdir()
+            store = object_store_for(backend)
+            for name in _report_image_names(selected_id, imagery_meta, selected_analyses):
+                key = f"{selected_id}/results/{name}"
+                try:
+                    if await store.exists(key):
+                        await owned(store.get_to(key, artifact_dir / name))
+                except FileNotFoundError:
+                    # A deleted/missing optional preview cannot supply a figure.
+                    # Rendering already explains the unavailable screenshot.
+                    continue
+        output_path = Path(workspace.name) / filename
+        phase = "render"
+        await owned(asyncio.to_thread(
             _render_report_docx,
             output_path,
             imagery_id=selected_id,
             imagery_meta=imagery_meta,
             analyses=selected_analyses,
             generated_at=generated_at,
-        )
+            artifact_dir=artifact_dir,
+        ))
+        phase = "publish"
+        if store is not None:
+            key = f"{selected_id}/results/{filename}"
+            if await store.exists(key):
+                raise FileExistsError("Report artifact already exists")
+            await owned(store.put(key, output_path))
+        else:
+            # A hard link publishes the fully closed ZIP atomically and refuses
+            # an existing destination. Same-filesystem staging avoids copy races;
+            # workspace cleanup later releases its private link.
+            await owned(asyncio.to_thread(os.link, output_path, results_dir / filename))
     except ReportError:
         raise
     except Exception as exc:
-        logger.exception("Report generation failed: %s", exc)
-        raise ReportError("报告生成失败，请稍后重试。", code="render_failed") from exc
+        logger.exception("Report %s failed: %s", phase, exc)
+        code, message = {
+            "read": ("storage_unavailable", "报告成果读取失败，请稍后重试。"),
+            "render": ("render_failed", "报告生成失败，请稍后重试。"),
+            "publish": ("report_publish_failed", "报告保存失败，尚未生成可用下载入口。"),
+        }[phase]
+        raise ReportError(message, code=code) from exc
+    finally:
+        if workspace is not None:
+            _dispose_report_workspace(workspace, active_operation)
 
     return ReportArtifact(
         imagery_id=selected_id,
         filename=filename,
         download_url=f"/api/imagery/{selected_id}/results/{filename}",
     )
+
+
+async def _report_imagery_storage(pool, imagery_id: str, user_id: str) -> tuple[str, dict[str, Any]]:
+    try:
+        async with pool.acquire() as conn:
+            row = await db_get_imagery(conn, imagery_id=imagery_id)
+    except Exception as exc:
+        if not is_missing_schema_error(exc):
+            raise ReportError("影像存储暂时不可用，无法生成报告。", code="storage_unavailable") from exc
+        row = None
+    if row is not None:
+        if str(row["owner_user_id"]) != user_id:
+            raise ReportError("未找到该影像或无权访问，无法生成报告。", code="imagery_forbidden")
+        backend = str(row.get("storage_backend") or "local").strip().lower()
+        if backend not in {"local", "minio"}:
+            raise ReportError("影像存储配置不可用，无法生成报告。", code="storage_unavailable")
+        meta = dict(row.get("metadata") or {})
+        for key, value in (("filename", row.get("filename")), ("bounds", row.get("bounds")),
+                           ("band_count", row.get("bands")), ("sha256", row.get("sha256"))):
+            if value is not None:
+                meta.setdefault(key, value)
+        return backend, meta
+    # Legacy images have no DB row and live locally. Missing ownership must
+    # never select MinIO or another user's local cached images via a URL.
+    meta = read_imagery_metadata(imagery_id)
+    if meta is None or imagery_owner_id(meta) != user_id:
+        raise ReportError("未找到该影像或无权访问，无法生成报告。", code="imagery_forbidden")
+    return "local", meta
+
+
+def _dispose_report_workspace(workspace, operation) -> None:
+    def cleanup(task=None):
+        if task is not None and not task.cancelled():
+            # A disconnected caller no longer observes a transfer/render error.
+            # Retrieve it to avoid an unhandled-task exception diagnostic.
+            task.exception()
+        try:
+            workspace.cleanup()
+        except OSError:
+            logger.warning("Report workspace could not be cleaned: %s", workspace.name, exc_info=True)
+    if operation is not None and not operation.done():
+        operation.add_done_callback(cleanup)
+    else:
+        cleanup()
+
+
+def _report_image_names(imagery_id: str, meta: dict[str, Any], analyses: list[dict[str, Any]]) -> list[str]:
+    names = {"preview.png"}
+    preview = _artifact_name(imagery_id, meta.get("preview_url"), image_only=True)
+    if preview:
+        names.add(preview)
+    for entry in analyses:
+        geo = entry.get("geospatial_result")
+        if isinstance(geo, dict):
+            name = _artifact_name(imagery_id, geo.get("result_url"), image_only=True)
+            if name:
+                names.add(name)
+    return sorted(names)
 
 
 def _select_imagery_analyses(
@@ -182,6 +301,7 @@ def _render_report_docx(
     imagery_meta: dict[str, Any] | None,
     analyses: list[dict[str, Any]],
     generated_at: datetime,
+    artifact_dir: Path | None = None,
 ) -> None:
     """把真实结构化结果、产物预览和边界说明写成完整 Word 报告。"""
     from docx import Document
@@ -212,7 +332,7 @@ def _render_report_docx(
 
     figure_no = 0
     used_images: set[Path] = set()
-    preview = _preview_image_path(imagery_id, meta)
+    preview = _preview_image_path(imagery_id, meta, artifact_dir=artifact_dir)
     if preview:
         figure_no += 1
         _add_figure(document, preview, f"图 {figure_no} 原始影像预览")
@@ -230,7 +350,7 @@ def _render_report_docx(
         result_no += 1
         geo = entry.get("geospatial_result")
         if isinstance(geo, dict):
-            image_path = _artifact_path(imagery_id, geo.get("result_url"), image_only=True)
+            image_path = _artifact_path(imagery_id, geo.get("result_url"), image_only=True, artifact_dir=artifact_dir)
             if image_path and image_path.resolve() not in used_images:
                 figure_no += 1
                 _add_figure(document, image_path, f"图 {figure_no} {_analysis_label(entry)}结果预览")
@@ -335,6 +455,9 @@ def _render_segmentation(document, geo: dict[str, Any], no: int) -> None:
 
 def _render_instance_segmentation(document, geo: dict[str, Any], no: int) -> None:
     document.add_heading(f"{no}. SAM3 开放词汇实例分割", level=2)
+    grid = geo.get("inference_grid")
+    if geo.get("resampled") and isinstance(grid, dict):
+        document.add_paragraph(f"本次受资源预算约束，推理网格为{grid.get('width')}×{grid.get('height')}，已经重采样。细小目标的边界与数量可能受影响，应结合原始影像复核。")
     document.add_paragraph(f"模型：{geo.get('model_name') or 'SAM3'}；实例总数：{int(geo.get('instance_count') or 0)}。")
     if isinstance(geo.get("union_pixels"), int):
         document.add_paragraph(f"合并掩膜像素数：{geo['union_pixels']}。")
@@ -374,7 +497,21 @@ def _render_index(document, geo: dict[str, Any], no: int) -> None:
     if _number(stats.get("nodata_pct")):
         rows.append(("无效像素占比", f"{stats['nodata_pct']:.2f}%"))
     _add_table(document, ("统计量", "数值"), rows)
-    interpretation = _index_interpretation(str(index_type), stats.get("mean"))
+    if stats.get("calibrated") is False:
+        document.add_paragraph("本结果是未标定的相对指数；不能据此给出绝对植被覆盖或跨期定量结论。")
+    calibration = stats.get("calibration") or {}
+    if calibration:
+        document.add_paragraph(f"定标方法：{calibration.get('method', '未记录')}；版本：{calibration.get('method_version', '未记录')}。")
+        rows = []
+        for role, detail in (calibration.get("bands") or {}).items():
+            if isinstance(detail, dict):
+                rows.append((str(role), str(detail.get("band_index", "—")), str(detail.get("scale", "—")),
+                             str(detail.get("offset", "—")), str(detail.get("source", "—"))))
+        if rows:
+            _add_table(document, ("角色", "波段", "Scale", "Offset", "定标来源"), rows)
+    if stats.get("valid_pixels") is not None and stats.get("total_pixels") is not None:
+        document.add_paragraph(f"统计口径：{stats['valid_pixels']} 个有效像素 / {stats['total_pixels']} 个全幅像素；均值只包含有效像素。")
+    interpretation = None if stats.get("calibrated") is False else _index_interpretation(str(index_type), stats.get("mean"))
     if interpretation:
         document.add_paragraph(interpretation)
 
@@ -416,7 +553,9 @@ def _render_mask(document, geo: dict[str, Any], no: int) -> None:
     stats = geo.get("stats") or {}
     labels = {
         "water_pct": "水体占比", "non_water_pct": "非水体占比", "ndwi_threshold": "NDWI 阈值",
-        "cloud_pct": "云占比", "shadow_pct": "阴影占比", "clear_pct": "晴空占比", "nodata_pct": "无效像素占比",
+        "cloud_pct": "QA云标记占比", "shadow_pct": "QA云影标记占比", "clear_pct": "QA未标记云/云影占比", "nodata_pct": "无效像素占比",
+        "unknown_pct": "未知/未分类占比", "snow_pct": "雪冰占比", "terrain_shadow_pct": "地形阴影占比",
+        "candidate_bright_pct": "疑似高亮占比", "candidate_dark_pct": "疑似暗区占比",
     }
     rows = []
     for key, label in labels.items():
@@ -424,10 +563,19 @@ def _render_mask(document, geo: dict[str, Any], no: int) -> None:
         if _number(value):
             rows.append((label, f"{value:.2f}%" if key.endswith("_pct") else f"{value:.4g}"))
     _add_table(document, ("统计项", "数值"), rows)
+    if stats.get("total_pixels") is not None and stats.get("valid_pixels") is not None:
+        document.add_paragraph(f"百分比以全幅 {stats['total_pixels']} 个像素为分母，有效像素 {stats['valid_pixels']} 个。")
+    if not water:
+        if stats.get("method") == "heuristic" or stats.get("method_validation") == "unvalidated":
+            document.add_paragraph("这是未验证的疑似亮暗粗筛，不能当作云、云影或晴空比例，也不能据此自动判定影像质量。")
+        elif stats.get("method") == "quality_mask":
+            document.add_paragraph(f"依据传感器质量产品：{stats.get('quality_type', '未记录')}；解码版本：{stats.get('method_version', '未记录')}。QA标记存在自身误差，不代表实测晴空。")
+        else:
+            document.add_paragraph("历史结果缺少质量方法来源，不作为已验证的云/云影判断。")
     if water and _number(stats.get("water_pct")):
         document.add_paragraph(f"分析网格中模型判定为水体的像素占 {stats['water_pct']:.2f}%。")
     if not water and _number(stats.get("clear_pct")):
-        document.add_paragraph(f"晴空像素占 {stats['clear_pct']:.2f}%，该比例可用于判断后续光谱分析的可用范围。")
+        document.add_paragraph(f"QA未标记云/云影的像素占 {stats['clear_pct']:.2f}%；质量标记不能单独保证所有像素适合定量分析。")
 
 
 def _render_composite(document, geo: dict[str, Any], no: int) -> None:
@@ -568,23 +716,44 @@ def _add_figure(document, path: Path, caption: str) -> None:
         logger.warning("Report image could not be embedded: %s", path, exc_info=True)
 
 
-def _preview_image_path(imagery_id: str, meta: dict[str, Any]) -> Path | None:
-    path = _artifact_path(imagery_id, meta.get("preview_url"), image_only=True)
+def _preview_image_path(imagery_id: str, meta: dict[str, Any], *, artifact_dir: Path | None = None) -> Path | None:
+    path = _artifact_path(imagery_id, meta.get("preview_url"), image_only=True, artifact_dir=artifact_dir)
     if path:
         return path
-    candidate = imagery_root() / imagery_id / "results" / "preview.png"
-    return candidate if candidate.is_file() else None
+    return _artifact_path(imagery_id, "preview.png", image_only=True, artifact_dir=artifact_dir)
 
 
-def _artifact_path(imagery_id: str, value: Any, *, image_only: bool = False) -> Path | None:
+def _artifact_name(imagery_id: str, value: Any, *, image_only: bool = False) -> str | None:
     if not isinstance(value, str) or not value.strip():
         return None
-    name = Path(urlparse(value).path).name
-    if not name or name in {".", ".."}:
+    try:
+        parsed = urlparse(value)
+    except ValueError:
+        return None
+    if parsed.scheme not in {"", "http", "https"}:
+        return None
+    path = unquote(parsed.path)
+    prefix = f"/api/imagery/{imagery_id}/results/"
+    if path.startswith(prefix):
+        name = path[len(prefix):]
+    elif not parsed.scheme and not parsed.netloc and "/" not in path:
+        name = path  # Safe legacy basename, resolved only in this owned results directory.
+    else:
+        return None
+    if not name or name in {".", ".."} or any(c in name for c in ("/", "\\", "\x00")):
         return None
     if image_only and Path(name).suffix.lower() not in {".png", ".jpg", ".jpeg"}:
         return None
-    root = (imagery_root() / imagery_id / "results").resolve()
+    return name
+
+
+def _artifact_path(
+    imagery_id: str, value: Any, *, image_only: bool = False, artifact_dir: Path | None = None,
+) -> Path | None:
+    name = _artifact_name(imagery_id, value, image_only=image_only)
+    if name is None:
+        return None
+    root = (artifact_dir or (imagery_root() / imagery_id / "results")).resolve()
     candidate = (root / name).resolve()
     try:
         candidate.relative_to(root)
@@ -675,7 +844,7 @@ def _summary_findings(analyses: list[dict[str, Any]]) -> list[str]:
         elif result_type == "cloud_mask":
             stats = payload.get("stats") or {}
             if _number(stats.get("clear_pct")):
-                findings.append(f"云影分析判定晴空像素占 {stats['clear_pct']:.2f}%")
+                findings.append(f"质量产品未标记云/云影的像素占 {stats['clear_pct']:.2f}%")
         elif result_type == "ocr":
             count = (payload.get("stats") or {}).get("block_count")
             if count is not None:

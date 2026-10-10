@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -48,6 +49,9 @@ class SourceSpec:
     # Landsat C2 L2 表观反射率的量化参数：ρ = DN * scale + offset。
     reflectance_scale: float | None = None
     reflectance_offset: float | None = None
+    # True：compose 时把 DN 换算成反射率写盘（Landsat 历史行为）；
+    # False：compose 只写 REFL_* 标签不改像元（S2 路径，见 model.SceneRecord）。
+    apply_reflectance_at_compose: bool = True
 
 
 _SOURCES: dict[str, SourceSpec] = {
@@ -62,8 +66,13 @@ _SOURCES: dict[str, SourceSpec] = {
             "green": ("green",),
             "red": ("red",),
             "nir": ("nir", "nir08"),
-            "swir": ("swir22", "swir16"),
+            "swir1": ("swir16",),
+            "swir2": ("swir22",),
         },
+        # S2 c1-l2a 条目自带 raster:bands（scale 0.0001 / offset -0.1，
+        # PB>=04.00 的 BOA offset），由 record_from_item 逐条读取；compose
+        # 不改像元，只写 REFL_* 标签（2026-10-07 D3 核实，详见 raster_utils）。
+        apply_reflectance_at_compose=False,
     ),
     "landsat": SourceSpec(
         source_id="landsat",
@@ -76,7 +85,8 @@ _SOURCES: dict[str, SourceSpec] = {
             "green": ("green",),
             "red": ("red",),
             "nir": ("nir08", "nir"),
-            "swir": ("swir22", "swir16"),
+            "swir1": ("swir16",),
+            "swir2": ("swir22",),
         },
         requires_sas=True,
         reflectance_scale=2.75e-05,
@@ -112,18 +122,53 @@ def _satellite_label(spec: SourceSpec, properties: dict) -> str:
     return _PLATFORM_LABELS.get(platform, spec.satellite_default)
 
 
+def _raster_band_scale_offset(asset: Any) -> tuple[float | None, float | None]:
+    """从 STAC asset 的 raster:bands 扩展读 (scale, offset)。
+
+    c1-l2a 条目每个光学波段资产都带 {scale: 0.0001, offset: -0.1}
+    （PB>=04.00 的 BOA offset，2026-10-07 实测核实）。字段缺失/非法时
+    返回 (None, None)，调用方回落源规格默认。
+    """
+    extra = getattr(asset, "extra_fields", {}) or {}
+    entries = extra.get("raster:bands") or []
+    if not entries:
+        return None, None
+    entry = entries[0]
+    if "scale" not in entry and "offset" not in entry:
+        return None, None
+    try:
+        scale, offset = float(entry["scale"]), float(entry["offset"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise StacSearchError("STAC 资产定标参数缺失或非法，无法可靠计算反射率。") from exc
+    if not math.isfinite(scale) or not math.isfinite(offset) or scale <= 0:
+        raise StacSearchError("STAC 资产定标参数必须有限且 scale>0。")
+    return scale, offset
+
+
 def record_from_item(spec: SourceSpec, item: Any) -> SceneRecord | None:
     """pystac Item → 统一 SceneRecord；缺核心资产（无 RGB）时返回 None。"""
     properties: dict = getattr(item, "properties", {}) or {}
     band_assets: dict[str, str] = {}
     sign_info: dict[str, tuple[str, str]] = {}
     assets = getattr(item, "assets", {}) or {}
+    # 反射率定标参数：Landsat 用源规格（固定量化参数）；S2 从条目资产
+    # raster:bands 逐条读取（无该元数据时保持 None → 合成 DN、定标回落
+    # offset=0，与历史行为一致）。
+    band_calibration: dict[str, dict] = {}
     for role, candidates in spec.role_assets.items():
         for asset_key in candidates:
             asset = assets.get(asset_key)
             href = getattr(asset, "href", None) if asset is not None else None
             if href:
                 band_assets[role] = href
+                scale, offset = _raster_band_scale_offset(asset)
+                calibration_source = "stac:raster:bands"
+                if scale is None and spec.reflectance_scale is not None:
+                    scale, offset = spec.reflectance_scale, spec.reflectance_offset
+                    calibration_source = f"source_spec:{spec.collection}"
+                if scale is not None and offset is not None:
+                    band_calibration[role] = {"scale": scale, "offset": offset,
+                        "source": calibration_source, "quantity": "surface_reflectance"}
                 if spec.requires_sas:
                     extra = getattr(asset, "extra_fields", {}) or {}
                     account = extra.get("msft:storage_account")
@@ -145,6 +190,19 @@ def record_from_item(spec: SourceSpec, item: Any) -> SceneRecord | None:
     if len(bbox) != 4:
         return None
 
+    quality_type, quality_key = ("sentinel2_scl", "scl") if spec.collection == "sentinel-2-c1-l2a" else ("landsat_c2_qa_pixel", "qa_pixel")
+    quality_assets: dict[str, str] = {}
+    quality_sign_info: dict[str, tuple[str, str]] = {}
+    quality_asset = assets.get(quality_key)
+    quality_href = getattr(quality_asset, "href", None)
+    if quality_href:
+        quality_assets[quality_type] = quality_href
+        if spec.requires_sas:
+            extra = getattr(quality_asset, "extra_fields", {}) or {}
+            target = (extra.get("msft:storage_account"), extra.get("msft:container"))
+            quality_sign_info[quality_type] = target if all(target) else (_sign_target_from_href(quality_href) or ("", ""))
+    common_parameters = {(c["scale"], c["offset"]) for c in band_calibration.values()}
+    common = next(iter(common_parameters)) if len(common_parameters) == 1 and len(band_calibration) == len(band_assets) else (None, None)
     return SceneRecord(
         key=scene_key(spec.source_id, item.id),
         source=spec.source_id,
@@ -157,8 +215,12 @@ def record_from_item(spec: SourceSpec, item: Any) -> SceneRecord | None:
         resolution_m=spec.resolution_m,
         band_assets=band_assets,
         display_name=f"{_satellite_label(spec, properties)} {item.id}",
-        reflectance_scale=spec.reflectance_scale,
-        reflectance_offset=spec.reflectance_offset,
+        reflectance_scale=common[0],
+        reflectance_offset=common[1],
+        band_calibration=band_calibration,
+        quality_assets=quality_assets,
+        quality_sign_info=quality_sign_info,
+        reflectance_applied_at_compose=spec.apply_reflectance_at_compose,
         asset_sign_info=sign_info,
     )
 

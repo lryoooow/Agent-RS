@@ -17,36 +17,40 @@
 
 from __future__ import annotations
 
-import asyncio
-import json
 import logging
-import secrets
-import shutil
 import time
 from collections import deque
-from functools import partial
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.api.errors import api_error
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.agent.geocode import forward_geocode
 from app.agent.stac_search import search_scenes
 from app.agent.stac_search.cache import get_scene, put_scenes
-from app.agent.stac_search.raster import SceneRasterError, compose_scene_tif, render_scene_preview
+from app.agent.stac_search.raster import SceneRasterError, render_scene_preview
 from app.agent.stac_search.importer import SceneImportError, import_scene_as_imagery
+from app.agent.stac_search.composition_cache import acquire_composition_lease, acquire_preview_lease, normalize_bbox, prune_compositions
 from app.agent.stac_search.sources import StacSearchError
 from app.api.deps import require_authenticated_user
-from app.api.routes.imagery import _extract_metadata, _file_sha256, _persist_imagery_record
-from app.core.paths import imagery_root, scenes_root
-from app.core.settings import get_settings
 
 logger = logging.getLogger(__name__)
+
+class LeasedSceneResponse(FileResponse):
+    def __init__(self,lease,**kwargs):
+        self.lease=lease
+        super().__init__(lease.path,**kwargs)
+
+    async def __call__(self,scope,receive,send):
+        try:
+            await super().__call__(scope,receive,send)
+        finally:
+            await self.lease.release()
+
 
 router = APIRouter(prefix="/scenes", tags=["scenes"])
 
@@ -58,7 +62,7 @@ _SCENE_KEY_PATTERN = "^[a-f0-9]{12}$"
 _HEAVY_OPS_PER_HOUR = 40
 _HEAVY_WINDOWS: dict[str, deque[float]] = {}
 
-# 每用户场景产物文件数上限（预览 PNG + 合成 TIF 合计），超限删最旧。
+# 每用户完整预览/合成缓存文件数上限；正在下载的缓存由读取租约保护。
 _MAX_SCENE_FILES_PER_USER = 60
 
 
@@ -70,6 +74,21 @@ class SceneSearchRequest(BaseModel):
     cloud_max: float | None = Field(default=None, ge=0, le=100)
     source: Literal["auto", "sentinel2", "landsat"] = "auto"
     limit: int = Field(default=8, ge=1, le=20)
+
+    @field_validator("bbox", mode="before")
+    @classmethod
+    def valid_bbox(cls, value):
+        return normalize_bbox(value)
+
+
+class SceneImportRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+    bbox: list[float] | None = None
+
+    @field_validator("bbox", mode="before")
+    @classmethod
+    def valid_bbox(cls, value):
+        return normalize_bbox(value)
 
 
 class SceneCard(BaseModel):
@@ -97,39 +116,8 @@ def _scene_card(key: str, *, satellite: str, item_id: str, datetime_: str,
     )
 
 
-def _user_scene_dir(user_id: str, key: str) -> Path:
-    return scenes_root(create=True) / user_id / key
-
-
-def _enforce_scene_file_cap(user_id: str) -> None:
-    user_root = scenes_root(create=True) / user_id
-    if not user_root.exists():
-        return
-    files = sorted(
-        (p for p in user_root.rglob("*") if p.is_file()),
-        key=lambda p: p.stat().st_mtime,
-    )
-    excess = len(files) - _MAX_SCENE_FILES_PER_USER
-    for path in files[: max(0, excess)]:
-        _safe_unlink(path)
-    # 清掉空 key 目录。
-    for child in user_root.iterdir():
-        if child.is_dir() and not any(child.iterdir()):
-            _safe_unlink_dir(child)
-
-
-def _safe_unlink(path: Path) -> None:
-    try:
-        path.unlink(missing_ok=True)
-    except OSError:
-        logger.warning("Failed to remove scene artifact: %s", path, exc_info=True)
-
-
-def _safe_unlink_dir(path: Path) -> None:
-    try:
-        path.rmdir()
-    except OSError:
-        pass
+def _enforce_scene_file_cap(user_id: str, *, protected: Path | None = None) -> None:
+    prune_compositions(user_id, protected=protected, max_files=_MAX_SCENE_FILES_PER_USER)
 
 
 def _require_heavy_quota(user_id: str) -> None:
@@ -201,55 +189,66 @@ async def scene_preview(
     user_id: str = Depends(require_authenticated_user),
 ) -> FileResponse:
     record = _get_record_or_404(user_id, key)
-    out = _user_scene_dir(user_id, key) / "preview.png"
     try:
-        # 远程 COG 读取是同步阻塞（GDAL），放线程池避免卡事件循环。
-        await asyncio.to_thread(render_scene_preview, record, out)
+        lease = await acquire_preview_lease(record, user_id, renderer=render_scene_preview)
     except SceneRasterError as exc:
         logger.warning("场景预览生成失败 key=%s：%s", key, exc)
         raise api_error(502, "SCENE_RASTER_FAILED", "影像预览生成失败，请稍后重试。") from exc
-    return FileResponse(out, media_type="image/png")
+    try:
+        _enforce_scene_file_cap(user_id, protected=lease.path.parent)
+        return LeasedSceneResponse(lease, media_type="image/png")
+    except BaseException:
+        await lease.release()
+        raise
+
 
 
 @router.get("/{key}/download")
 async def scene_download(
     key: str,
-    bbox: list[float] | None = Query(default=None),
+    bbox: Annotated[list[float] | None, Query()] = None,
     user_id: str = Depends(require_authenticated_user),
 ) -> FileResponse:
     record = _get_record_or_404(user_id, key)
-    if bbox is not None and len(bbox) != 4:
-        raise api_error(400, "INVALID_BBOX", "bbox 必须是 [west, south, east, north] 四元组。")
+    try:
+        bbox = normalize_bbox(bbox)
+    except ValueError as exc:
+        raise api_error(400, "INVALID_BBOX", str(exc)) from exc
     _require_heavy_quota(user_id)
+    try:
+        lease = await acquire_composition_lease(record, user_id, bbox)
+    except SceneRasterError as exc:
+        logger.warning("场景合成失败 key=%s：%s", key, exc)
+        raise api_error(502, "SCENE_RASTER_FAILED", "影像合成失败，请稍后查询任务状态。") from exc
+    try:
+        _enforce_scene_file_cap(user_id, protected=lease.path.parent)
+        return LeasedSceneResponse(lease, media_type="image/tiff", filename=f"{record.item_id}.tif")
+    except BaseException:
+        await lease.release()
+        raise
 
-    out = _user_scene_dir(user_id, key) / "scene.tif"
-    if not out.exists():
-        try:
-            await asyncio.to_thread(partial(compose_scene_tif, record, out, bbox=bbox))
-        except SceneRasterError as exc:
-            logger.warning("场景合成失败 key=%s：%s", key, exc)
-            raise api_error(502, "SCENE_RASTER_FAILED", "影像合成失败，请稍后重试。") from exc
-        except FileExistsError:
-            pass
-        _enforce_scene_file_cap(user_id)
-    return FileResponse(
-        out,
-        media_type="image/tiff",
-        filename=f"{record.item_id}.tif",
-        headers={"Content-Disposition": f'attachment; filename="{record.item_id}.tif"'},
-    )
 
 
 @router.post("/{key}/import")
 async def scene_import(
     key: str,
+    request: SceneImportRequest | None = None,
+    bbox: Annotated[list[float] | None, Query()] = None,
     user_id: str = Depends(require_authenticated_user),
 ) -> dict:
     """把场景合成为多波段 GeoTIFF 并注册进影像库（现有分析工具即可使用）。"""
     record = _get_record_or_404(user_id, key)
+    try:
+        normalized = normalize_bbox(bbox)
+        if request is not None and request.bbox is not None:
+            if normalized is not None and normalized != request.bbox:
+                raise ValueError("URL与请求体中的bbox不一致。")
+            normalized = request.bbox
+    except ValueError as exc:
+        raise api_error(400, "INVALID_BBOX", str(exc)) from exc
     _require_heavy_quota(user_id)
     try:
-        result = await import_scene_as_imagery(record, user_id)
+        result = await import_scene_as_imagery(record, user_id, bbox=normalized)
     except SceneImportError as exc:
         logger.warning("场景导入失败 key=%s：%s", key, exc)
         raise api_error(502, "SCENE_IMPORT_FAILED", "场景导入失败，请稍后重试。") from exc

@@ -147,3 +147,51 @@ def test_chunk_document_returns_pieces_with_index() -> None:
 
     assert all(isinstance(p, ChunkPiece) for p in pieces)
     assert [p.index for p in pieces] == list(range(len(pieces)))
+
+
+# ---------------- E0（2026-10-08）：parser → chunker 段落边界贯通 ----------------
+
+
+def test_parser_output_paragraph_boundaries_reach_chunker() -> None:
+    """集成（工作单 E0 验收）：多段落文本经 parser 再进 chunker，段落边界保留。
+
+    历史缺陷：parser._normalize_content 删光空行 → 本模块 _split_to_atoms 的
+    re.split(r"\n{2,}") 永不触发 → 三段正文并成单原子、整篇一块（复现于
+    2026-10-08，chunk_count=1 且块内无 \n\n）。修复后：每段是独立原子，
+    chunk_size 不足以合并时按段落分块。
+    """
+    from app.documents.parser import parse_uploaded_document
+    from app.core.settings import get_settings
+
+    paragraphs = ["甲" * 30 + "段一结束。", "乙" * 30 + "段二结束。", "丙" * 30 + "段三结束。"]
+    data = "\n\n".join(paragraphs).encode("utf-8")
+    parsed = parse_uploaded_document(
+        filename="multi.md", content_type="text/markdown",
+        data=data, title=None, settings=get_settings(),
+    )
+    assert "\n\n" in parsed.content  # 段落边界活着到达 chunker
+
+    pieces = chunk_document(parsed.content, chunk_size=40, chunk_overlap=0, min_chunk_size=1)
+    texts = [piece.text for piece in pieces]
+    assert len(texts) >= 3  # 按段落分块（旧缺陷：1 块）
+    # 每块按空行拆开后都是完整原段落——没有跨段拼接、也没有段内腰斩
+    allowed = set(paragraphs)
+    for text in texts:
+        for part in text.split("\n\n"):
+            assert part in allowed, part
+
+
+def test_parser_blank_run_collapses_before_chunker() -> None:
+    """压缩语义贯通：4 个连续空行进 chunker 也只剩一个（不产生空原子）。"""
+    from app.documents.parser import parse_uploaded_document
+    from app.core.settings import get_settings
+
+    data = "段落甲。\n\n\n\n\n段落乙。".encode("utf-8")
+    parsed = parse_uploaded_document(
+        filename="collapse.md", content_type="text/markdown",
+        data=data, title=None, settings=get_settings(),
+    )
+    assert parsed.content == "段落甲。\n\n段落乙。"
+    pieces = chunk_document(parsed.content, chunk_size=800)
+    assert len(pieces) == 1
+    assert pieces[0].text == "段落甲。\n\n段落乙。"  # 两个原子、无空段混入

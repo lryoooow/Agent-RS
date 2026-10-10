@@ -13,8 +13,8 @@ Environment="HF_HUB_OFFLINE=1"
 Environment="TRANSFORMERS_OFFLINE=1"
 Environment="PYTHONFAULTHANDLER=1"
 Environment="SAM3_LAB_ROOT=/home/LRY/sam3-lab-20260916"
-Environment="SAM3_ALLOWED_ROOT=/home/LRY/Agent-RS/storage/imagery"
-ExecStart=/home/LRY/sam3-lab-20260916/venv/bin/python -m uvicorn ops.sam3_service:app --app-dir /home/LRY/Agent-RS --host 127.0.0.1 --port 18082 --no-access-log
+Environment="SAM3_ALLOWED_ROOT=/home/LRY/Agent-RS-data/imagery"
+ExecStart=/home/LRY/sam3-lab-20260916/venv/bin/python -m uvicorn ops.sam3_service:app --app-dir /home/LRY/Agent-RS-current --host 127.0.0.1 --port 18082 --no-access-log
 Restart=on-failure
 RestartSec=10
 TimeoutStartSec=180

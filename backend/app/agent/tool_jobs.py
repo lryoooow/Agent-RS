@@ -34,8 +34,11 @@ from app.db.repositories.tool_job import (
     mark_job_complete,
     mark_job_failed,
     mark_job_running,
+    mark_job_interrupted,
+    finalize_exhausted_jobs,
 )
 from app.agent.types import ToolRunResult
+from app.core.error_logging import log_exception_diagnostics
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +64,7 @@ async def begin_tool_job(
     arguments: dict[str, Any],
     imagery_id: str | None,
     user_id: str | None,
+    job_id: str | None = None,
 ) -> str | None:
     """登记一条工具任务并转 running，返回 job_id；功能关闭/无库/出错 → None（不影响执行）。
 
@@ -74,15 +78,17 @@ async def begin_tool_job(
         return None
     try:
         async with pool.acquire() as conn:
-            job_id = await create_tool_job(
-                conn,
-                tool_name=tool_name,
-                arguments=arguments,
-                imagery_id=imagery_id or None,
-                user_id=user_id,
-                conversation_id=get_current_conversation_id(),
-            )
-            await mark_job_running(conn, job_id=job_id)
+            async with conn.transaction():
+                job_id = await create_tool_job(
+                    conn,
+                    tool_name=tool_name,
+                    arguments=arguments,
+                    imagery_id=imagery_id or None,
+                    user_id=user_id,
+                    conversation_id=get_current_conversation_id(),
+                    job_id=job_id,
+                )
+                await mark_job_running(conn, job_id=job_id)
         return job_id
     except Exception as exc:
         if not is_missing_schema_error(exc):
@@ -90,7 +96,7 @@ async def begin_tool_job(
         return None
 
 
-async def finish_tool_job(job_id: str | None, result: ToolRunResult) -> None:
+async def finish_tool_job(job_id: str | None, result: ToolRunResult, *, expected_attempt: int = 1) -> None:
     """按 result.error 把任务写 complete/failed 终态。job_id 为 None（未登记）→ noop。
 
     best-effort：写失败只记日志，不影响已产出的工具结果。
@@ -108,16 +114,31 @@ async def finish_tool_job(job_id: str | None, result: ToolRunResult) -> None:
                     job_id=job_id,
                     error_code=str(result.metadata.get("error_code") or "tool_error"),
                     error_message=str(result.error)[:2000],
+                    expected_attempt=expected_attempt,
                 )
             else:
-                await mark_job_complete(conn, job_id=job_id, result=_result_summary(result))
+                await mark_job_complete(conn, job_id=job_id, result=_result_summary(result), expected_attempt=expected_attempt)
     except Exception as exc:
         if not is_missing_schema_error(exc):
             logger.exception("Failed to finish tool job %s", job_id)
 
 
+async def interrupt_tool_job(job_id: str | None, *, outcome_unknown: bool, expected_attempt: int = 1) -> None:
+    if job_id is None:
+        return
+    try:
+        pool = await fetch_optional_pool()
+        if pool is None:
+            return
+        async with pool.acquire() as conn:
+            await mark_job_interrupted(conn, job_id=job_id, outcome_unknown=outcome_unknown, expected_attempt=expected_attempt)
+    except Exception as exc:
+        if not is_missing_schema_error(exc):
+            logger.exception("Failed to record interrupted tool job %s", job_id)
+
+
 # ───────────────────────── 执行期心跳（防活跃长任务被误判孤儿）─────────────────────────
-async def _heartbeat_loop(job_id: str, interval: float) -> None:
+async def _heartbeat_loop(job_id: str, interval: float, expected_attempt: int) -> None:
     """周期刷新 running 任务心跳，直到被取消。best-effort：单次失败只记日志不中断循环。"""
     while True:
         await asyncio.sleep(interval)
@@ -126,14 +147,14 @@ async def _heartbeat_loop(job_id: str, interval: float) -> None:
             continue
         try:
             async with pool.acquire() as conn:
-                await heartbeat_job(conn, job_id=job_id)
+                await heartbeat_job(conn, job_id=job_id, expected_attempt=expected_attempt)
         except Exception as exc:
             if not is_missing_schema_error(exc):
                 logger.exception("Failed to heartbeat tool job %s", job_id)
 
 
 @asynccontextmanager
-async def heartbeat_tool_job(job_id: str | None) -> AsyncIterator[None]:
+async def heartbeat_tool_job(job_id: str | None, *, expected_attempt: int = 1) -> AsyncIterator[None]:
     """执行期心跳：进入时起后台心跳协程，退出时停。
 
     根因修复（#1）：同步执行只在 begin 时写一次 heartbeat_at，长任务（detect/segment、
@@ -148,7 +169,7 @@ async def heartbeat_tool_job(job_id: str | None) -> AsyncIterator[None]:
         yield
         return
     interval = max(5, get_settings().tool_jobs_stale_after_seconds // 3)
-    task = asyncio.create_task(_heartbeat_loop(job_id, interval))
+    task = asyncio.create_task(_heartbeat_loop(job_id, interval, expected_attempt))
     try:
         yield
     finally:
@@ -163,8 +184,8 @@ async def heartbeat_tool_job(job_id: str | None) -> AsyncIterator[None]:
 async def recover_one_stale_job() -> str | None:
     """领取并重跑一个孤儿 job，返回被处理的 job_id；无可领任务返回 None。
 
-    幂等重跑：遥感工具同输入同输出、结果覆盖写，重跑无副作用。
-    重跑经 ToolChildAgent → runner → call_tool，自动受 docker 并发总闸约束（不再自包信号量）。
+    只有注册表显式声明可安全重放的工具才允许恢复。其余记录取消/结果未知，
+    不把文件覆盖或重复检索当作无副作用。
     在此把 child 自身的 begin/finish 旁路掉——claim 已把 job 置 running 并 attempts+1，
     故直接调 runner 并由本函数写终态，避免重复登记新 job。
     """
@@ -174,6 +195,7 @@ async def recover_one_stale_job() -> str | None:
     settings = get_settings()
     try:
         async with pool.acquire() as conn:
+            await finalize_exhausted_jobs(conn, stale_after_seconds=settings.tool_jobs_stale_after_seconds)
             job = await claim_stale_job(conn, stale_after_seconds=settings.tool_jobs_stale_after_seconds)
     except Exception as exc:
         if not is_missing_schema_error(exc):
@@ -183,9 +205,20 @@ async def recover_one_stale_job() -> str | None:
         return None
 
     job_id = job["id"]
+    from app.agent.tool_registry import get_tool
+    tool = get_tool(job["tool_name"])
+    if tool is not None and getattr(tool, "recovery_policy", "never") != "idempotent":
+        await interrupt_tool_job(job_id, outcome_unknown=job.get("previous_status") != "pending", expected_attempt=job["attempts"])
+        return job_id
     # 执行期心跳：worker 重跑同样可能是长任务，全程刷新心跳，避免被另一 worker/下一轮误判孤儿重领。
-    async with heartbeat_tool_job(job_id):
-        result = await _rerun_job(job)
+    try:
+        async with heartbeat_tool_job(job_id, expected_attempt=job["attempts"]):
+            result = await _rerun_job(job)
+    except asyncio.CancelledError:
+        # Reuse the bounded cancellation writer used by normal execution.
+        from app.agent.tool_execution import _finalize_interrupted
+        await _finalize_interrupted(job_id, outcome_unknown=True, expected_attempt=job["attempts"])
+        raise
     # 写终态：成功 complete；失败则——还有重试余量留 failed（下轮心跳超时不会重领，
     # 因 failed 不在 claim 的 status 集合）……但需求是"重试到上限"。故失败且未到上限 → 置回 pending 待重领；
     # 到上限 → failed 终态。
@@ -195,17 +228,22 @@ async def recover_one_stale_job() -> str | None:
     try:
         async with pool2.acquire() as conn:
             if not result.error:
-                await mark_job_complete(conn, job_id=job_id, result=_result_summary(result))
-            elif job["attempts"] >= job["max_attempts"]:
+                await mark_job_complete(conn, job_id=job_id, result=_result_summary(result), expected_attempt=job["attempts"])
+            elif job["attempts"] >= job["max_attempts"] or result.metadata.get("retryable") is not True:
                 await mark_job_failed(
                     conn,
                     job_id=job_id,
                     error_code=str(result.metadata.get("error_code") or "tool_error"),
                     error_message=str(result.error)[:2000],
+                    expected_attempt=job["attempts"],
                 )
             else:
                 # 还有重试余量：置回 pending，下一轮 worker 再领（attempts 已在 claim 时累加）。
-                await _requeue_job(conn, job_id=job_id)
+                await _requeue_job(conn, job_id=job_id, expected_attempt=job["attempts"])
+    except asyncio.CancelledError:
+        from app.agent.tool_execution import _finalize_interrupted
+        await _finalize_interrupted(job_id, result=result, expected_attempt=job["attempts"])
+        raise
     except Exception as exc:
         if not is_missing_schema_error(exc):
             logger.exception("Failed to finalize recovered tool job %s", job_id)
@@ -224,7 +262,7 @@ async def _rerun_job(job: dict[str, Any]) -> ToolRunResult:
     无效 tool_name/参数/越权 → 直接返回失败 result（不进死循环）。
     """
     from app.agent.tool_execution import PrepareRejected, prepare_tool_call
-    from app.agent.tools.staging import stage_imagery
+    from app.agent.tools.staging import ArtifactPublicationError, ImageryStagingError, stage_imagery
     from app.auth import get_current_conversation_id, set_current_conversation_id, user_scope
 
     user_id = job.get("user_id")
@@ -242,22 +280,36 @@ async def _rerun_job(job: dict[str, Any]) -> ToolRunResult:
             )
             if isinstance(prepared, PrepareRejected):
                 return prepared.result
+            if getattr(prepared.tool, "recovery_policy", "never") != "idempotent":
+                return ToolRunResult(tool_context="此工具不允许自动重放。", error="recovery_not_permitted", metadata={"error_code": "recovery_not_permitted"})
             try:
-                if prepared.imagery_id:
-                    async with stage_imagery(prepared.imagery_id):
+                if prepared.imagery_id and prepared.name != "generate_report":
+                    async with stage_imagery(prepared.imagery_id, user_id=prepared.user_id):
                         return await prepared.tool.runner(prepared.arguments)
                 return await prepared.tool.runner(prepared.arguments)
             except Exception as exc:
+                storage_failed = isinstance(exc, (ArtifactPublicationError, ImageryStagingError))
+                fingerprint = log_exception_diagnostics(
+                    logger,
+                    "tool.recovery_runner_exception",
+                    exc,
+                    job_id=job.get("id", "unknown"),
+                    tool=job.get("tool_name", "unknown"),
+                )
                 return ToolRunResult(
-                    tool_context="工具重跑失败。",
-                    error=str(exc),
-                    metadata={"error_code": "tool_runner_exception"},
+                    tool_context=f"工具重跑失败。诊断编号：{fingerprint}",
+                    error=str(exc) if storage_failed else "工具恢复执行时发生未处理异常。",
+                    metadata={
+                        "error_code": exc.code if storage_failed else "tool_runner_exception",
+                        "diagnostic_id": fingerprint,
+                        "exception_type": type(exc).__name__,
+                    },
                 )
         finally:
             set_current_conversation_id(prev_conv)
 
 
-async def _requeue_job(conn, *, job_id: str) -> None:
+async def _requeue_job(conn, *, job_id: str, expected_attempt: int) -> None:
     # P2-9：把 heartbeat_at 置到 now()+backoff，配合 claim 对 pending 也判 heartbeat_at，
     # 让失败 job 退避一个窗口再被重领——否则一个 poll cycle 内会连跑到 max_attempts 次 docker。
     backoff = get_settings().tool_jobs_requeue_backoff_seconds
@@ -267,10 +319,11 @@ async def _requeue_job(conn, *, job_id: str) -> None:
         SET status = 'pending',
             heartbeat_at = now() + make_interval(secs => $2),
             updated_at = now()
-        WHERE id = $1::uuid
+        WHERE id = $1::uuid AND status = 'running' AND attempts = $3
         """,
         job_id,
         backoff,
+        expected_attempt,
     )
 
 

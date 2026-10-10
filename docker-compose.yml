@@ -3,11 +3,11 @@
 #   docker compose up -d db         # 只起库（默认 STORAGE_BACKEND=local，影像落本地盘）
 #   docker compose up -d db minio   # 起库 + 对象存储（STORAGE_BACKEND=minio 时需要）
 #   docker compose down             # 停服务（保留数据卷）
-#   docker compose down -v          # 停服务并清空数据卷
+#   Never remove data volumes to rotate credentials.
 #
 # 连接串（已对齐 backend/.env.example 的默认）：
-#   PG:    postgresql://agent_rs:agent_rs_local@127.0.0.1:5432/agent_rs
-#   MinIO: endpoint 127.0.0.1:9000，控制台 http://127.0.0.1:9001（agent_rs / agent_rs_local）
+#   PG credentials: AGENT_RS_DB_PASSWORD; keep backend DATABASE_URL synchronized.
+#   MinIO: loopback :9000/:9001, AGENT_RS_MINIO_PASSWORD; keep MINIO_SECRET_KEY synchronized.
 #
 # 注意：5432 是本机 PostgreSQL 标准端口；若宿主机已装有本地 PG 占用 5432，
 # 请改回非冲突端口（如 15432:5432）并同步调整 backend/.env 的 DATABASE_URL。
@@ -20,10 +20,10 @@ services:
     container_name: agent_rs_pg
     environment:
       POSTGRES_USER: agent_rs
-      POSTGRES_PASSWORD: agent_rs_local
+      POSTGRES_PASSWORD: ${AGENT_RS_DB_PASSWORD:?Set AGENT_RS_DB_PASSWORD in the private root .env or environment}
       POSTGRES_DB: agent_rs
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - agent_rs_pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -41,10 +41,10 @@ services:
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: agent_rs
-      MINIO_ROOT_PASSWORD: agent_rs_local
+      MINIO_ROOT_PASSWORD: ${AGENT_RS_MINIO_PASSWORD:?Set AGENT_RS_MINIO_PASSWORD in the private root .env or environment}
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
     volumes:
       - agent_rs_minio:/data
     healthcheck:

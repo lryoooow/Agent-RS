@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 import logging
 import time
 import uuid
+from urllib.parse import urlsplit, unquote
 
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
@@ -18,8 +19,10 @@ from app.agent.persistence import drain_persistence_tasks
 from app.agent.tool_jobs import start_tool_job_worker, stop_tool_job_worker
 from app.auth import get_current_user_id, reset_current_user_id, set_current_user_id
 from app.auth.session import AuthSessionUnavailable, get_session_user
+from app.auth.security import is_secure_auth_secret
 from app.db.pool import close_db_pool, fetch_optional_pool, init_db_pool
 from app.documents.task_registry import recover_document_jobs, shutdown_tasks
+from app.middleware.request_size import RequestBodyLimitMiddleware
 from app.core.logging import configure_logging
 from app.core.settings import get_settings
 
@@ -28,6 +31,8 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    settings = get_settings()
+    _verify_auth_configuration(settings)
     await init_db_pool()
     await _verify_database_connection()
     await _ensure_object_storage_ready()
@@ -35,7 +40,6 @@ async def lifespan(_: FastAPI):
     start_tool_job_worker()
     from app.knowledge.service import start_worker as start_knowledge_worker
     start_knowledge_worker()
-    settings = get_settings()
     _warn_missing_ai_credentials(settings)
     embedding_service = get_embedding_service()
     if settings.storage_active and embedding_service.available:
@@ -48,8 +52,38 @@ async def lifespan(_: FastAPI):
         await stop_tool_job_worker()
         await shutdown_tasks()
         await drain_persistence_tasks()  # O1: 排空 embedding/memory 后台任务（须在关池前）
+        from app.services.satellite_catalog import close_catalog
+        await close_catalog()
         await aclose_geocode_client()  # O5: 关闭模块全局 httpx 客户端
         await close_db_pool()
+
+
+def _verify_auth_configuration(settings) -> None:
+    if getattr(settings, "deployment_environment", "development") == "production":
+        if not settings.auth_required:
+            raise RuntimeError("Production requires authentication and PostgreSQL persistence.")
+        password=unquote(urlsplit(settings.database_url).password or "")
+        weak={"", "agent_rs_local", "postgres", "password", "changeme"}
+        if password.lower() in weak:
+            raise RuntimeError("Production database credentials must not use an example password.")
+        if settings.storage_backend == "minio" and settings.minio_secret_key.lower() in weak:
+            raise RuntimeError("Production object storage credentials must not use an example password.")
+    if settings.auth_enabled and not is_secure_auth_secret(settings.auth_secret_key):
+        raise RuntimeError(
+            "AUTH_ENABLED=true requires a non-default AUTH_SECRET_KEY of at least 32 characters."
+        )
+
+
+def _csp_connect_sources(settings) -> str:
+    sources = ["'self'"]
+    for origin in settings.cors_origin_list:
+        parsed = urlsplit(origin)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            continue
+        source = f"{parsed.scheme}://{parsed.netloc}"
+        if source not in sources:
+            sources.append(source)
+    return " ".join(sources)
 
 
 def _warn_missing_ai_credentials(settings) -> None:
@@ -110,12 +144,13 @@ def create_app() -> FastAPI:
     configure_logging()
     app = FastAPI(title="Agent-RS API", version="0.1.0", lifespan=lifespan)
 
+    app.add_middleware(RequestBodyLimitMiddleware, settings=settings)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origin_list,
         allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=["Accept", "Content-Type", "X-Request-ID"],
     )
 
     app.include_router(api_router, prefix="/api")
@@ -127,21 +162,6 @@ def create_app() -> FastAPI:
         # request_id 关联；替代 uvicorn 噪声 access log 的关键信息。
         request_id = request.headers.get("x-request-id") or uuid.uuid4().hex[:16]
         started = time.perf_counter()
-        content_type = request.headers.get("content-type", "")
-        content_length = request.headers.get("content-length")
-        try:
-            request_size = int(content_length) if content_length else 0
-        except ValueError:
-            request_size = 0
-        if (
-            request_size
-            and "multipart/form-data" not in content_type
-            and request_size > settings.max_json_body_bytes
-        ):
-            return JSONResponse(
-                status_code=413,
-                content={"error": {"code": "REQUEST_TOO_LARGE", "message": "Request body is too large."}},
-            )
         # Read the old cookie name during the Agent-RS rename migration.
         session_token = request.cookies.get(settings.auth_session_cookie_name) or request.cookies.get("chatbot_session")
         try:
@@ -169,7 +189,7 @@ def create_app() -> FastAPI:
                 "img-src 'self' data: blob:; "
                 "style-src 'self' 'unsafe-inline'; "
                 "script-src 'self'; "
-                "connect-src 'self' http://localhost:3000 http://127.0.0.1:3000; "
+                f"connect-src {_csp_connect_sources(settings)}; "
                 "worker-src 'self' blob:; "
                 "object-src 'none'; "
                 "base-uri 'self'; "
@@ -215,12 +235,10 @@ def create_app() -> FastAPI:
                 "error": {
                     "code": "VALIDATION_ERROR",
                     "message": "Invalid request payload.",
-                    # ctx 里可能带 ValueError 等异常对象（model_validator 抛出），
-                    # 直接 json 序列化会 500；统一字符串化。
+                    # Return field locations, not rejected payloads: input may contain
+                    # NaN/Inf (not JSON serializable) or a user's provider credentials.
                     "details": [
-                        {**error, "ctx": {k: str(v) for k, v in error.get("ctx", {}).items()}}
-                        if error.get("ctx")
-                        else error
+                        {"type": error["type"], "loc": list(error["loc"]), "msg": error["msg"]}
                         for error in exc.errors()
                     ],
                 }

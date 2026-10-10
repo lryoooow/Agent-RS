@@ -75,6 +75,8 @@ async def complete_turn(
     state = BridgeState()
     emit_context_assembled(trace=trace, state=state)
     turn_input = await build_turn_input(request, user_id=user_id)
+    if trace.events:
+        trace.events[-1].metadata.update(turn_input.context_metadata)
 
     with tavily_key_scope(request.tavily_api_key()):
         result = await run_turn(
@@ -114,7 +116,7 @@ async def stream_turn_events(
 
     调用方没跑完就把这个生成器丢掉（前端断连时 FastAPI 就是这么做的），
     GeneratorExit 会打到当前 yield 点。此时必须**显式**关闭底层的编排流，
-    触发 `orchestrator._abandon` 去喊停团队；否则那条链路会继续一步一步往下跑，
+    触发编排层取消本回合；否则那条链路会继续一步一步往下跑，
     用户已经走了还在烧 GPU。
 
     这里显式 `aclose()` 而不是靠 asyncio 的异步生成器终结器，是为了让收尾**确定性地**
@@ -131,6 +133,8 @@ async def stream_turn_events(
 
     yield "status", emit_context_assembled(trace=trace, state=state)
     turn_input = await build_turn_input(request, user_id=user_id)
+    if trace.events:
+        trace.events[-1].metadata.update(turn_input.context_metadata)
 
     seen_geospatial = False
     sanitizer = AnswerStreamSanitizer()
@@ -213,8 +217,7 @@ async def stream_turn_events(
             for event in translate(item, trace=trace, state=state):
                 yield "status", event
     finally:
-        # 正常跑完时这是个 no-op（生成器已耗尽）；断连时它触发 orchestrator._abandon，
-        # 让团队停在下一个消息边界，不再启动后续步骤。
+        # 正常结束是 no-op；提前关闭时取消本回合并关闭源流，不推进后续步骤。
         try:
             await turns.aclose()
         finally:

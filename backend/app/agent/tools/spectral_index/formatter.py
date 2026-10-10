@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.agent.tools.common import format_spectral_provenance
+
 from typing import Any
 
 
@@ -28,6 +30,7 @@ def format_spectral_index_context(imagery_id: str, index_type: str, stats: dict[
             f"- 平均值: {stats.get('mean')}",
             f"- 标准差: {stats.get('std')}",
             f"- NoData 占比: {stats.get('nodata_pct', 0.0)}%",
+            *format_spectral_provenance(stats),
             "解读边界: 该结果用于单景影像内部相对分析；跨时相定量对比需要确认辐射校正和波段一致性。",
         ]
     )

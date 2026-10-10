@@ -1,4 +1,24 @@
-export function readErrorMessage(payload: unknown) {
+function readable(value: unknown): string | null {
+  if (typeof value === "string") return value.trim() || null;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (Array.isArray(value)) {
+    const parts = value.map(readable).filter((part): part is string => Boolean(part));
+    return parts.length > 0 ? parts.join("；") : null;
+  }
+  if (value && typeof value === "object") {
+    const candidate = value as Record<string, unknown>;
+    const nested = readable(candidate.message) ?? readable(candidate.msg) ?? readable(candidate.detail);
+    if (nested) return nested;
+    try {
+      return JSON.stringify(candidate);
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+export function readErrorMessage(payload: unknown): string | null {
   if (
     payload &&
     typeof payload === "object" &&
@@ -7,7 +27,7 @@ export function readErrorMessage(payload: unknown) {
     typeof payload.error === "object" &&
     "message" in payload.error
   ) {
-    return String(payload.error.message);
+    return readable(payload.error.message);
   }
   if (
     payload &&
@@ -17,7 +37,10 @@ export function readErrorMessage(payload: unknown) {
     typeof payload.detail === "object" &&
     "message" in payload.detail
   ) {
-    return String(payload.detail.message);
+    return readable(payload.detail.message);
   }
-  return null;
+  if (payload && typeof payload === "object" && "detail" in payload) {
+    return readable(payload.detail);
+  }
+  return readable(payload);
 }

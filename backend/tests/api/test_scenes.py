@@ -164,6 +164,10 @@ def test_preview_download_and_import_roundtrip(monkeypatch, record, tmp_path):
         imagery_id = payload["imagery_id"]
         assert payload["band_roles"] == {"blue": 1, "green": 2, "nir": 3, "red": 4, "swir": 5}
 
+        repeated = client.post(f"/api/scenes/{record.key}/import")
+        assert repeated.status_code == 200, repeated.text
+        assert repeated.json()["imagery_id"] == imagery_id
+
     # 导入产物走上传目录约定，本地 metadata.json 兜底能让清单看到它。
     import json as jsonlib
 

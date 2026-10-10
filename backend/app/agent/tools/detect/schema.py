@@ -13,7 +13,7 @@ class DetectArguments(BaseModel):
 
     @model_validator(mode="after")
     def distinct_bands(self) -> "DetectArguments":
-        bands = [self.red_band, self.green_band, self.blue_band]
+        bands = [getattr(self, name) for name in ("red_band", "green_band", "blue_band") if name in self.model_fields_set]
         if len(set(bands)) != len(bands):
             raise ValueError("RGB 三个波段不能重复")
         return self

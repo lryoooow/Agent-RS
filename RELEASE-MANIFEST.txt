@@ -1,0 +1,16 @@
+Release: 20261010-platform-fixes
+Deployed base: 20261010-audit-release-091728
+Deployed satellite patch: 20261010-satellite-catalog
+SatVis upstream revision: 8e36f03
+Included:
+- account isolation, administrative login and request limits
+- streamed chat context, cancellation and recovery safeguards
+- spectral band semantics, nodata and calibrated index calculations
+- report context, screenshots and artifact downloads
+- official SAM3 inference and Hygon runtime compatibility
+- satellite directory refresh, last-good cache and bundled fallback
+- frontend error recovery, result layers and account-scoped map state
+- platform regression tests, build checks, README and analysis workflow
+Local-only material excluded:
+- unpublished research experiments, datasets and evaluation reports
+- platform architecture diagram and its generation sources

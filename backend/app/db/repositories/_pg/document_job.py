@@ -94,8 +94,8 @@ async def get_ingest_job(conn, *, job_id: str, user_id: str | None = None) -> di
     return dict(row) if row else None
 
 
-async def fail_stale_ingest_jobs(conn) -> None:
-    await conn.execute(
+async def fail_stale_ingest_jobs(conn) -> list[str]:
+    rows = await conn.fetch(
         """
         UPDATE public.document_ingest_jobs
         SET status = 'failed',
@@ -104,5 +104,7 @@ async def fail_stale_ingest_jobs(conn) -> None:
             error_message = 'Document ingest job was interrupted by server restart.',
             updated_at = now()
         WHERE status IN ('pending', 'parsing', 'chunking', 'embedding', 'inserting')
+        RETURNING temp_path
         """
     )
+    return [str(row["temp_path"]) for row in rows if row["temp_path"]]

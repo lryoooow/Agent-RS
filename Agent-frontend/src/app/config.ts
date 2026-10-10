@@ -13,15 +13,48 @@ export function loadConfig(): StoredConfig {
   try {
     const raw =
       window.localStorage.getItem(STORAGE_KEY) ?? window.localStorage.getItem(LEGACY_STORAGE_KEY);
-    return raw ? JSON.parse(raw) : {};
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const safe: StoredConfig = {
+      systemPrompt: typeof parsed.systemPrompt === "string" ? parsed.systemPrompt : undefined,
+      streamEnabled: typeof parsed.streamEnabled === "boolean" ? parsed.streamEnabled : undefined,
+      useRag: typeof parsed.useRag === "boolean" ? parsed.useRag : undefined,
+      model: typeof parsed.model === "string" ? parsed.model : undefined,
+      thinkingStrength:
+        parsed.thinkingStrength === "low" ||
+        parsed.thinkingStrength === "medium" ||
+        parsed.thinkingStrength === "max"
+          ? parsed.thinkingStrength
+          : undefined,
+    };
+    // Rewrite legacy records immediately so provider/search secrets no longer
+    // remain on disk until the next React render.
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(safe));
+    window.localStorage.removeItem(LEGACY_STORAGE_KEY);
+    return safe;
   } catch {
+    try {
+      window.localStorage.removeItem(STORAGE_KEY);
+      window.localStorage.removeItem(LEGACY_STORAGE_KEY);
+    } catch {
+      // Browser privacy mode may make storage unavailable.
+    }
     return {};
   }
 }
 
 export function saveConfig(config: StoredConfig) {
   try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
+    // Persist preferences only. Credentials live in React memory for this page
+    // session and disappear on refresh or browser close.
+    const safe: StoredConfig = {
+      systemPrompt: config.systemPrompt,
+      streamEnabled: config.streamEnabled,
+      useRag: config.useRag,
+      model: config.model,
+      thinkingStrength: config.thinkingStrength,
+    };
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(safe));
     window.localStorage.removeItem(LEGACY_STORAGE_KEY);
   } catch (err) {
     console.warn("Failed to save local config", err);

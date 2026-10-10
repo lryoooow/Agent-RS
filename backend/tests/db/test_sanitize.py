@@ -5,6 +5,14 @@ def test_sanitize_text_removes_nul_and_control_characters() -> None:
     assert sanitize_text("a\x00b\x01\nc\t") == "ab\nc\t"
 
 
+def test_sanitize_text_removes_invisible_and_bidi_spoofing_controls() -> None:
+    assert sanitize_text("safe\u200b\ufeff\u202eevil\u202c") == "safeevil"
+
+
+def test_sanitize_text_preserves_joiners_used_by_languages_and_emoji() -> None:
+    assert sanitize_text("a\u200cb\u200d") == "a\u200cb\u200d"
+
+
 def test_sanitize_json_recursively_cleans_strings() -> None:
     assert sanitize_json(
         {
@@ -36,4 +44,3 @@ def test_parse_jsonb_normalizes_empty_and_non_dict_to_none() -> None:
     assert parse_jsonb("42") is None
     assert parse_jsonb("not json") is None  # 解析失败兜底
     assert parse_jsonb(b'{"k": 1}') == {"k": 1}  # bytes 也支持
-

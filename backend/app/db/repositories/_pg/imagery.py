@@ -30,6 +30,7 @@ async def insert_imagery(
     bands: int | None = None,
     storage_backend: str = "local",
     metadata: dict[str, Any] | None = None,
+    create_only: bool = False,
 ) -> str:
     """写入一条影像归属记录。同 imagery_id 重传：仅当属主一致时覆盖元数据（幂等）；
     属主不一致 → 抛 ImageryOwnershipConflict（绝不转移归属，根因防线 #4）。
@@ -37,15 +38,9 @@ async def insert_imagery(
     实现：ON CONFLICT DO UPDATE ... WHERE owner_user_id = EXCLUDED.owner_user_id。
     WHERE 为假（他人持有）时冲突被当作 no-op，RETURNING 无行 → fetchrow 返 None → 抛冲突。
     owner_user_id 不在 SET 子句里——归属一旦写入即不可变。
+    create_only=True 仅创建新行，任何 ID 冲突均拒绝；MinIO 初次上传用它预约本次归属。
     """
-    row = await conn.fetchrow(
-        """
-        INSERT INTO public.imagery (
-          imagery_id, owner_user_id, workspace_id, filename, sha256,
-          bounds, bands, storage_backend, metadata
-        )
-        VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9::jsonb)
-        ON CONFLICT (imagery_id) DO UPDATE
+    conflict_clause = "DO NOTHING" if create_only else """DO UPDATE
         SET workspace_id = EXCLUDED.workspace_id,
             filename = EXCLUDED.filename,
             sha256 = EXCLUDED.sha256,
@@ -53,7 +48,15 @@ async def insert_imagery(
             bands = EXCLUDED.bands,
             storage_backend = EXCLUDED.storage_backend,
             metadata = EXCLUDED.metadata
-        WHERE public.imagery.owner_user_id = EXCLUDED.owner_user_id
+        WHERE public.imagery.owner_user_id = EXCLUDED.owner_user_id"""
+    row = await conn.fetchrow(
+        f"""
+        INSERT INTO public.imagery (
+          imagery_id, owner_user_id, workspace_id, filename, sha256,
+          bounds, bands, storage_backend, metadata
+        )
+        VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9::jsonb)
+        ON CONFLICT (imagery_id) {conflict_clause}
         RETURNING id::text
         """,
         sanitize_text(imagery_id),
@@ -105,11 +108,14 @@ async def list_imagery(conn, *, owner_user_id: str, limit: int = 200) -> list[di
     return [_row_to_dict(row) for row in rows]
 
 
-async def delete_imagery(conn, *, imagery_id: str, owner_user_id: str) -> bool:
+async def delete_imagery(conn, *, imagery_id: str, owner_user_id: str,
+                         persistence_attempt_id: str | None = None) -> bool:
+    # Upload compensation must not delete a newer row with the same owner/ID.
+    condition = " AND metadata->>'_persistence_attempt_id' = $3" if persistence_attempt_id is not None else ""
+    parameters = (imagery_id, owner_user_id, persistence_attempt_id) if persistence_attempt_id is not None else (imagery_id, owner_user_id)
     result = await conn.execute(
-        "DELETE FROM public.imagery WHERE imagery_id = $1 AND owner_user_id = $2",
-        imagery_id,
-        owner_user_id,
+        "DELETE FROM public.imagery WHERE imagery_id = $1 AND owner_user_id = $2" + condition,
+        *parameters,
     )
     return result.endswith(" 1")
 

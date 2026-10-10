@@ -1,5 +1,5 @@
 ﻿from app.agent.context.budget import estimate_tokens, trim_to_budget
-from app.agent.context.history import build_recent_dialogue_messages
+from app.agent.context.history import build_recent_dialogue_messages, normalize_chat_message_for_provider
 from app.agent.context.types import ContextAssembly, ContextBlock
 from app.schemas.chat import ChatMessage
 
@@ -35,15 +35,23 @@ def assemble_context(
     max_imagery_chars: int | None = None,
     max_document_chars: int | None = None,
     max_geo_chars: int | None = None,
+    auto_history_summary: bool = False,
+    reserve_latest_full: bool = False,
 ) -> ContextAssembly:
+    if auto_history_summary:
+        return _assemble_shared_history(dict(locals()))
     payload = [{"role": "system", "content": system_prompt.strip()}]
-    included_blocks = system_prompt_blocks or ["system"]
+    included_blocks = list(system_prompt_blocks or ["system"])
     dropped_blocks: list[str] = list(dropped_prompt_blocks or [])
     used_tokens = estimate_tokens(system_prompt.strip())
     remaining_tokens = _remaining(max_total_chars, used_tokens)
 
     # 先为最近一条消息（当前用户提问）预留保底预算，可选块只能动用预留之外的额度。
-    reserved = _reserved_latest_tokens(messages)
+    reserved = (estimate_tokens(normalize_chat_message_for_provider(messages[-1])["content"]) if messages and reserve_latest_full
+                else _reserved_latest_tokens(messages))
+    if reserve_latest_full and remaining_tokens is not None and remaining_tokens < reserved:
+        from app.agent.errors import ContextBudgetError
+        raise ContextBudgetError()
     optional_budget = _optional_budget(remaining_tokens, reserved)
 
     # 预算分配按优先级降序（高→低，确保预算紧张时高优先级先保留），
@@ -287,3 +295,56 @@ def _format_block(title: str, boundary: str, content: str | None) -> str:
     if not body:
         return ""
     return f"## {title}\n边界：{boundary}\n\n{body}"
+
+
+def _assemble_shared_history(options: dict) -> ContextAssembly:
+    """Allocate non-history evidence, then make one shared recent/summary split."""
+    from app.agent.context.history import normalize_chat_message_for_provider, select_recent_dialogue_messages
+    from app.agent.context.summarizer import SUMMARY_MAX_ITEMS, _snippet, _role_label
+    original=options["messages"]
+    base_options={**options,"auto_history_summary":False,"reserve_latest_full":True,
+        "messages":original[-1:],"conversation_summary":None,"max_recent_messages":1,"max_recent_chars":None}
+    base=assemble_context(**base_options)
+    if not original: return base
+    latest_tokens=estimate_tokens(normalize_chat_message_for_provider(original[-1])["content"])
+    total=options["max_total_chars"]
+    free=None if not total or total<=0 else max(0,total-base.used_chars)
+    summary_cap=max(0,options["max_summary_chars"]) if options["max_summary_chars"] is not None else 1000
+    summary_slot=summary_cap if free is None else min(summary_cap,free//2)
+    recent_available=None if free is None else latest_tokens+free-summary_slot
+    configured=options["max_recent_chars"]
+    recent_budget=configured if recent_available is None else min(configured or recent_available,recent_available)
+    if recent_budget is not None: recent_budget=max(latest_tokens,recent_budget)
+    normalized=[ChatMessage(**normalize_chat_message_for_provider(item)) for item in original]
+    older,recent,truncated=select_recent_dialogue_messages(normalized,
+        max_messages=options["max_recent_messages"],max_chars=recent_budget)
+    older=original[:len(older)]
+    summary="## 历史对话压缩摘要\n仅列出本轮能容纳的摘要；其余完整记录保存在会话历史中。\n"
+    covered=[]
+    items=[]
+    for index in reversed(range(max(0,len(older)-SUMMARY_MAX_ITEMS),len(older))):
+        item=f"- [历史{index+1}] {_role_label(older[index])}：{_snippet(older[index])}"
+        candidate=summary+"\n".join(reversed(items+[item]))
+        if estimate_tokens(candidate)>summary_slot: continue
+        items.append(item); covered.append(index)
+    payload=base.messages[:-1]
+    included=[name for name in base.included_blocks if name!="recent_dialogue"]
+    dropped=list(base.dropped_blocks)
+    if items:
+        # Preserve the existing relative order of evidence and user preferences.
+        higher_priority=("## 会话额外要求", "## 已上传影像清单", "## 已上传文档清单",
+                         "## 工具结果摘要", "## 本对话已产出的分析结果", "## 地图位置上下文")
+        position=next((i for i,item in enumerate(payload[1:],1)
+                       if item["content"].startswith(higher_priority)),len(payload))
+        payload.insert(position,{"role":"system","content":summary+"\n".join(reversed(items))})
+        included.append("conversation_summary")
+    elif older: dropped.append("conversation_summary:budget_unavailable")
+    payload.extend(normalize_chat_message_for_provider(item) for item in recent)
+    included.append("recent_dialogue")
+    omitted=[index for index in range(len(older)) if index not in covered]
+    if truncated: dropped.append("recent_dialogue:truncated")
+    if omitted: dropped.append(f"history:omitted:{len(omitted)}")
+    return ContextAssembly(messages=payload,included_blocks=included,dropped_blocks=dropped,
+        used_chars=sum(estimate_tokens(item["content"]) for item in payload),history_coverage={
+            "loaded_count":len(original),"recent_start":len(older),"recent_count":len(recent),
+            "summary_indices":sorted(covered),"omitted_indices":omitted,"latest_truncated":False})

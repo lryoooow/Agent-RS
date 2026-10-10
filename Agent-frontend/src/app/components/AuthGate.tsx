@@ -8,6 +8,7 @@ import { Label } from "./ui/label";
 import { Logo } from "./Logo";
 import { fadeInUp, staggerContainer, baseTransition } from "../lib/motion";
 import type { useAuth } from "../hooks/useAuth";
+import { PasswordRules } from "./PasswordRules";
 
 type Auth = ReturnType<typeof useAuth>;
 
@@ -120,7 +121,7 @@ function LoginForm({ auth }: { auth: Auth }) {
       }}
     >
       <Field label="邮箱">
-        <Input value={email} onChange={(e) => setEmail(e.target.value)} type="email" autoComplete="email" className="bg-input-background text-[13px]" />
+        <Input value={email} onChange={(e) => setEmail(e.target.value)} type="text" autoComplete="username" className="bg-input-background text-[13px]" />
       </Field>
       <Field label="密码">
         <Input value={password} onChange={(e) => setPassword(e.target.value)} type="password" autoComplete="current-password" className="bg-input-background text-[13px]" />
@@ -158,6 +159,7 @@ function RegisterForm({ auth }: { auth: Auth }) {
       </Field>
       <Field label="密码">
         <Input value={password} onChange={(e) => setPassword(e.target.value)} type="password" autoComplete="new-password" className="bg-input-background text-[13px]" />
+        <PasswordRules email={email} password={password} />
       </Field>
       {auth.error && <p className="font-mono text-[11px] text-destructive">{auth.error}</p>}
       <Button type="submit" disabled={auth.loading} className="gap-1.5 bg-primary text-primary-foreground hover:bg-primary/90">

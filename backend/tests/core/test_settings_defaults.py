@@ -19,3 +19,19 @@ def test_output_format_module_is_required_in_default_profile() -> None:
     from app.agent.prompting.selector import DEFAULT_PROMPT_PROFILE, PROMPT_PROFILES
 
     assert "output_format_v1" in PROMPT_PROFILES[DEFAULT_PROMPT_PROFILE]
+
+
+def test_context_history_prefetch_is_bounded_but_never_smaller_than_recent_window() -> None:
+    default = Settings(_env_file=None)
+    assert default.context_max_recent_messages == 24
+    assert default.context_max_loaded_messages == 96
+
+    expanded_recent = Settings(_env_file=None, ai_max_history_messages=120)
+    assert expanded_recent.context_max_loaded_messages == 120
+
+    explicit = Settings(
+        _env_file=None,
+        ai_max_history_messages=24,
+        ai_context_max_loaded_messages=40,
+    )
+    assert explicit.context_max_loaded_messages == 40

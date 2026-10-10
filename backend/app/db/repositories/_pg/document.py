@@ -212,16 +212,8 @@ async def fetch_adjacent_chunks(
 
 
 async def delete_document(conn, *, document_id: str, user_id: str) -> bool:
-    await conn.execute(
-        """
-        DELETE FROM public.document_chunks
-        WHERE document_id = (
-          SELECT id FROM public.documents WHERE id = $1::uuid AND created_by_user_id = $2
-        )
-        """,
-        document_id,
-        user_id,
-    )
+    # Chunks have an ON DELETE CASCADE foreign key.  One parent DELETE is both
+    # ownership-aware and atomic, even when the caller adds no transaction.
     result = await conn.execute(
         "DELETE FROM public.documents WHERE id = $1::uuid AND created_by_user_id = $2",
         document_id,

@@ -24,6 +24,7 @@ class TurnInput:
     # 用户是否持有影像。默认 True 是刻意保守：未标注时宁可多跑一次路由，
     # 也不能让快车道静默关掉 GraphFlow 通道（只有 build_turn_input 会如实设置）。
     has_imagery: bool = True
+    context_metadata: dict = field(default_factory=dict)
 
     def context(self) -> BudgetedChatCompletionContext:
         # Every Agent and the group manager need their own mutable context.
@@ -87,10 +88,6 @@ async def build_turn_input(request: ChatRequest, *, user_id: str | None) -> Turn
             for name, tool in TOOLS.items():
                 if "imagery_id" in tool.argument_model.model_fields and name != "generate_report":
                     trusted_tool_arguments[name] = {"imagery_id": active_id}
-                    for role, index in ((meta or {}).get("band_roles") or {}).items():
-                        field_name = role + "_band"
-                        if field_name in tool.argument_model.model_fields:
-                            trusted_tool_arguments[name][field_name] = index
         if meta and request.analysis_roi and request.analysis_roi.kind == "geo" and geo_roi_mismatch(meta.get("bounds"), request.analysis_roi.bbox):
             initial.append(SystemMessage(content="当前框选与选中影像不相交。不能在此影像执行该选区提取；应使用覆盖选区的可用影像或检索新场景。重复提交相同影像和选区不会成功，不要自行改选区。"))
     if request.analysis_roi is not None:
@@ -116,4 +113,6 @@ async def build_turn_input(request: ChatRequest, *, user_id: str | None) -> Turn
         # getattr 而非直接取属性：测试用 SimpleNamespace 伪造 provider；
         # 缺标注时按"可能有影像"处理（与 TurnInput.has_imagery 的保守默认一致）。
         has_imagery=bool(getattr(provider, "has_imagery", True)),
+        context_metadata={"history_coverage":dict(getattr(getattr(provider,"context",None),"history_coverage",{})),
+                          "used_tokens":getattr(getattr(provider,"context",None),"used_chars",None)},
     )

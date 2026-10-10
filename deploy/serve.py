@@ -36,7 +36,9 @@ class FrontendFiles(StaticFiles):
     async def get_response(self, path, scope):
         if path == 'api' or path.startswith('api/') or any(part.startswith('.') for part in Path(path).parts):
             raise HTTPException(status_code=404)
-        is_document = path in ('', '.', 'index.html') or Path(path).suffix.lower() == '.html'
+        request_path = str(scope.get('path') or '').lstrip('/')
+        is_satvis_document = request_path.rstrip('/') == 'satvis' or (request_path.startswith('satvis/') and Path(request_path).suffix.lower() == '.html')
+        is_document = path in ('', '.', 'index.html') or Path(path).suffix.lower() == '.html' or is_satvis_document
         try:
             response = await super().get_response(path, scope)
         except HTTPException as exc:
@@ -45,12 +47,18 @@ class FrontendFiles(StaticFiles):
             response = await super().get_response('index.html', scope)
             is_document = True
         if is_document:
+            # StaticFiles normalizes a directory request such as /satvis/ to '.'
+            # before this method sees `path`. Use the original ASGI request path
+            # so both /satvis/ and /satvis/index.html receive the Cesium policy.
             # Also set these on 304 responses, which have no content-type header,
             # so cached documents do not regain the API's restrictive policy.
-            response.headers['Content-Security-Policy'] = SATVIS_CSP if path.startswith('satvis/') else FRONTEND_CSP
+            response.headers['Content-Security-Policy'] = SATVIS_CSP if is_satvis_document else FRONTEND_CSP
             response.headers['X-Frame-Options'] = 'SAMEORIGIN'
             response.headers['Cache-Control'] = 'no-cache'
         return response
 
 
-app.mount('/', FrontendFiles(directory='/home/LRY/Agent-RS/Agent-frontend/dist', html=True), name='frontend')
+RELEASE_ROOT = Path(__file__).resolve().parents[1]
+FRONTEND_DIRECTORY = RELEASE_ROOT / 'Agent-frontend' / 'dist'
+
+app.mount('/', FrontendFiles(directory=str(FRONTEND_DIRECTORY), html=True), name='frontend')

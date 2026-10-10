@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import sys
 from pathlib import Path
 
@@ -11,14 +12,49 @@ if str(BACKEND_DIR) not in sys.path:
 from app.db.pool import close_db_pool, get_db_pool, init_db_pool
 
 MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"
+_MIGRATION_NAME = re.compile(r"^(\d{4})_.+\.sql$")
+_MIGRATION_LOCK_SQL = "SELECT pg_advisory_lock(hashtext('agent-rs-schema-migrations'))"
+_MIGRATION_UNLOCK_SQL = "SELECT pg_advisory_unlock(hashtext('agent-rs-schema-migrations'))"
+
+
+def migration_paths(directory: Path = MIGRATIONS_DIR) -> list[Path]:
+    """Return a complete, uniquely numbered migration sequence.
+
+    A skipped or duplicate number is treated as a packaging error before any SQL
+    is executed. Reserved numbers must therefore have an explicit no-op migration,
+    making an intentional gap auditable instead of indistinguishable from loss.
+    """
+    paths = sorted(directory.glob("*.sql"))
+    if not paths:
+        raise RuntimeError(f"没有找到数据库迁移文件：{directory}")
+
+    numbers: list[int] = []
+    for path in paths:
+        match = _MIGRATION_NAME.fullmatch(path.name)
+        if match is None:
+            raise RuntimeError(f"迁移文件名不符合 NNNN_name.sql 约定：{path.name}")
+        numbers.append(int(match.group(1)))
+    if len(numbers) != len(set(numbers)):
+        raise RuntimeError("数据库迁移版本号重复。")
+    expected = list(range(numbers[0], numbers[-1] + 1))
+    if numbers != expected:
+        missing = sorted(set(expected) - set(numbers))
+        rendered = ", ".join(f"{number:04d}" for number in missing)
+        raise RuntimeError(f"数据库迁移版本不连续，缺少：{rendered}")
+    return paths
 
 
 async def run_migrations(conn, *, log=print) -> list[str]:
-    """在已有连接上幂等应用所有 migration，返回本次新应用的版本号列表。
+    """Apply all migrations once, serialized across concurrent app instances."""
+    paths = migration_paths()
+    await conn.execute(_MIGRATION_LOCK_SQL)
+    try:
+        return await _run_migrations_locked(conn, paths=paths, log=log)
+    finally:
+        await conn.execute(_MIGRATION_UNLOCK_SQL)
 
-    抽出为独立函数：既供 CLI（apply_migrations）调用，也供启动时 init_db_pool 复用，
-    避免后者再开关一次连接池。已记录到 schema_migrations 的版本跳过，重复调用零副作用。
-    """
+
+async def _run_migrations_locked(conn, *, paths: list[Path], log=print) -> list[str]:
     # Compatibility path for databases created before the Agent-RS rename.
     old_exists = await conn.fetchval(
         "SELECT 1 FROM information_schema.schemata WHERE schema_name = 'chatbot'"
@@ -41,7 +77,7 @@ async def run_migrations(conn, *, log=print) -> list[str]:
     applied = {row["version"] for row in rows}
 
     newly_applied: list[str] = []
-    for path in sorted(MIGRATIONS_DIR.glob("*.sql")):
+    for path in paths:
         version = path.stem
         if version in applied:
             continue

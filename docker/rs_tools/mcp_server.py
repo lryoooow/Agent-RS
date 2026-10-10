@@ -80,12 +80,15 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "cloud_shadow_mask",
-        "description": "Threshold-based cloud/shadow/no-data mask from a multispectral GeoTIFF (coarse quality control, no model).",
+        "description": "Decode sensor QA/SCL flags by default; explicit heuristic returns unvalidated bright/dark candidates, never cloud fractions.",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "input_path": {"type": "string"},
                 "output_dir": {"type": "string"},
+                "method": {"type": "string", "enum": ["quality", "heuristic"], "default": "quality"},
+                "quality_path": {"type": "string", "description": "Backend-owned same-directory quality.tif; never a user path"},
+                "quality_type": {"type": "string", "enum": ["sentinel2_scl", "landsat_c2_qa_pixel"]},
                 "red_band": {"type": "integer", "default": 3},
                 "green_band": {"type": "integer", "default": 2},
                 "blue_band": {"type": "integer", "default": 1},
@@ -97,7 +100,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "extract_water_mask",
-        "description": "Threshold-based water mask via NDWI from a multispectral GeoTIFF (coarse screening, no model).",
+        "description": "Water mask from a multispectral GeoTIFF via physical NDWI threshold (McFeeters, default 0.0; coarse screening, no model).",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -105,6 +108,7 @@ TOOL_DEFINITIONS = [
                 "output_dir": {"type": "string"},
                 "green_band": {"type": "integer", "default": 2},
                 "nir_band": {"type": "integer", "default": 4},
+                "threshold": {"type": "number", "minimum": -1, "maximum": 1, "default": 0.0},
             },
             "required": ["input_path", "output_dir"],
             "additionalProperties": False,

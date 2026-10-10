@@ -84,6 +84,27 @@ async def test_identity_seed_idempotent(pg_conn) -> None:
     assert n == 1
 
 
+async def test_identity_seed_preserves_administrator_deactivation(pg_conn) -> None:
+    settings = _settings()
+    await identity_repo.ensure_default_identity(pg_conn, settings)
+    await pg_conn.execute(
+        "UPDATE agent_rs.users SET is_active = false WHERE id = $1::uuid",
+        settings.default_user_id,
+    )
+
+    await identity_repo.ensure_default_identity(pg_conn, settings)
+
+    assert await pg_conn.fetchval(
+        "SELECT is_active FROM agent_rs.users WHERE id = $1::uuid",
+        settings.default_user_id,
+    ) is False
+    # pg_conn fixture intentionally persists between tests; restore baseline.
+    await pg_conn.execute(
+        "UPDATE agent_rs.users SET is_active = true WHERE id = $1::uuid",
+        settings.default_user_id,
+    )
+
+
 async def test_conversation_message_history(pg_conn) -> None:
     settings = _settings()
     await identity_repo.ensure_default_identity(pg_conn, settings)
@@ -103,6 +124,28 @@ async def test_conversation_message_history(pg_conn) -> None:
         pg_conn, conversation_id=cid, user_id=uid, title="New"
     ) is True
     assert await conv_repo.delete_conversation(pg_conn, conversation_id=cid, user_id=uid) is True
+
+
+async def test_list_conversation_messages_enforces_tenant_in_repository(pg_conn) -> None:
+    settings = _settings()
+    await identity_repo.ensure_default_identity(pg_conn, settings)
+    owner = settings.default_user_id
+    cid = await conv_repo.create_conversation(pg_conn, user_id=owner, settings=settings, title="Private")
+    await msg_repo.append_message(pg_conn, conversation_id=cid, role="user", content="tenant secret")
+
+    mine = await msg_repo.list_conversation_messages(
+        pg_conn,
+        conversation_id=cid,
+        user_id=owner,
+    )
+    foreign = await msg_repo.list_conversation_messages(
+        pg_conn,
+        conversation_id=cid,
+        user_id="00000000-0000-4000-8000-00000000ffff",
+    )
+
+    assert [row["content"] for row in mine] == ["tenant secret"]
+    assert foreign == []
 
 
 async def test_list_recent_messages_enforces_owner_when_user_id_given(pg_conn) -> None:
@@ -226,7 +269,11 @@ async def test_update_message_complete_json_patch(pg_conn) -> None:
     await msg_repo.update_message_complete(
         pg_conn, message_id=mid, content="done", metadata={"b": 2}, tokens_in=5, tokens_out=7
     )
-    rows = await msg_repo.list_conversation_messages(pg_conn, conversation_id=cid)
+    rows = await msg_repo.list_conversation_messages(
+        pg_conn,
+        conversation_id=cid,
+        user_id=settings.default_user_id,
+    )
     msg = rows[0]
     assert msg["content"] == "done"
     assert msg["metadata_json"] == {"a": 1, "b": 2}  # jsonb || 合并
@@ -246,6 +293,14 @@ async def test_delete_conversation_cascades_messages(pg_conn) -> None:
         "SELECT count(*) FROM agent_rs.messages WHERE conversation_id = $1::uuid", cid
     )
     assert before == 2
+    assert await conv_repo.delete_conversation(
+        pg_conn,
+        conversation_id=cid,
+        user_id="00000000-0000-4000-8000-00000000ffff",
+    ) is False
+    assert await pg_conn.fetchval(
+        "SELECT count(*) FROM agent_rs.messages WHERE conversation_id = $1::uuid", cid
+    ) == 2
     assert await conv_repo.delete_conversation(pg_conn, conversation_id=cid, user_id=uid) is True
     after = await pg_conn.fetchval(
         "SELECT count(*) FROM agent_rs.messages WHERE conversation_id = $1::uuid", cid
@@ -293,6 +348,12 @@ async def test_document_crud_and_chunks(pg_conn) -> None:
     chunks = await doc_repo.list_document_chunks(pg_conn, document_id=did, user_id="u1")
     assert [c["chunk_index"] for c in chunks] == [0, 1]
 
+    assert await doc_repo.delete_document(pg_conn, document_id=did, user_id="other") is False
+    assert len(await doc_repo.list_document_chunks(
+        pg_conn,
+        document_id=did,
+        user_id="u1",
+    )) == 2
     assert await doc_repo.delete_document(pg_conn, document_id=did, user_id="u1") is True
     # 级联：chunks 随 document 删除（ON DELETE CASCADE）
     assert await pg_conn.fetchval(
@@ -342,6 +403,23 @@ async def test_document_ingest_job_lifecycle(pg_conn) -> None:
     job = await job_repo.get_ingest_job(pg_conn, job_id=jid, user_id="u1")
     assert job["status"] == "complete" and job["progress"] == 100
     assert await job_repo.get_ingest_job(pg_conn, job_id=jid, user_id="other") is None
+
+
+async def test_fail_stale_ingest_jobs_returns_cleanup_paths(pg_conn) -> None:
+    jid = await job_repo.create_ingest_job(
+        pg_conn,
+        filename="interrupted.pdf",
+        file_size=7,
+        temp_path="/tmp/document-upload-interrupted",
+        user_id="u1",
+    )
+
+    stale_paths = await job_repo.fail_stale_ingest_jobs(pg_conn)
+    job = await job_repo.get_ingest_job(pg_conn, job_id=jid, user_id="u1")
+
+    assert stale_paths == ["/tmp/document-upload-interrupted"]
+    assert job["status"] == "failed"
+    assert job["error_code"] == "JOB_INTERRUPTED"
 
 
 # ============ memory group ============

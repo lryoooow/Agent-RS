@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import numpy as np
 import rasterio
@@ -98,8 +99,10 @@ def compute(
             resampling=resampling_enum,
         )
 
-    output_tif = "clip_reproject.tif"
-    output_png = "clip_reproject_colored.png"
+    # 每次运行的输出带 uuid 后缀，重跑不覆盖历史结果（A6）。
+    run_id = uuid4().hex[:16]
+    output_tif = f"clip_reproject_{run_id}.tif"
+    output_png = f"clip_reproject_{run_id}_colored.png"
     profile.update(
         driver="GTiff",
         height=dst_height,
@@ -130,7 +133,7 @@ def compute(
         "output_tif": output_tif,
         "output_png": output_png,
     }
-    (out / "clip_reproject_stats.json").write_text(json.dumps(stats), encoding="utf-8")
+    (out / f"clip_reproject_{run_id}_stats.json").write_text(json.dumps(stats), encoding="utf-8")
 
     _write_preview_png(destination, nodata, out / output_png, max_dimension)
     return stats

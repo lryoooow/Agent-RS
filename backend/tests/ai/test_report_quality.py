@@ -231,7 +231,7 @@ async def test_report_button_persists_download_card_with_zero_model_usage(pool, 
     with user_scope(owner):
         report = await create_report(ReportCreateRequest(conversation_id=cid, imagery_id=image))
     async with pool.acquire() as conn:
-        messages = await list_conversation_messages(conn, conversation_id=cid)
+        messages = await list_conversation_messages(conn, conversation_id=cid, user_id=owner)
     saved = messages[-1]
     assert saved["role"] == "assistant"
     assert saved["tokens_in"] == saved["tokens_out"] == 0

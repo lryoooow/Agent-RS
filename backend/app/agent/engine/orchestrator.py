@@ -154,9 +154,8 @@ class Orchestration:
 
     - `team`：GraphFlow（Team）或主 Agent（AssistantAgent）。两者的
       run/run_stream 事件形状同构，调用方无需区分。
-    - `stop`：仅 GraphFlow 有——外部终止开关，前端断连时 set() 让团队停在
-      下一个消息边界。主 Agent 没有后续步骤可停，断连后只需后台排空在飞
-      调用并关闭客户端。
+    - `stop`：GraphFlow 的外部终止开关；main 和 graph 同时使用请求取消令牌
+      停止模型调用及工具执行，断连不继续消费后续业务步骤。
     - `model_client`：每回合新建，所以也必须每回合关闭，否则每个请求泄漏一个
       httpx 连接池。
     """
@@ -241,6 +240,9 @@ async def run_turn(
     config: ResolvedAIConfig | None = None,
 ) -> OrchestrationResult:
     """跑完一个回合，返回最终答复与本回合产物。"""
+    token = cancellation_token or CancellationToken()
+    if token.is_cancelled():
+        raise asyncio.CancelledError()
     with user_scope(user_id):
         orchestration = await build_orchestration(
             turn=turn,
@@ -249,15 +251,28 @@ async def run_turn(
             use_memory=use_memory,
             config=config,
         )
+        task = None
+        finished = False
         try:
             with turn_scope(trusted_tool_arguments=turn.trusted_tool_arguments) as state:
-                result: TaskResult = await orchestration.team.run(
+                task = asyncio.create_task(orchestration.team.run(
                     task=TextMessage(content=turn.query, source="user"),
-                    cancellation_token=cancellation_token,
+                    cancellation_token=token,
                     output_task_messages=False,
-                )
+                ))
+                token.link_future(task)
+                # Let our finally signal every participant before a cancelled
+                # caller waits for GraphFlow's runtime to become idle.
+                result: TaskResult = await asyncio.shield(task)
+                finished = True
             return _to_result(result, state, orchestration)
         finally:
+            if not finished:
+                token.cancel()
+                if orchestration.stop is not None:
+                    orchestration.stop.set()
+                if task is not None:
+                    await asyncio.gather(task, return_exceptions=True)
             await _close_quietly(orchestration.model_client)
 
 
@@ -274,8 +289,21 @@ async def stream_turn(
 
     调用方（事件桥）负责把 AutoGen 消息翻译成现有的 SSE 事件。
 
-    调用方没消费完就退出（前端断连）时走 `_abandon`，见那里的说明。
+    调用方提前关闭或取消时，取消本回合并关闭源流，不继续消费业务步骤。
     """
+    token = cancellation_token or CancellationToken()
+    if token.is_cancelled():
+        raise asyncio.CancelledError()
+    reading_task: asyncio.Task | None = None
+    loop = asyncio.get_running_loop()
+
+    def cancel_read() -> None:
+        # A token can be cancelled while AutoGen waits on its tool event queue.
+        # Cancel the active read too; cancelled tools need not enqueue an EOF.
+        if reading_task is not None and not reading_task.done():
+            loop.call_soon_threadsafe(reading_task.cancel)
+
+    token.add_callback(cancel_read)
     with user_scope(user_id):
         orchestration = await build_orchestration(
             turn=turn,
@@ -284,22 +312,36 @@ async def stream_turn(
             use_memory=use_memory,
             config=config,
         )
-        yield OrchestrationMetadata(
-            framework="autogen",
-            strategy=orchestration.route.strategy,
-            flow_name=orchestration.route.flow_name,
-            route_reason=orchestration.route.reason,
-        )
-        stream = orchestration.team.run_stream(
-            task=TextMessage(content=turn.query, source="user"),
-            cancellation_token=cancellation_token,
-            output_task_messages=False,
-        )
+        stream = None
         drained = False
         try:
+            if token.is_cancelled():
+                raise asyncio.CancelledError()
+            yield OrchestrationMetadata(
+                framework="autogen",
+                strategy=orchestration.route.strategy,
+                flow_name=orchestration.route.flow_name,
+                route_reason=orchestration.route.reason,
+            )
+            if token.is_cancelled():
+                raise asyncio.CancelledError()
+            stream = orchestration.team.run_stream(
+                task=TextMessage(content=turn.query, source="user"),
+                cancellation_token=token,
+                output_task_messages=False,
+            )
             with turn_scope(trusted_tool_arguments=turn.trusted_tool_arguments) as state:
                 final: TaskResult | None = None
-                async for item in stream:
+                while True:
+                    if token.is_cancelled():
+                        raise asyncio.CancelledError()
+                    reading_task = asyncio.current_task()
+                    try:
+                        item = await anext(stream)
+                    except StopAsyncIteration:
+                        break
+                    finally:
+                        reading_task = None
                     if isinstance(item, TaskResult):
                         final = item
                     else:
@@ -308,55 +350,15 @@ async def stream_turn(
                 if final is not None:
                     yield _to_result(final, state, orchestration)
         finally:
-            if drained:
+            if not drained:
+                token.cancel()
+                if orchestration.stop is not None:
+                    orchestration.stop.set()
+            try:
+                if stream is not None:
+                    await stream.aclose()
+            finally:
                 await _close_quietly(orchestration.model_client)
-            else:
-                _abandon(stream, orchestration)
-
-
-# 后台排空的兜底上限。正常情况下在飞的那个工具跑完就结束，
-# 取最慢工具（detect/segment 各 300s）再留一点余量。
-_DRAIN_TIMEOUT_SECONDS = 420.0
-
-# 持有后台排空任务的强引用：asyncio 只保存弱引用，不持有的话任务可能被 GC 掉，
-# 收尾逻辑就跑不完了。
-_DRAINS: set[asyncio.Task] = set()
-
-
-def _abandon(stream: AsyncIterator[Any], orchestration: Orchestration) -> None:
-    """调用方提前退出（前端断连）时的收尾。
-
-    GraphFlow 路径用 `ExternalTermination` 喊停后续节点；主 Agent 路径没有
-    "后续步骤"，断连后只需让在飞的工具跑完（它们有自己的超时上限）再关客户端。
-
-    ## 为什么排空要放到后台任务里
-
-    排空要等在飞的工具跑完（可能几分钟）。放在 `finally` 里同步 await，
-    会把生成器的关闭卡住那么久。丢到后台任务，断连立刻返回，收尾自己慢慢做。
-    """
-    if orchestration.stop is not None:
-        orchestration.stop.set()
-
-    async def drain() -> None:
-        try:
-            await asyncio.wait_for(_consume(stream), timeout=_DRAIN_TIMEOUT_SECONDS)
-        except asyncio.TimeoutError:
-            logger.warning(
-                "编排流排空超过 %.0fs 仍未结束，放弃等待", _DRAIN_TIMEOUT_SECONDS
-            )
-        except Exception:
-            logger.debug("编排流排空时出错（调用方已断开，不影响响应）", exc_info=True)
-        finally:
-            await _close_quietly(orchestration.model_client)
-
-    task = asyncio.create_task(drain())
-    _DRAINS.add(task)
-    task.add_done_callback(_DRAINS.discard)
-
-
-async def _consume(stream: AsyncIterator[Any]) -> None:
-    async for _ in stream:
-        pass
 
 
 async def _close_quietly(model_client: ChatCompletionClient) -> None:

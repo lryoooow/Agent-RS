@@ -2,6 +2,9 @@
 from pathlib import Path
 import numpy as np
 
+class RasterPreviewBudgetError(ValueError):
+    pass
+
 def generate_preview(source: Path, output: Path, max_dimension: int) -> None:
     import rasterio
     from rasterio.enums import Resampling
@@ -9,10 +12,16 @@ def generate_preview(source: Path, output: Path, max_dimension: int) -> None:
     from app.services.raster_semantics import band_semantics
     meta = band_semantics(source)
     roles = meta.get('band_roles') or {}
-    with rasterio.open(source) as src:
+    from app.core.settings import get_settings
+    with rasterio.Env(GDAL_CACHEMAX=32*1024*1024), rasterio.open(source) as src:
         factor = min(1.0, max_dimension / max(src.width,src.height))
         shape = (max(1,round(src.height*factor)), max(1,round(src.width*factor)))
         bands = [roles[r] for r in ('red','green','blue')] if all(r in roles for r in ('red','green','blue')) else [1]
+        # Account for masks, float conversion, stretching, and the RGBA encoder.
+        itemsize=max(np.dtype(src.dtypes[i-1]).itemsize for i in bands)
+        estimated=shape[0]*shape[1]*(len(bands)*(itemsize+1)+48)+32*1024*1024
+        if estimated > get_settings().imagery_preprocess_max_bytes:
+            raise RasterPreviewBudgetError("Raster preview exceeds its memory budget.")
         raw = src.read(bands,out_shape=(len(bands),*shape),masked=True,resampling=Resampling.bilinear)
         data = raw.astype('float32').filled(np.nan)
         valid = np.isfinite(data).all(axis=0)

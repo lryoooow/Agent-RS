@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import shutil
+import threading
 from pathlib import Path
 from typing import AsyncIterator, Protocol
 
@@ -40,6 +41,10 @@ class ObjectStore(Protocol):
 
     async def open_stream(self, key: str) -> AsyncIterator[bytes]:
         """以分块字节流读取 key（读端点代理流式用）。key 不存在抛 FileNotFoundError。"""
+        ...
+
+    async def delete_keys(self, keys: list[str]) -> None:
+        """Delete only the explicitly named objects (upload compensation)."""
         ...
 
     async def delete_prefix(self, key_prefix: str) -> None:
@@ -98,7 +103,8 @@ class LocalFileSystemStore:
         await asyncio.to_thread(shutil.copyfile, str(src), str(dest))
 
     async def exists(self, key: str) -> bool:
-        return await asyncio.to_thread(self._abs(key).exists)
+        # 路径解析和 exists 都可能触发文件系统访问，一并移入工作线程。
+        return await asyncio.to_thread(lambda: self._abs(key).exists())
 
     async def open_stream(self, key: str) -> AsyncIterator[bytes]:
         src = self._abs(key)
@@ -118,6 +124,13 @@ class LocalFileSystemStore:
                 await asyncio.to_thread(handle.close)
 
         return _iter()
+
+    async def delete_keys(self, keys: list[str]) -> None:
+        paths = [self._abs(key) for key in keys]
+        def _delete():
+            for path in paths:
+                path.unlink(missing_ok=True)
+        await asyncio.to_thread(_delete)
 
     async def delete_prefix(self, key_prefix: str) -> None:
         target = self._abs(key_prefix)
@@ -153,17 +166,21 @@ class MinioStore:
         self._secret_key = settings.minio_secret_key
         self._secure = settings.minio_secure
         self._client = None
+        self._client_lock = threading.Lock()
 
     def _get_client(self):
-        if self._client is None:
-            from minio import Minio
+        if self._client is not None:
+            return self._client
+        with self._client_lock:
+            if self._client is None:
+                from minio import Minio
 
-            self._client = Minio(
-                self._endpoint,
-                access_key=self._access_key,
-                secret_key=self._secret_key,
-                secure=self._secure,
-            )
+                self._client = Minio(
+                    self._endpoint,
+                    access_key=self._access_key,
+                    secret_key=self._secret_key,
+                    secure=self._secure,
+                )
         return self._client
 
     async def ensure_bucket(self) -> None:
@@ -230,15 +247,41 @@ class MinioStore:
 
         return _iter()
 
+    async def delete_keys(self, keys: list[str]) -> None:
+        def _delete():
+            client = self._get_client()
+            failed = 0
+            for key in dict.fromkeys(keys):
+                try:
+                    client.remove_object(self._bucket, key)
+                except Exception:
+                    failed += 1
+            if failed:
+                raise RuntimeError(f"MinIO deletion failed for {failed} object(s)")
+        await asyncio.to_thread(_delete)
+
     async def delete_prefix(self, key_prefix: str) -> None:
         def _delete() -> None:
             client = self._get_client()
-            # 列出前缀下全部对象逐个删；recursive 列出所有层级。
+            # remove_objects 会按 S3 Multi-Delete 协议自动分批（每批最多 1000），
+            # 避免旧实现对每个小文件各发一次 HTTP 请求。
             objects = client.list_objects(self._bucket, prefix=f"{key_prefix}/", recursive=True)
-            for obj in objects:
-                client.remove_object(self._bucket, obj.object_name)
+            errors = client.remove_objects(
+                self._bucket,
+                (self._delete_object(obj.object_name) for obj in objects),
+            )
+            failed = sum(1 for _ in errors)
+            if failed:
+                raise RuntimeError(f"MinIO batch deletion failed for {failed} object(s)")
 
         await asyncio.to_thread(_delete)
+
+    @staticmethod
+    def _delete_object(object_name: str):
+        # 可选依赖继续保持懒加载；local 后端不安装 minio 也能启动。
+        from minio.deleteobjects import DeleteObject
+
+        return DeleteObject(object_name)
 
     async def list_keys(self, key_prefix: str) -> list[str]:
         def _list() -> list[str]:
@@ -250,40 +293,52 @@ class MinioStore:
 
 
 _store: ObjectStore | None = None
+_store_backend: str | None = None
+_stores_by_backend: dict[str, ObjectStore] = {}
+_store_lock = threading.Lock()
+
+
+def _normalized_backend(backend: str | None) -> str:
+    return "minio" if (backend or "local").strip().lower() == "minio" else "local"
+
+
+def _get_or_create_store(backend: str) -> ObjectStore:
+    normalized = _normalized_backend(backend)
+    with _store_lock:
+        store = _stores_by_backend.get(normalized)
+        if store is None:
+            store = MinioStore() if normalized == "minio" else LocalFileSystemStore()
+            _stores_by_backend[normalized] = store
+        return store
 
 
 def get_object_store() -> ObjectStore:
-    """返回当前后端的对象存储单例（懒初始化）。
-
-    settings.storage_backend == 'minio' → MinioStore，否则 LocalFileSystemStore（默认）。
-    单例避免重复建 minio client；reset_object_store 供测试切换后端。
-    """
-    global _store
-    if _store is None:
-        backend = get_settings().storage_backend.strip().lower()
-        _store = MinioStore() if backend == "minio" else LocalFileSystemStore()
-    return _store
+    """Return the configured object store singleton safely across threads."""
+    global _store, _store_backend
+    backend = _normalized_backend(get_settings().storage_backend)
+    if _store is not None and _store_backend == backend:
+        return _store
+    store = _get_or_create_store(backend)
+    # Assignment is atomic; the per-backend instance was fully constructed while
+    # holding _store_lock. These aliases keep compatibility with existing callers.
+    _store = store
+    _store_backend = backend
+    return store
 
 
 def reset_object_store() -> None:
-    """重置单例（测试切换后端 / teardown 用）。"""
-    global _store
-    _store = None
+    """Reset cached stores after a settings change in tests or process teardown."""
+    global _store, _store_backend
+    with _store_lock:
+        _stores_by_backend.clear()
+        _store = None
+        _store_backend = None
 
 
 def object_store_for(backend: str) -> ObjectStore:
-    """按指定后端返回对象存储实例（per-row 路由用，#3 根因修复）。
+    """Return the singleton for a row's persisted storage backend.
 
-    与 get_object_store()（按全局 settings 选单例）不同：本函数按传入 backend 选，
-    供读/删端点按每景 imagery 行的 storage_backend 列路由——全局后端切换（local↔minio）时，
-    老影像/新影像各按自己写入时的真实后端读写，不致读 404 或漏删对象。
-
-    minio：若全局单例恰为 MinioStore 则复用（连接池不浪费）；否则现建一个（lazy client，
-    仅 mixed-mode 边缘场景走到，廉价）。local：直接 new（无状态、廉价）。
+    Both local and MinIO instances are cached independently. This preserves mixed
+    deployments while avoiding a new MinIO client for every legacy-row access.
     """
-    normalized = (backend or "local").strip().lower()
-    if normalized == "minio":
-        if isinstance(_store, MinioStore):
-            return _store
-        return MinioStore()
-    return LocalFileSystemStore()
+    return _get_or_create_store(backend)

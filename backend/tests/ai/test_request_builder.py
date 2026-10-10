@@ -9,6 +9,13 @@ from app.agent.request_builder import (
     build_provider_request_context,
 )
 from app.schemas.chat import ChatMessage, ChatRequest
+
+@pytest.fixture(autouse=True)
+def no_live_embeddings(monkeypatch):
+    from unittest.mock import AsyncMock
+    from types import SimpleNamespace
+    monkeypatch.setattr("app.agent.request_builder.get_embedding_service", lambda: SimpleNamespace(embed_text=AsyncMock(return_value=[0.0]*1536)))
+
 from app.core.settings import get_settings
 
 
@@ -386,15 +393,12 @@ async def test_build_provider_messages_injects_summary_and_memory_policy(
 
     assert "记忆使用规则" in result[0]["content"]
 
-    # 2026-06-24 上下文顺序修复：可选块按优先级升序排列（低→高）。
-    # 新顺序：system_prompt → 长期记忆(60) → 历史对话压缩(70) → recent_dialogue
+    # History is summarized once, without inventing a second long-term memory copy.
+    assert not any("## 长期记忆摘要" in item["content"] for item in result)
     assert result[1]["role"] == "system"
-    assert "## 长期记忆摘要" in result[1]["content"]
+    assert "## 历史对话压缩摘要" in result[1]["content"]
     assert "必须使用中文回复" in result[1]["content"]
-    assert result[2]["role"] == "system"
-    assert "## 历史对话压缩摘要" in result[2]["content"]
-    assert "fixed" not in result[2]["content"].lower()
-    assert "stable-analysis-status-pulse-v1" in result[2]["content"]
+    assert "stable-analysis-status-pulse-v1" in result[1]["content"]
     assert result[-1] == {"role": "user", "content": "继续审查上下文"}
 
 

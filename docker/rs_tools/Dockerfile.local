@@ -1,0 +1,29 @@
+# 本地构建变体：Docker Hub 不可达（无代理）环境使用。
+# 复用本机已有的 geo 基底镜像（自带 Python 3.11 + pip），依赖走国内 pip 镜像。
+# 生产/服务器构建仍用 Dockerfile（python:3.11.9-slim，Docker Hub 直连）。
+# 用法：docker build -t rs-tools-mcp:0.1.0 -f Dockerfile.local .
+FROM yaoxingkong-geo-cpu:m2.1.2
+
+# 基底镜像把 geo 项目源码挂进 PYTHONPATH（/app/backend/src），其 resources 等
+# 模块会与本镜像的 compute_* 依赖发生名字冲突并在导入期崩溃——清空之。
+ENV PYTHONPATH=""
+
+WORKDIR /app
+
+COPY requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir --index-url https://mirrors.aliyun.com/pypi/simple/ -r /app/requirements.txt
+
+COPY compute_raster_inspect.py /app/compute_raster_inspect.py
+COPY compute_ndvi.py /app/compute_ndvi.py
+COPY compute_spectral_index.py /app/compute_spectral_index.py
+COPY compute_band_composite.py /app/compute_band_composite.py
+COPY compute_cloud_mask.py /app/compute_cloud_mask.py
+COPY compute_water_mask.py /app/compute_water_mask.py
+COPY compute_clip_reproject.py /app/compute_clip_reproject.py
+COPY raster_utils.py /app/raster_utils.py
+COPY mcp_server.py /app/mcp_server.py
+
+RUN python -c "import mcp_server"
+
+# 与生产 Dockerfile 相同的入口（基底镜像自带 CMD 会启动 geo 项目——漏配会撞车）。
+ENTRYPOINT ["python", "-u", "mcp_server.py"]

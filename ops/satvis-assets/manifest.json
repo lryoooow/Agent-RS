@@ -1,0 +1,15 @@
+{
+  "source": "https://github.com/Flowm/satvis",
+  "assets": [
+    {
+      "name": "deepstar_2020_1024_px.webp",
+      "url": "https://satvis.space/data/starmap/deepstar_2020_1024_px.webp",
+      "sha256": "b6b67ff781df5b0b2aceb2632493d99f5b86be839df144781c5748f46c4ecf67"
+    },
+    {
+      "name": "deepstar_2020_2048_px.webp",
+      "url": "https://satvis.space/data/starmap/deepstar_2020_2048_px.webp",
+      "sha256": "2aeec02d616d210bb440fb740b653cd088b920f8e49000447c8535fdb83e537f"
+    }
+  ]
+}

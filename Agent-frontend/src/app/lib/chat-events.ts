@@ -10,6 +10,8 @@ import {
   updateTurn,
 } from "./turns";
 import { normalizeThinkingSummaryStage } from "./thinking-summary";
+import { isSafeSameOriginUrl } from "./urls";
+import { parseAnalysisProvenance, parseMaskLegend, parseMaskStats } from "./analysis-results";
 import type {
   AgentStatus,
   AnalysisStatus,
@@ -189,7 +191,7 @@ export function parseGeospatialResult(value: unknown): GeospatialResult | undefi
   // 报告结果形态独立（无 result_url/bounds，带 download_url），先于通用校验单独处理。
   if (candidate.type === "report") {
     if (typeof candidate.imagery_id !== "string") return undefined;
-    if (typeof candidate.download_url !== "string") return undefined;
+    if (!isSafeSameOriginUrl(candidate.download_url)) return undefined;
     return {
       type: "report",
       imagery_id: candidate.imagery_id,
@@ -204,8 +206,8 @@ export function parseGeospatialResult(value: unknown): GeospatialResult | undefi
       .map((raw) => (raw && typeof raw === "object" ? (raw as Record<string, unknown>) : null))
       .filter((item): item is Record<string, unknown> => item !== null)
       .map((item) => {
-        if (typeof item.key !== "string" || typeof item.preview_url !== "string") return null;
-        if (typeof item.download_url !== "string") return null;
+        if (typeof item.key !== "string" || !isSafeSameOriginUrl(item.preview_url)) return null;
+        if (!isSafeSameOriginUrl(item.download_url)) return null;
         if (!Array.isArray(item.bbox) || item.bbox.length !== 4) return null;
         return {
           key: item.key,
@@ -233,6 +235,8 @@ export function parseGeospatialResult(value: unknown): GeospatialResult | undefi
     candidate.type !== "preview" &&
     candidate.type !== "ndvi" &&
     candidate.type !== "spectral_index" &&
+    candidate.type !== "water_mask" &&
+    candidate.type !== "cloud_mask" &&
     candidate.type !== "composite" &&
     candidate.type !== "detection" &&
     candidate.type !== "segmentation" &&
@@ -241,7 +245,7 @@ export function parseGeospatialResult(value: unknown): GeospatialResult | undefi
     return undefined;
   }
   if (typeof candidate.imagery_id !== "string") return undefined;
-  if (typeof candidate.result_url !== "string") return undefined;
+  if (!isSafeSameOriginUrl(candidate.result_url)) return undefined;
   const bounds = candidate.bounds;
   if (bounds !== null && !isBounds(bounds)) return undefined;
 
@@ -303,6 +307,11 @@ export function parseGeospatialResult(value: unknown): GeospatialResult | undefi
     return {
       type: "instance_segmentation",
       ...base,
+      resampled: candidate.resampled === true,
+      inference_grid: candidate.inference_grid && typeof candidate.inference_grid === "object"
+        && typeof (candidate.inference_grid as Record<string, unknown>).width === "number"
+        && typeof (candidate.inference_grid as Record<string, unknown>).height === "number"
+        ? candidate.inference_grid as { width: number; height: number } : null,
       model_name: typeof candidate.model_name === "string" ? candidate.model_name : "SAM3",
       device: typeof candidate.device === "string" ? candidate.device : null,
       concepts: Array.isArray(candidate.concepts) ? candidate.concepts.filter((item): item is string => typeof item === "string") : [],
@@ -317,6 +326,13 @@ export function parseGeospatialResult(value: unknown): GeospatialResult | undefi
       metrics_url: typeof candidate.metrics_url === "string" ? candidate.metrics_url : null,
       execution: isExecution(candidate.execution) ? candidate.execution : undefined,
     };
+  }
+  if (candidate.type === "water_mask" || candidate.type === "cloud_mask") {
+    const stats = parseMaskStats(candidate.stats);
+    if (!stats) return undefined;
+    return { type: candidate.type, ...base, stats,
+      execution: isExecution(candidate.execution) ? candidate.execution : undefined,
+      legend: parseMaskLegend(candidate.legend) };
   }
   if (!isStats(candidate.stats)) return undefined;
   if (candidate.type === "spectral_index") {
@@ -334,7 +350,8 @@ export function parseGeospatialResult(value: unknown): GeospatialResult | undefi
       ...base,
       index_type: candidate.index_type,
       stats: {
-        ...stats,
+        min: stats.min, max: stats.max, mean: stats.mean, std: stats.std,
+        ...parseAnalysisProvenance(candidate.stats as Record<string, unknown>),
         index_type: typeof stats.index_type === "string" ? stats.index_type : candidate.index_type,
       },
       execution: isExecution(candidate.execution) ? candidate.execution : undefined,
@@ -344,7 +361,8 @@ export function parseGeospatialResult(value: unknown): GeospatialResult | undefi
   return {
     type: "ndvi",
     ...base,
-    stats: candidate.stats,
+    stats: { min: candidate.stats.min, max: candidate.stats.max, mean: candidate.stats.mean, std: candidate.stats.std,
+      ...parseAnalysisProvenance(candidate.stats as Record<string, unknown>) },
     execution: isExecution(candidate.execution) ? candidate.execution : undefined,
     legend: parseLegend(candidate.legend),
   };
@@ -397,17 +415,17 @@ function parseRasterGrid(value: unknown) {
 }
 
 function isBounds(value: unknown): value is [number, number, number, number] {
-  return Array.isArray(value) && value.length === 4 && value.every((item) => typeof item === "number");
+  return Array.isArray(value) && value.length === 4 && value.every((item) => typeof item === "number" && Number.isFinite(item));
 }
 
 function isPixelSize(value: unknown): value is [number, number] {
-  return Array.isArray(value) && value.length === 2 && value.every((item) => typeof item === "number");
+  return Array.isArray(value) && value.length === 2 && value.every((item) => typeof item === "number" && Number.isFinite(item));
 }
 
 function isStats(value: unknown): value is { min: number; max: number; mean: number; std: number } {
   if (!value || typeof value !== "object") return false;
   const stats = value as Record<string, unknown>;
-  return ["min", "max", "mean", "std"].every((key) => typeof stats[key] === "number");
+  return ["min", "max", "mean", "std"].every((key) => typeof stats[key] === "number" && Number.isFinite(stats[key]));
 }
 
 function isExecution(value: unknown): value is ToolExecutionInfo {

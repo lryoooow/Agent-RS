@@ -28,6 +28,9 @@ def _write_test_tif(path: Path, *, count: int = 5) -> None:
         dtype="uint16",
     ) as dst:
         dst.write(data)
+        # 波段角色描述（A4 起 runner 依赖 band_roles 解析默认波段参数）
+        for index, label in enumerate(("Blue", "Green", "Red", "NIR", "SWIR1")[:count], 1):
+            dst.set_band_description(index, label)
 
 
 def _prepare_imagery(root: Path, *, count: int = 5) -> Path:

@@ -10,7 +10,9 @@ import {
 import { buildChatRequestBody } from "../lib/chat-request";
 import { createReport } from "../lib/reports-api";
 import { readStreamResponse } from "../lib/sse";
-import { toModelHistory, uid } from "../lib/turns";
+import { toModelHistory, uid, exceedsMessageLimit, CHAT_MAX_MESSAGES } from "../lib/turns";
+import { ApiError } from "../lib/http";
+import { currentAuthEpoch } from "../lib/auth-session";
 import { type Roi } from "../lib/roi";
 import type {
   ChatResponse,
@@ -93,6 +95,11 @@ export function useChatController({
   async function sendMessage(text: string) {
     const trimmed = text.trim();
     if (!trimmed || busyRef.current) return;
+    if (exceedsMessageLimit(trimmed)) {
+      setInput(text);
+      addSystemNote("消息超过16000字上限，请编辑后发送；本次内容没有提交。");
+      return;
+    }
     busyRef.current = true;
     const epoch = ++requestEpoch.current;
 
@@ -109,6 +116,12 @@ export function useChatController({
     // 当前影像与 ROI 通过结构化字段传输，由服务端验证后加入上下文。
     const activeRoi = roiRef.current;
     const requestMessages = baseMessages;
+    if (!activeConversationId && turnsRef.current.some((turn) => exceedsMessageLimit(turn.content))) {
+      addSystemNote("已排除超过上限的旧记录，完整内容仍可查看。");
+    }
+    if (!activeConversationId && turnsRef.current.filter((turn) => !turn.error && turn.role !== "system").length >= CHAT_MAX_MESSAGES) {
+      addSystemNote("本次发送最近63条可用历史；更早内容仍保留在界面中。");
+    }
 
     // 提取地图上下文（如果提供了 getMapContext 函数）
     const metadata: Record<string, unknown> = {};
@@ -159,6 +172,7 @@ export function useChatController({
     setActiveStream(shouldStream);
 
     const controller = new AbortController();
+    const authEpoch = currentAuthEpoch();
     abortRef.current = controller;
 
     try {
@@ -173,6 +187,7 @@ export function useChatController({
             (id) => { if (epoch === requestEpoch.current) setConversationId(id); },
             (target) => { if (epoch === requestEpoch.current) onMapControl?.(target); },
           ),
+          authEpoch,
         );
         return;
       }
@@ -183,7 +198,13 @@ export function useChatController({
       appendAssistantResponse(setTurns, data);
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return;
-      if (epoch === requestEpoch.current) applyRequestError(setTurns, assistantId, shouldStream, err);
+      if (epoch === requestEpoch.current) {
+        if (err instanceof ApiError && err.status === 422) {
+          setTurns((prev) => prev.map((turn) => turn.id === userTurn.id ? { ...turn, historyExcluded: true } : turn));
+          setInput(text);
+        }
+        applyRequestError(setTurns, assistantId, shouldStream, err);
+      }
     } finally {
       if (epoch === requestEpoch.current) {
         abortRef.current = null;

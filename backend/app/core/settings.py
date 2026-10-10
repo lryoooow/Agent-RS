@@ -1,5 +1,7 @@
-﻿import logging
+import logging
 import os
+from datetime import date
+from typing import Literal
 from functools import lru_cache
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -21,6 +23,25 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
     )
+
+    deployment_environment: Literal["development", "production"] = "development"
+    @field_validator("deployment_environment", mode="before")
+    @classmethod
+    def normalize_deployment_environment(cls, value):
+        return value.strip().lower() if isinstance(value, str) else value
+
+    agent_as_of_date: str = ""
+
+    @field_validator("agent_as_of_date")
+    @classmethod
+    def validate_as_of_date(cls, value: str) -> str:
+        value = value.strip()
+        if value:
+            try:
+                if len(value) != 10 or date.fromisoformat(value).isoformat() != value: raise ValueError()
+            except ValueError:
+                raise ValueError("AGENT_AS_OF_DATE must use a valid YYYY-MM-DD date") from None
+        return value
 
     app_host: str = "0.0.0.0"
     app_port: int = 3000
@@ -70,13 +91,16 @@ class Settings(BaseSettings):
     # 默认 True：本地 clone 场景下 env 未填 AI_API_KEY 时，降级用前端配置页填的值
     # （resolve_ai_config 的 client_xxx or settings.xxx 链保证 env 已填时前端留空仍走 env）。
     # 公网多用户部署应设 false，锁定服务端密钥、禁止客户端覆盖。
-    allow_client_provider_config: bool = True
+    allow_client_provider_config: bool = False
     # provider_config.base_url 主机白名单（逗号分隔）。命中者跳过 DNS/内网校验，
     # 用于可信内部端点与测试。留空 = 仅放行通过校验的公网 https / 回环地址。
     ai_provider_allowed_hosts: str = ""
     allow_user_extra_instructions: bool = True
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
     max_json_body_bytes: int = 2_000_000
+    # Multipart framing and ordinary form fields are counted in the raw request
+    # limit in addition to the exact per-file limit enforced by the upload stream.
+    max_multipart_overhead_bytes: int = 1024 * 1024
 
     tavily_api_key: str = ""
     tavily_search_url: str = "https://api.tavily.com/search"
@@ -134,14 +158,25 @@ class Settings(BaseSettings):
     # 换到不支持 function calling 的供应商时，用这个 JSON 覆盖。
     agent_model_info: str = ""
 
-    auth_enabled: bool = True
-    auth_secret_key: str = "dev-change-me"
+    auth_enabled: bool = False
+    auth_admin_user_ids: str = ""
+    auth_secret_key: str = ""
     auth_session_cookie_name: str = "agent_rs_session"
     auth_session_days: int = 30
     auth_cookie_secure: bool = False
     auth_cookie_samesite: str = "lax"
     auth_password_min_length: int = 10
     auth_password_max_length: int = 128
+    auth_hash_max_concurrency: int = Field(default=4, ge=1, le=16)
+    auth_login_max_failures: int = Field(default=5, ge=1, le=100)
+    auth_login_failure_window_seconds: int = Field(default=900, ge=10, le=86400)
+    auth_login_lockout_seconds: int = Field(default=300, ge=10, le=86400)
+    auth_login_ip_max_attempts: int = Field(default=30, ge=1, le=10000)
+    auth_login_ip_window_seconds: int = Field(default=60, ge=10, le=86400)
+    auth_register_ip_max_attempts: int = Field(default=5, ge=1, le=1000)
+    auth_register_ip_window_seconds: int = Field(default=3600, ge=10, le=604800)
+    auth_rate_limit_max_entries: int = Field(default=10000, ge=128, le=1000000)
+    auth_max_active_sessions_per_user: int = Field(default=10, ge=1, le=1000)
 
     database_enabled: bool = False
     database_url: str = ""
@@ -200,14 +235,38 @@ class Settings(BaseSettings):
     document_ocr_timeout_seconds: int = 120
     document_ocr_min_chars_per_page: int = 50
     document_ocr_languages: str = "chi_sim+eng"
+    # Office 文档（docx/pptx/xlsx 均为 zip 包）解压预检上限（G1，防 zip 炸弹）：
+    # 预检目录和实际有界展开；格式解析在受限进程中执行。
+    document_office_max_total_uncompressed_bytes: int = Field(default=100 * 1024 * 1024, ge=1)
+    document_office_max_entry_compression_ratio: int = Field(default=100, ge=1)
+    document_office_max_entries: int = Field(default=10_000, ge=1, le=100_000)
+    document_office_max_entry_bytes: int = Field(default=32 * 1024 * 1024, ge=1)
+    document_max_text_chars: int = Field(default=2_000_000, ge=1)
+    document_max_sheet_rows: int = Field(default=100_000, ge=1)
+    document_max_sheet_columns: int = Field(default=1024, ge=1)
+    document_parse_max_concurrent: int = Field(default=2, ge=1, le=16)
+    document_parse_timeout_seconds: float = Field(default=60, gt=0)
+    document_parse_memory_bytes: int = Field(default=768 * 1024 * 1024, ge=64 * 1024 * 1024)
 
     # 免账号影像检索的场景产物（预览 PNG / 合成 TIF）目录，per-user 隔离。
     scene_cache_dir: str = "backend/storage/scenes"
     imagery_upload_dir: str = "storage/imagery"
     imagery_max_file_bytes: int = 500_000_000
-    imagery_working_max_dimension: int = 4096
-    imagery_preview_max_dimension: int = 2048
+    imagery_working_max_dimension: int = Field(default=4096, ge=1, le=16384)
+    imagery_preview_max_dimension: int = Field(default=2048, ge=1, le=8192)
     imagery_compression: str = "deflate"
+    # 影像工作图预算上限（G2，防多波段 OOM）：上传时在 _extract_metadata 之后校验
+    # 波段数与 count×工作宽×工作高×itemsize，超限 413；工作图本身逐波段读写，
+    # 单波段峰值内存 = 一个波段工作数组而非全波段总量。
+    imagery_max_band_count: int = Field(default=64, ge=1, le=512)
+    imagery_max_working_bytes: int = Field(default=1024 * 1024 * 1024, ge=1)
+    imagery_preprocess_max_bytes: int = Field(default=384 * 1024 * 1024, ge=1)
+    raster_preprocess_max_concurrent: int = Field(default=2, ge=1, le=16)
+    # SAM3 推理输入像元上限（G3）：与 ops/sam3_service.py 的 SAM3_MAX_PIXELS 同名同默认
+    # （64M），运维两端一起调。超限时后端先按比例降采样读取（out_shape），
+    # 不再整幅读入后才被服务端拒绝。
+    sam3_max_pixels: int = Field(default=64 * 1024 * 1024, ge=1)
+    sam3_preprocess_max_bytes: int = Field(default=256 * 1024 * 1024, ge=64)
     # 影像二进制存储后端：local=本地盘（默认，与迁移前一致）；minio=对象存储（多实例可迁移）。
     # 逐景灰度由 imagery 表 storage_backend 列承载；此处是新上传的默认落点。
     storage_backend: str = "local"
@@ -289,6 +348,9 @@ class Settings(BaseSettings):
         """
         return self.auth_enabled and self.database_enabled
 
+    def is_admin_user_id(self, user_id: str) -> bool:
+        return user_id in {item.strip() for item in self.auth_admin_user_ids.split(",") if item.strip()}
+
     @property
     def storage_active(self) -> bool:
         """持久化能力是否可用：本项目仅 PostgreSQL，等价于 DATABASE_ENABLED。
@@ -315,7 +377,10 @@ class Settings(BaseSettings):
         recent = self.context_max_recent_messages
         if configured and configured > 0:
             return max(configured, recent)
-        return max(recent, 200)
+        # DB 预取只需覆盖“最近对话 + 可压缩的较早对话”。默认 200 条会在长会话中
+        # 构造大量随后立刻被预算器丢弃的对象；96 条可为默认 24 条最近消息保留
+        # 三倍的摘要候选，同时让显式调大的 recent 配置继续生效。
+        return max(recent, 96)
 
     @property
     def resolved_embedding_base_url(self) -> str:
@@ -340,4 +405,10 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
+    """Return one immutable configuration snapshot for this process.
+
+    Environment-file changes intentionally require a service restart. Hot-reloading only this
+    object would leave pools, clients and background workers on the previous configuration and
+    create a split-brain process. Tests that change environment values call ``cache_clear()``.
+    """
     return Settings()

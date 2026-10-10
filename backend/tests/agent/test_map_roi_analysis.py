@@ -141,7 +141,7 @@ async def test_download_failure_never_runs_model(monkeypatch):
 async def test_general_agent_prepares_map_then_binds_real_image(monkeypatch):
     from app.agent.engine.input import build_turn_input
     from app.agent.engine.turn_context import turn_scope, ToolInvocation
-    from app.agent.engine.tools import RemoteSensingTool
+    from app.agent.engine.tools import RemoteSensingTool, ToolExecutionFailure
     from app.agent.tool_registry import TOOLS
     from app.agent.tools.instance_segment.schema import InstanceSegmentArguments
     from autogen_core import CancellationToken
@@ -156,8 +156,11 @@ async def test_general_agent_prepares_map_then_binds_real_image(monkeypatch):
     monkeypatch.setattr('app.agent.engine.tools.prepare_tool_call',prepare)
     with turn_scope(trusted_tool_arguments=turn.trusted_tool_arguments) as state:
         wrapper=RemoteSensingTool(TOOLS['segment_instances'])
-        reply=await wrapper.run(InstanceSegmentArguments(imagery_id='000000000000',concepts=['building']),CancellationToken())
-        assert 'prepare_map_roi' in reply and state.gpu_calls==0
+        # 前置未满足改为受控异常（is_error），提示模型先做 prepare_map_roi，不再返回字符串。
+        with pytest.raises(ToolExecutionFailure) as error:
+            await wrapper.run(InstanceSegmentArguments(imagery_id='000000000000',concepts=['building']),CancellationToken())
+        assert error.value.code=='analysis_precondition' and 'prepare_map_roi' in str(error.value)
+        assert state.gpu_calls==0
         prepare.assert_not_awaited()
         state.record(ToolInvocation(name='prepare_map_roi',arguments={'bbox':BOX},result=ToolRunResult(
             tool_context='ok',geospatial_result={'imagery_id':ID},metadata={'band_roles':{'red':1,'green':2,'blue':3}})))

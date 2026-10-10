@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 from io import StringIO
 
 import pytest
@@ -190,3 +191,73 @@ async def test_stdio_mcp_client_falls_back_when_async_subprocess_is_unavailable(
     written = proc.stdin.getvalue()
     assert "initialize" in written
     assert "tools/call" in written
+
+
+@pytest.mark.asyncio
+async def test_async_transport_cancel_kills_and_reaps_process(monkeypatch):
+    proc = FakeProcess([])
+    started = asyncio.Event()
+    client = _client()
+
+    async def handshake(*args):
+        started.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_create(proc))
+    monkeypatch.setattr(client, "_handshake_and_call", handshake)
+    task = asyncio.create_task(client.call_tool("calculate_ndvi", {}))
+    await asyncio.wait_for(started.wait(), 1)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert proc.killed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("during_spawn", [False, True])
+async def test_sync_transport_cancel_also_handles_late_process_creation(monkeypatch, during_spawn):
+    proc = FakeSyncProcess([])
+    started, release, killed = threading.Event(), threading.Event(), threading.Event()
+    client = _client()
+    calls = []
+
+    async def unsupported(*args, **kwargs):
+        raise NotImplementedError
+
+    def popen(*args, **kwargs):
+        if during_spawn:
+            started.set()
+            assert release.wait(2)
+        return proc
+
+    def handshake(*args):
+        calls.append("handshake")
+        started.set()
+        assert killed.wait(2)
+        raise MCPCallError("cancelled process")
+
+    def kill():
+        proc.killed = True
+        proc.returncode = -9
+        killed.set()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", unsupported)
+    monkeypatch.setattr(mcp_client.subprocess, "Popen", popen)
+    monkeypatch.setattr(proc, "kill", kill)
+    monkeypatch.setattr(client, "_handshake_and_call_sync", handshake)
+    task = asyncio.create_task(client.call_tool("calculate_ndvi", {}))
+    try:
+        assert await asyncio.to_thread(started.wait, 1)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        release.set()
+        assert await asyncio.to_thread(killed.wait, 1)
+        assert proc.killed
+        if during_spawn:
+            assert calls == []
+    finally:
+        release.set()
+        killed.set()
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)

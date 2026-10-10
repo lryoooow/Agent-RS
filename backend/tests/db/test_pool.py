@@ -149,3 +149,45 @@ async def test_fetch_optional_pool_keeps_request_level_fallback(monkeypatch) -> 
     assert await pool_module.fetch_optional_pool() is None
     assert pool_module._pool is None
     assert pool_module._pool_initialized is False
+
+
+@pytest.mark.asyncio
+async def test_concurrent_first_requests_create_exactly_one_pool(monkeypatch) -> None:
+    import asyncio
+
+    created_pool = FakePool()
+    calls = 0
+
+    async def create_pool(**_):
+        nonlocal calls
+        calls += 1
+        await asyncio.sleep(0.02)
+        return created_pool
+
+    monkeypatch.setitem(sys.modules, "asyncpg", SimpleNamespace(create_pool=create_pool))
+
+    pools = await asyncio.gather(*(pool_module.get_db_pool() for _ in range(12)))
+
+    assert calls == 1
+    assert all(pool is created_pool for pool in pools)
+
+
+@pytest.mark.asyncio
+async def test_schema_failure_closes_unpublished_pool(monkeypatch) -> None:
+    created_pool = FakePool()
+
+    async def create_pool(**_):
+        return created_pool
+
+    async def fail_schema():
+        raise RuntimeError("broken migration")
+
+    monkeypatch.setitem(sys.modules, "asyncpg", SimpleNamespace(create_pool=create_pool))
+    monkeypatch.setattr(pool_module, "_ensure_schema", fail_schema)
+
+    with pytest.raises(RuntimeError, match="schema 迁移失败"):
+        await pool_module.get_db_pool()
+
+    assert created_pool.closed is True
+    assert pool_module._pool is None
+    assert pool_module._pool_initialized is False

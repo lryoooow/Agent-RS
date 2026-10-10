@@ -153,9 +153,39 @@ def test_compute_ocr_end_to_end(tmp_path: Path) -> None:
 
     stats = compute(input_path=str(input_path), output_dir=str(output_dir))
 
-    assert (output_dir / "ocr_result.json").exists()
+    assert (output_dir / stats["output_json"]).exists()
     assert stats["block_count"] >= 1
     # 识别全文里应能找到我们写入的关键 token（大小写/空格可能有出入）。
     recognized = stats["full_text"].upper().replace(" ", "")
     assert "RS" in recognized or "2026" in recognized
     assert 0.0 <= stats["avg_confidence"] <= 1.0
+
+
+
+def test_ocr_rerun_keeps_original_json(tmp_path, monkeypatch):
+    import compute_ocr
+    monkeypatch.setattr(compute_ocr, "_engine", lambda: (lambda image: ([], 0.)))
+    source = tmp_path / "input.tif"
+    out = tmp_path / "out"
+    _write_tif(source, np.full((3, 2, 2), 20, dtype="uint8"))
+    first = compute(input_path=str(source), output_dir=str(out))
+    original = (out / first["output_json"]).read_bytes()
+    second = compute(input_path=str(source), output_dir=str(out))
+    assert first["output_json"] != second["output_json"]
+    assert (out / first["output_json"]).read_bytes() == original
+    assert (out / second["output_json"]).is_file()
+
+
+def test_engine_limits_onnx_threads_and_reuses_sessions(monkeypatch):
+    import types
+    import compute_ocr as module
+    calls = []
+    engine = object()
+    def create(**kwargs):
+        calls.append(kwargs)
+        return engine
+    monkeypatch.setitem(sys.modules, "rapidocr_onnxruntime", types.SimpleNamespace(RapidOCR=create))
+    monkeypatch.setattr(module, "_OCR_ENGINE", None)
+    assert module._engine() is engine
+    assert module._engine() is engine
+    assert calls == [{"intra_op_num_threads": 2, "inter_op_num_threads": 1}]

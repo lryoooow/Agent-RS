@@ -113,3 +113,21 @@ def test_real_routes_all_use_envelope(client, monkeypatch) -> None:
     r = client.post("/api/scenes/search", data="{bad json", headers={"Content-Type": "application/json"})
     assert r.status_code == 422
     _assert_envelope(r.json())
+
+
+@pytest.mark.parametrize("value", ["NaN", "Infinity", "-Infinity"])
+def test_nonfinite_rejected_input_stays_422_and_is_not_echoed(client, value):
+    response = client.post("/api/scenes/search", content='{"bbox":[' + value + ',0,1,1]}',
+                           headers={"Content-Type": "application/json"})
+    assert response.status_code == 422
+    _assert_envelope(response.json())
+    details = response.json()["error"]["details"]
+    assert details and details[0]["loc"] == ["body", "bbox"]
+    assert all(set(item) == {"type", "loc", "msg"} for item in details)
+
+
+def test_validation_error_does_not_echo_credentials_from_body(client):
+    sentinel = "NOT_A_REAL_SECRET_INVALID_REQUEST"
+    response = client.post("/api/scenes/search", json={"limit": {"api_key": sentinel}})
+    assert response.status_code == 422
+    assert sentinel not in response.text

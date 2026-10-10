@@ -2,16 +2,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Plus, Minus, Crosshair, SquareDashedMousePointer, X } from "lucide-react";
 import type { RSLayer } from "../lib/layers";
 import { pixelRoiFromCorners, isDegenerateRoi, type PixelRoi } from "../lib/roi";
+import { absoluteUrl } from "../lib/urls";
 
 // 无地理坐标影像的可交互查看器：滚轮缩放 + 拖拽平移 + 框选（输出影像内相对 bbox 0..1）。
 // 替换 MapView 旧的 pointer-events-none 静态 <img> 兜底（geo 影像仍走 maplibre，不在此组件）。
 // 多个无坐标图层按透明度叠放（保留原叠放语义：影像在底、结果在上）。
 // 纯 CSS transform（translate+scale），无新依赖。
-
-function absoluteUrl(url: string) {
-  if (!url) return url;
-  return url.startsWith("http") ? url : `${window.location.origin}${url}`;
-}
 
 const MIN_SCALE = 0.2;
 const MAX_SCALE = 12;

@@ -114,6 +114,8 @@ class RegisteredTool:
     # shared = 所有 Agent（含通用问答）都可调用，不催生任何 Agent。
     # 联网检索、地图定位、报告生成属于平台级能力而非某个领域，因此是 shared。
     scope: Literal["domain", "shared"] = "domain"
+    # Explicit opt-in only after replay is verified safe for outputs and costs.
+    recovery_policy: Literal["never", "idempotent"] = "never"
 
     def is_enabled(self) -> bool:
         return self.enabled() if self.enabled else True

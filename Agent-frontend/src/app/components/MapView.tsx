@@ -10,12 +10,14 @@ import type { MapAnnotation } from "../types";
 import { ImageViewer } from "./ImageViewer";
 import { geoRoiFromCorners, isDegenerateRoi, type PixelRoi, type Roi } from "../lib/roi";
 import { buildGraticule } from "../lib/graticule";
+import { absoluteUrl } from "../lib/urls";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "./ui/dropdown-menu";
+import { useMapAnnotations } from "../hooks/useMapAnnotations";
 
 // 默认视图：北京（用户要求地图打开必须定位北京，不得是其它地点）。
 // 无影像时显示北京；首个带 bounds 的分析结果仍会 fitBounds 覆盖到对应区域。
@@ -27,11 +29,6 @@ const DEFAULT_ZOOM = 10;
 const PRIMARY_COLOR = "#2bb8c2";
 const DARK_BG = "#0a0e14";
 
-function absoluteUrl(url: string) {
-  if (!url) return url;
-  return url.startsWith("http") ? url : `${window.location.origin}${url}`;
-}
-
 export function MapView({
   mapRef: externalMapRef,
   layers,
@@ -41,7 +38,9 @@ export function MapView({
   onClearRegion,
   onClassifyRegion,
   onAnnotationsChange,
+  principalId = null,
 }: {
+  principalId?: string | null;
   mapRef?: React.MutableRefObject<MapLibreMap | null>;
   layers: RSLayer[];
   activeImageryId?: string | null;
@@ -76,39 +75,17 @@ export function MapView({
   const scaleCtrlRef = useRef<maplibregl.ScaleControl | null>(null);
   // 原生绘图：当前模式 + 已提交标注 + 进行中要素顶点。
   const [drawMode, setDrawMode] = useState<"polygon" | "point" | "line_string" | null>(null);
-  const [annotations, setAnnotations] = useState<MapAnnotation[]>([]); // 已完成标注（GeoJSON Feature）
+  const [annotations, saveAnnotations] = useMapAnnotations(onAnnotationsChange, principalId); // 已完成标注（GeoJSON Feature）
   const draftRef = useRef<[number, number][]>([]); // 进行中要素的顶点（lng,lat）
   const annotationsRef = useRef<MapAnnotation[]>([]); // 镜像 annotations 供事件回调读最新值（防 stale-closure）
   const hasRoi = roi !== null;
   const hasImagery = layers.some((layer) => layer.kind === "imagery");
   const hasAnnotations = annotations.length > 0;
 
-  // 从 localStorage 加载标注（挂载时一次）。
-  useEffect(() => {
-    const saved = localStorage.getItem("map_annotations");
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) setAnnotations(parsed as MapAnnotation[]);
-      } catch (e) {
-        console.error("Failed to load annotations:", e);
-      }
-    }
-  }, []);
-
   // 镜像 annotations 到 ref：事件回调（按 drawMode 重注册）据此读到最新已提交标注，杜绝 stale-closure。
   useEffect(() => {
     annotationsRef.current = annotations;
   }, [annotations]);
-
-  // 保存标注到 localStorage + 通知父组件（透传给智能体上下文）。
-  const saveAnnotations = (newAnnotations: MapAnnotation[]) => {
-    setAnnotations(newAnnotations);
-    localStorage.setItem("map_annotations", JSON.stringify(newAnnotations));
-    if (onAnnotationsChange) {
-      onAnnotationsChange(newAnnotations);
-    }
-  };
 
   const clearAnnotationsOnly = () => {
     draftRef.current = [];

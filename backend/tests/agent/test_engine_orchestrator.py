@@ -100,7 +100,7 @@ async def test_main_route_builds_main_agent_not_flow(monkeypatch) -> None:
 
     assert orchestration.team is agent
     assert orchestration.route.strategy == "main"
-    assert orchestration.stop is None, "主 Agent 没有可停的后续步骤"
+    assert orchestration.stop is None, "主 Agent 使用请求取消令牌，不使用 GraphFlow 终止开关"
 
 
 def test_shared_web_search_tool_gated_by_tavily_key(monkeypatch) -> None:
@@ -201,6 +201,28 @@ def test_sanitizer_does_not_mistake_normal_discussion_for_reasoning() -> None:
 def test_unclosed_narrated_reasoning_fails_closed_without_unbounded_output() -> None:
     raw = "思考过程：\n" + ("绝密推理" * 10_000)
     assert _run_sanitizer(raw, 7) == ""
+
+
+@pytest.mark.parametrize("chunk_size", [1, 2, 8, 200])
+@pytest.mark.parametrize("heading", ["## 分析过程\n", "Analysis: ", "Reasoning:\n"])
+def test_normal_analysis_headings_remain_visible(heading, chunk_size):
+    raw = heading + "建筑面积为100平方米。"
+    assert _run_sanitizer(raw, chunk_size) == raw
+    assert _clean_final_text(raw) == raw.strip()
+
+
+@pytest.mark.parametrize("chunk_size", [1, 2, 3, 8, 200])
+@pytest.mark.parametrize("fence", ["```", "~~~"])
+def test_literal_reasoning_tags_in_fenced_code_are_preserved(fence, chunk_size):
+    raw = f"示例：\n{fence}xml\n<think>这是代码中的文本</think>\n{fence}\n正文。"
+    assert _run_sanitizer(raw, chunk_size) == raw
+    assert _clean_final_text(raw) == raw
+
+
+@pytest.mark.parametrize("chunk_size", [1, 3, 200])
+def test_fenced_code_inside_actual_reasoning_stays_hidden(chunk_size):
+    raw = "<think>```\nprivate-data\n```</think>公开结果。"
+    assert _run_sanitizer(raw, chunk_size) == "公开结果。"
 
 
 # ------------------------------------------------- 结果抽取

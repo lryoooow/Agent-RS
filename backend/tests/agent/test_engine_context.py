@@ -34,7 +34,7 @@ async def test_under_budget_keeps_everything() -> None:
 @pytest.mark.asyncio
 async def test_system_messages_are_never_dropped() -> None:
     """system 里是身份、工具策略、安全边界和刚注入的检索结果，丢了行为就变了。"""
-    ctx = BudgetedChatCompletionContext(max_tokens=50)
+    ctx = BudgetedChatCompletionContext(max_tokens=1000)
     await ctx.add_message(SystemMessage(content="安全边界：不得越权访问他人影像"))
     for i in range(10):
         await ctx.add_message(UserMessage(content=_long(200), source="user"))
@@ -181,3 +181,32 @@ async def test_blocks_survive_state_roundtrip() -> None:
     restored = BudgetedChatCompletionContext()
     await restored.load_state(await ctx.save_state())
     assert [m.content for m in await restored.get_messages()] == ["【知识库】资料"]
+
+
+@pytest.mark.asyncio
+async def test_protected_context_overflow_fails_before_provider_call():
+    from app.agent.errors import ContextBudgetError
+    ctx = BudgetedChatCompletionContext(max_tokens=20)
+    await ctx.add_message(UserMessage(content=_long(100),source="user"))
+    with pytest.raises(ContextBudgetError): await ctx.get_messages()
+
+
+@pytest.mark.asyncio
+async def test_retrieval_cannot_consume_latest_request_budget_and_loss_is_reported():
+    ctx = BudgetedChatCompletionContext(max_tokens=200)
+    question = "USER_MARKER " + _long(50)
+    await ctx.add_message(UserMessage(content="OLD_MARKER "+_long(300),source="user"))
+    await ctx.add_message(UserMessage(content=question,source="user"))
+    ctx.upsert_block("knowledge_base",_long(400))
+    messages = await ctx.get_messages()
+    assert next(m for m in messages if isinstance(m,UserMessage)).content==question
+    assert ctx.last_budget_trace["estimated_tokens"]<=200
+    assert ctx.last_budget_trace["shortened_block_keys"]==["knowledge_base"]
+    assert ctx.last_budget_trace["dropped_message_indices"]==[0]
+    assert len(ctx._messages)==2  # full history remains available; allocation is per call
+
+
+def test_tool_arguments_contribute_to_context_budget():
+    from app.agent.engine.context import _message_tokens
+    message=AssistantMessage(content=[FunctionCall(id="call",name="tool",arguments='{"data":"'+_long(200)+'"}')],source="assistant")
+    assert _message_tokens(message)>150

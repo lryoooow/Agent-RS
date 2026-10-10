@@ -1,8 +1,8 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import logging
 
-from app.auth.security import hash_session_token
+from app.auth.security import hash_session_token, is_secure_auth_secret
 from app.db.pool import fetch_optional_pool
 from app.db.repositories.auth import find_user_by_session
 from app.core.settings import get_settings
@@ -18,6 +18,8 @@ async def get_session_user(token: str | None) -> dict | None:
     settings = get_settings()
     if not settings.auth_enabled or not token:
         return None
+    if not is_secure_auth_secret(settings.auth_secret_key):
+        raise AuthSessionUnavailable("Session authentication is not configured safely.")
     pool = await fetch_optional_pool()
     if pool is None:
         if settings.storage_active:

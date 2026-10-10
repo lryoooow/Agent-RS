@@ -18,6 +18,9 @@ _ERROR_STATUS = {
     "conversation_forbidden": 404,
     "no_analysis": 409,
     "render_failed": 500,
+    "imagery_forbidden": 404,
+    "storage_unavailable": 503,
+    "report_publish_failed": 502,
 }
 
 

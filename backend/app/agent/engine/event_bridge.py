@@ -27,6 +27,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from dataclasses import dataclass, field
 from typing import Any
@@ -154,8 +155,14 @@ def _on_tool_result(
             "execution_kind": "tool",
             "dispatch_kind": "tool",
         }
+        error_code = None
         if result.is_error:
-            events.append(trace.add("tool_execution_failed", "工具执行失败", **common))
+            match = re.match(r"^(?:Error:\s*)?\[([a-z0-9_]{1,64})\]", str(result.content or ""))
+            error_code = match.group(1) if match else "tool_error"
+        rejected = error_code in {"tool_unavailable", "invalid_arguments", "access_denied", "analysis_precondition", "tool_quota_exceeded"}
+        common["execution_status"] = "rejected" if rejected else "failed" if result.is_error else "complete"
+        if result.is_error:
+            events.append(trace.add("tool_execution_failed", "工具未执行" if rejected else "工具执行失败", error_code=error_code, **common))
         else:
             events.append(trace.add("tool_execution_completed", "工具执行完成", **common))
         events.append(
@@ -163,7 +170,7 @@ def _on_tool_result(
                 "tool_context_ready",
                 tool_ready_label(tool_name),
                 tool_context_chars=len(str(result.content or "")),
-                error="tool_error" if result.is_error else None,
+                error=error_code,
                 **common,
             )
         )

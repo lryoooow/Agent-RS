@@ -40,6 +40,7 @@ describe("AuthGate 登录页", () => {
     expect(screen.getByText("昵称")).toBeInTheDocument();
     expect(screen.getByText("邮箱")).toBeInTheDocument();
     expect(screen.getByText("密码")).toBeInTheDocument();
+    expect(screen.getByText(/不能使用常见密码或单一重复字符/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "注册并登录" })).toBeInTheDocument();
   });
 
@@ -52,4 +53,18 @@ describe("AuthGate 登录页", () => {
     render(<AuthGate auth={makeAuth({ loading: true })} />);
     expect(screen.getByRole("button", { name: "登录" })).toBeDisabled();
   });
+});
+
+
+it("admin uses the existing login form without email-only browser rejection", async () => {
+  const user = userEvent.setup(); const auth = makeAuth();
+  const { container } = render(<AuthGate auth={auth} />);
+  await user.type(screen.getByRole("textbox"), "admin");
+  const password = container.querySelector('input[type="password"]')!;
+  await user.type(password, "test-admin-password！");
+  await user.click(screen.getByRole("button", { name: "登录" }));
+  expect(auth.signIn).toHaveBeenCalledWith("admin", "test-admin-password！");
+  expect(screen.getByText("邮箱")).toBeInTheDocument();
+  await user.click(screen.getByRole("tab", { name: "注册" }));
+  expect(container.querySelector('input[type="email"]')).not.toBeNull();
 });

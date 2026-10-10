@@ -8,17 +8,17 @@ class OcrArguments(BaseModel):
     red_band: int = Field(
         default=1,
         ge=1,
-        description="红光波段号（OCR 采用自然 RGB 序，默认 band1=R；GF-2 影像请显式设为 3）",
+        description="红光波段号（省略时按影像真实角色解析，不能套用固定波序）",
     )
     green_band: int = Field(
         default=2,
         ge=1,
-        description="绿光波段号（OCR 采用自然 RGB 序，默认 band2=G；GF-2 影像请显式设为 2）",
+        description="绿光波段号（省略时按影像真实角色解析）",
     )
     blue_band: int = Field(
         default=3,
         ge=1,
-        description="蓝光波段号（OCR 采用自然 RGB 序，默认 band3=B；GF-2 影像请显式设为 1）",
+        description="蓝光波段号（省略时按影像真实角色解析）",
     )
     grayscale: bool = Field(
         default=False, description="是否按单波段灰度识别（扫描件/单波段图建议开启）"
@@ -35,7 +35,7 @@ class OcrArguments(BaseModel):
     def _distinct_rgb_bands(self) -> "OcrArguments":
         # 灰度模式只用 red_band，不校验三波段互异；RGB 模式要求三波段不重复。
         if not self.grayscale:
-            bands = [self.red_band, self.green_band, self.blue_band]
+            bands = [getattr(self, name) for name in ("red_band", "green_band", "blue_band") if name in self.model_fields_set]
             if len(set(bands)) != len(bands):
                 raise ValueError("RGB 三个波段不能重复")
         return self

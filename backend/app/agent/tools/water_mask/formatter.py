@@ -1,3 +1,5 @@
+from app.agent.tools.common import format_spectral_provenance
+
 def format_water_mask_context(imagery_id: str, stats: dict, result_filename: str) -> str:
     """Format water mask results as LLM-readable context."""
     lines = [
@@ -19,4 +21,5 @@ def format_water_mask_context(imagery_id: str, stats: dict, result_filename: str
         "- 水体占比低时：本次影像水体占比较低，区域以陆地为主。",
         "- 水体占比高时：本次影像水体占比较高，水域分布较广，可结合时序影像做水域变化分析。",
     ]
+    lines.extend(format_spectral_provenance(stats))
     return "\n".join(lines)

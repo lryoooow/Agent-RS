@@ -20,7 +20,7 @@ class WebSearchArguments(BaseModel):
     # 保证直接以 Python 调用的旧用法仍由方法层统一收敛。
     queries: list[str] | None = Field(
         default=None,
-        description="复合问题按意图各写一条聚焦检索词（最多 3 条生效）；简单问题留空",
+        description="复合问题（一条消息含≥2个子意图）必须在此按意图各写一条聚焦检索词（最多 3 条生效），同时 query 填第一条；简单问题留空",
     )
 
     @field_validator("query", "reason")

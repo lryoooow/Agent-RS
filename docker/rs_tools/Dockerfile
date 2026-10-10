@@ -12,6 +12,7 @@ COPY compute_band_composite.py /app/compute_band_composite.py
 COPY compute_cloud_mask.py /app/compute_cloud_mask.py
 COPY compute_water_mask.py /app/compute_water_mask.py
 COPY compute_clip_reproject.py /app/compute_clip_reproject.py
+COPY raster_utils.py /app/raster_utils.py
 COPY mcp_server.py /app/mcp_server.py
 
 # Fail the build if mcp_server's `from compute_* import ...` chain is broken
