@@ -50,13 +50,18 @@ async def run_query_once_per_turn(
 
 
 async def latest_user_query(model_context: ChatCompletionContext) -> str:
-    """取上下文里最后一条用户消息，作为检索 query。
+    """取上下文里最后一条**真正来自用户**的消息，作为检索 query。
 
     多步链路下上下文尾部往往是工具结果而不是用户消息，所以要往回找，
-    而不是简单取最后一条。找不到就返回空串（调用方据此跳过检索）。
+    而不是简单取最后一条。G14（2026-10-09 审查）：GraphFlow 各节点专家
+    的发言在共享上下文里同样是 ``UserMessage``，只是 ``source`` 是专家名
+    （如 ``spectral_agent``）——若不区分 source，下游节点（如 report_agent）
+    的检索 query 会取到上一位专家的输出而不是用户原始问题。因此只认
+    ``source == "user"``（TurnInput 写入用户消息时的固定值，见
+    engine/input.py）。找不到就返回空串（调用方据此跳过检索）。
     """
     for message in reversed(await model_context.get_messages()):
-        if isinstance(message, UserMessage):
+        if isinstance(message, UserMessage) and message.source == "user":
             content = message.content
             if isinstance(content, str):
                 return content.strip()
