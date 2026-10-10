@@ -5,6 +5,7 @@ import time
 from typing import Any
 
 from app.db.vector import decode_vector, encode_vector
+from app.db.repositories._pg.hnsw import fetch_tenant_nearest
 from app.core.logging import log_event
 
 logger = logging.getLogger(__name__)
@@ -20,9 +21,24 @@ async def search_vector_only(
     # user_id 缺失时拒绝返回（防跨租户泄漏，M1）：无归属约束的全库召回是安全漏洞。
     if not user_id:
         return []
-    # Materialize the tenant filter before distance ordering: exact tenant recall
-    # cannot be starved by a global HNSW index's post-filter candidates.
-    sql = """
+    # G9：租户过滤的近邻检索。sql_index 让计划器可用 HNSW（pgvector>=0.8 由
+    # fetch_tenant_nearest 开启 iterative_scan 保证过滤后取满 LIMIT；<0.8 时
+    # 调大 ef_search 并在不足时回退 sql_exact 精确扫描），sql_exact 先物化
+    # 租户数据再排序，召回精确、不依赖计划器选择。
+    sql_index = """
+        SELECT c.id::text, c.document_id::text, c.chunk_index, c.content, c.metadata,
+               c.embedding::text AS embedding,
+               1 - (c.embedding <=> $1::vector) AS vector_score
+        FROM public.document_chunks c
+        WHERE c.embedding IS NOT NULL
+          AND EXISTS (
+              SELECT 1 FROM public.documents d
+              WHERE d.id = c.document_id AND d.created_by_user_id = $2
+          )
+        ORDER BY c.embedding <=> $1::vector, c.id
+        LIMIT $3
+        """
+    sql_exact = """
         WITH owned AS MATERIALIZED (
             SELECT c.id, c.document_id, c.chunk_index, c.content, c.metadata, c.embedding
             FROM public.document_chunks c
@@ -35,7 +51,13 @@ async def search_vector_only(
         ORDER BY embedding <=> $1::vector, id
         LIMIT $3
         """
-    rows = await conn.fetch(sql, encode_vector(embedding), user_id, limit)
+    rows = await fetch_tenant_nearest(
+        conn,
+        sql_index=sql_index,
+        sql_exact=sql_exact,
+        params=(encode_vector(embedding), user_id, limit),
+        limit=limit,
+    )
     return [_normalize_row(row) for row in rows]
 
 

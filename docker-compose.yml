@@ -16,7 +16,9 @@
 
 services:
   db:
-    image: pgvector/pgvector:pg16
+    # G9：钉具体 pgvector 版本（>=0.8 才有 hnsw.iterative_scan，
+    # 租户过滤召回保障依赖它；浮动 tag 升级可能悄悄降级到 <0.8 行为）。
+    image: pgvector/pgvector:0.8.3-pg16
     container_name: agent_rs_pg
     environment:
       POSTGRES_USER: agent_rs
