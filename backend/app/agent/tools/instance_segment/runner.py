@@ -191,13 +191,17 @@ def _write_rgb_png(
     green_band: int,
     blue_band: int,
 ) -> tuple[int, int]:
-    """导出推理用 RGB PNG（G3：读取前按 sam3_max_pixels 预算限制像元数）。
+    """导出推理用 RGBA PNG（G3：读取前按 sam3_max_pixels 预算限制像元数）。
 
     历史缺陷：无条件 masked=True 整幅读取——9000x9000（81M 像素 > 服务端 64M
     上限）的 730KB 源即可迫使后端主进程分配 ~1.4GB，且产出的 PNG 注定被
     ops/sam3_service.py 的 MAX_PIXELS 检查拒绝（先读入再被服务拒绝）。
     修复：读取前检查 width×height，超过 settings.sam3_max_pixels（与服务端
     SAM3_MAX_PIXELS 同名同默认）时按 sqrt 比例降采样（out_shape + bilinear）。
+
+    Alpha 有效区掩膜（与 docs/segmentation-deployment.md 的声明一致）：任一
+    RGB 波段被 nodata/内部掩膜标记的像元写入 alpha=0，其余 alpha=255；服务端
+    据此把无效区排除在分割与面积统计之外。
 
     返回实际写入的 PNG 网格 (width, height)——降采样时与源网格不同，
     _promote_outputs 据此对齐输出栅格的尺寸与 transform。
@@ -230,7 +234,9 @@ def _write_rgb_png(
         else:
             out_width, out_height = src.width, src.height
             data = src.read([red_band, green_band, blue_band], masked=True)
-    output = np.zeros((data.shape[1], data.shape[2], 3), dtype=np.uint8)
+    output = np.zeros((data.shape[1], data.shape[2], 4), dtype=np.uint8)
+    invalid = np.logical_or.reduce([np.ma.getmaskarray(data[index]) for index in range(3)])
+    output[:, :, 3] = np.where(invalid, 0, 255)
     for index in range(3):
         band = data[index]
         values = band.compressed()
@@ -249,7 +255,7 @@ def _write_rgb_png(
             else:
                 scaled = np.clip((band.filled(low).astype(np.float32) - low) * 255.0 / (high - low), 0, 255).astype(np.uint8)
         output[:, :, index] = scaled
-    Image.fromarray(output, mode="RGB").save(output_path)
+    Image.fromarray(output, mode="RGBA").save(output_path)
     return out_width, out_height
 
 

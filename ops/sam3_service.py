@@ -34,6 +34,14 @@ TILE_SIZE = int(os.environ.get("SAM3_TILE_SIZE", "1024"))
 TILE_OVERLAP = int(os.environ.get("SAM3_TILE_OVERLAP", "256"))
 
 CONFIDENCE_THRESHOLD = float(os.environ.get("SAM3_CONFIDENCE_THRESHOLD", "0.25"))
+# 最小实例面积（推理网格像元）：跨切片合并完成后，低于该值的连通掩膜按碎片噪声
+# 丢弃，不进入实例计数与面积统计。默认 32 像元的依据：推理切片为 TILE_SIZE=1024
+# 的方形网格，32 像元约占单切片面积的 0.003%，且小于 6x6 像元的掩膜多边形化后
+# 只剩若干个格点、给不出可用的边界轮廓；本能力定位的最小目标类别（建筑/船舶/
+# 车辆，docs/segmentation-deployment.md）在亚米级影像上通常达数十像元以上。
+# 该阈值与 geometry.deduplicate 的跨切片碎片合并判据互补：后者只合并来自不同
+# 切片的视角对，不处理孤立噪声碎块。设为 0 可关闭过滤。
+MIN_INSTANCE_AREA = int(os.environ.get("SAM3_MIN_INSTANCE_AREA", "32"))
 SOURCE_COMMIT = "2345a4ad109ac29c569da749c91d84f10dc08c40"
 SOURCE_SHA256 = "26a4f92919756ad412e111b20868f4bc1f2b2d7170214ab5cdae1669d6051f1a"
 CHECKPOINT_SHA256 = "9999e2341ceef5e136daa386eecb55cb414446a00ac2b55eb2dfd2f7c3cf8c9e"
@@ -41,6 +49,8 @@ if not 0.0 <= CONFIDENCE_THRESHOLD <= 1.0:
     raise RuntimeError("SAM3 confidence threshold must be within [0, 1]")
 if TILE_SIZE < 64 or not 0 <= TILE_OVERLAP < TILE_SIZE or MAX_PIXELS < 1:
     raise RuntimeError("Invalid SAM3 image or tile limits")
+if MIN_INSTANCE_AREA < 0:
+    raise RuntimeError("SAM3 minimum instance area must be non-negative")
 
 
 class InferRequest(BaseModel):
@@ -98,8 +108,27 @@ async def health() -> dict[str, Any]:
         "confidence_threshold": CONFIDENCE_THRESHOLD,
         "tile_size": TILE_SIZE,
         "tile_overlap": TILE_OVERLAP,
+        "min_instance_area": MIN_INSTANCE_AREA,
         "loaded_at": loaded_at,
     }
+
+
+def _effective_tile_mask(
+    mask: np.ndarray,
+    valid: np.ndarray,
+    extent: tuple[int, int, int, int],
+) -> np.ndarray:
+    """有效区掩膜（S1/S2 共用同一实现）：模型输出的切片掩膜只保留有效像元。
+
+    - S1（PNG Alpha）：valid 来自输入 PNG 的 Alpha 通道（透明=无效），
+      透明像元不参与分割、不计入面积统计。
+    - S2（边缘切片方形补齐）：非方形切片只在其右侧/下侧补齐到方形，模型
+      掩膜经本函数裁回 (y1-y0, x1-x0) 的切片原尺寸，补齐区随之等价于无效。
+      两种无效来源共用本实现，任一侧的规则变化另一侧自动一致。
+    """
+    x0, y0, x1, y1 = extent
+    cropped = np.asarray(mask, dtype=bool)[: y1 - y0, : x1 - x0]
+    return np.logical_and(cropped, valid[y0:y1, x0:x1])
 
 
 def _infer(request: InferRequest, input_path: Path, output_dir: Path) -> dict[str, Any]:
@@ -107,7 +136,11 @@ def _infer(request: InferRequest, input_path: Path, output_dir: Path) -> dict[st
     with Image.open(input_path) as source:
         if source.width * source.height > MAX_PIXELS:
             raise ValueError(f"input exceeds {MAX_PIXELS} pixels")
-        image = source.convert("RGB")
+        # PNG Alpha 有效区掩膜（S1）：透明像元不参与分割、不计入面积统计；
+        # 无 Alpha 的输入经 convert("RGBA") 补全为全不透明（全有效），行为与旧版一致。
+        rgba = source.convert("RGBA")
+    valid = np.asarray(rgba)[..., 3] > 0
+    image = rgba.convert("RGB")
 
     started = time.perf_counter()
     extents = tiles(*image.size, TILE_SIZE, TILE_OVERLAP) if max(image.size) > TILE_SIZE else [(0, 0, *image.size)]
@@ -115,13 +148,34 @@ def _infer(request: InferRequest, input_path: Path, output_dir: Path) -> dict[st
     step_summaries: list[dict[str, Any]] = []
     for tile_id, extent in enumerate(extents):
         x0, y0, x1, y1 = extent
-        predictions, embedding_seconds = engine.infer(image.crop(extent), request.concepts)
+        if not valid[y0:y1, x0:x1].any():
+            # 全无效切片：直接跳过，不占用 GPU 推理，只在过程记录中留痕。
+            step_summaries.append({
+                "tile": tile_id,
+                "extent": list(extent),
+                "skipped_invalid": True,
+                "valid_pixels": 0,
+                "embedding_seconds": 0.0,
+                "counts": {},
+            })
+            continue
+        tile = image.crop(extent)
+        # 边缘切片方形补齐（S2）：短于 TILE_SIZE 的维度产生非方形切片，模型内部
+        # 按固定方形网格 resize 会把非方形输入拉伸变形；统一在右侧/下侧补齐到
+        # 方形再推理，模型掩膜由 _effective_tile_mask 裁回切片原尺寸——补齐区与
+        # S1 的透明区共用同一个有效区掩膜实现，均视为无效。
+        side = max(x1 - x0, y1 - y0)
+        if tile.width != side or tile.height != side:
+            square = Image.new("RGB", (side, side))
+            square.paste(tile, (0, 0))
+            tile = square
+        predictions, embedding_seconds = engine.infer(tile, request.concepts)
         counts: dict[str, int] = {}
         for concept, output in predictions.items():
             counts[concept] = int(len(output["scores"]))
             for index, (mask, score) in enumerate(zip(output["masks"], output["scores"])):
                 instance = make_instance(
-                    mask,
+                    _effective_tile_mask(mask, valid, extent),
                     extent,
                     image.size,
                     f"{concept}-{tile_id}-{index}",
@@ -135,10 +189,16 @@ def _infer(request: InferRequest, input_path: Path, output_dir: Path) -> dict[st
             "tile": tile_id,
             "extent": list(extent),
             "embedding_seconds": embedding_seconds,
+            "valid_pixels": int(valid[y0:y1, x0:x1].sum()),
             "counts": counts,
         })
 
     instances, suppression_audit = deduplicate(candidates)
+    # 微小碎片过滤（S3）：在跨切片合并之后执行——同一大目标的切片碎片先合并、
+    # 再按面积判噪声，避免把大目标的合法局部当碎片丢弃。
+    retained = [item for item in instances if item.area >= MIN_INSTANCE_AREA]
+    dropped_fragments = len(instances) - len(retained)
+    instances = retained
     instances.sort(key=lambda item: (request.concepts.index(item.concept), -item.score, item.ident))
     label_map = np.zeros((image.height, image.width), dtype=np.uint32)
     union = union_mask(instances, image.size)
@@ -178,6 +238,8 @@ def _infer(request: InferRequest, input_path: Path, output_dir: Path) -> dict[st
         "source_commit": SOURCE_COMMIT,
         "checkpoint_sha256": CHECKPOINT_SHA256,
         "confidence_threshold": CONFIDENCE_THRESHOLD,
+        "min_instance_area": MIN_INSTANCE_AREA,
+        "dropped_fragments": dropped_fragments,
         "device": "hygon-dcu",
         "input_size": list(image.size),
         "tile_size": TILE_SIZE,
