@@ -67,6 +67,11 @@ def compute(
             from rasterio.warp import transform
             for det in detections:
                 pixels = np.asarray(det["polygon"]).reshape(4, 2)
+                # 框体越界裁剪：中心在有效区的检出，框体仍可能伸入边缘切片的补齐区，
+                # 回映后顶点超出 [0,width]×[0,height]，转地理坐标会落到影像范围之外。
+                # 在像素→地理回映处把顶点统一收敛到影像边界内；JSON 原始像素坐标与
+                # PNG 叠加保持模型原样输出（后者超界部分由画布自然裁掉）。
+                pixels = np.clip(pixels, (0.0, 0.0), (width, height))
                 xy = [src.transform * tuple(point) for point in pixels]
                 lon, lat = transform(src.crs, "EPSG:4326", [p[0] for p in xy], [p[1] for p in xy])
                 ring = [list(pair) for pair in zip(lon, lat)]
