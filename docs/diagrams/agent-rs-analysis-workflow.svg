@@ -1,126 +1,73 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="1930" viewBox="0 0 1400 1930" role="img" aria-labelledby="title desc">
-<title id="title">遥感分析流程图</title>
-<desc id="desc">从数据与任务出发，经受控计算，回到地图成果与可核查报告</desc>
-<style>text {font-family:"Microsoft YaHei","PingFang SC","Noto Sans CJK SC",Arial,sans-serif;} path,line,rect,polygon,ellipse {stroke-linejoin:round;stroke-linecap:round;}</style>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1090" viewBox="0 0 1200 1090">
+<title>Agent-RS 平台使用流程</title>
+<desc>准备影像或地图选区，确认分析对象，在右侧对话提出任务，在地图查看并下载实际完成的成果。功能图谱可用于了解能力和保存个人定义。</desc>
+<style>text{font-family:"Microsoft YaHei","Noto Sans CJK SC",Arial,sans-serif}</style>
 <defs>
-<marker id="arrow-blue" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto" markerUnits="userSpaceOnUse"><polygon points="0 0,10 3.5,0 7" fill="#2563eb"/></marker>
-<marker id="arrow-green" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto" markerUnits="userSpaceOnUse"><polygon points="0 0,10 3.5,0 7" fill="#059669"/></marker>
-<marker id="arrow-purple" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto" markerUnits="userSpaceOnUse"><polygon points="0 0,10 3.5,0 7" fill="#7c3aed"/></marker>
-<marker id="arrow-orange" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto" markerUnits="userSpaceOnUse"><polygon points="0 0,10 3.5,0 7" fill="#ea580c"/></marker>
-</defs>
-<rect x="0" y="0" width="1400" height="1930" rx="0" fill="#ffffff" stroke="none" stroke-width="1.5"/>
-<text x="56" y="53" text-anchor="start" fill="#2563eb" font-size="14" font-weight="700">AGENT-RS  /  REMOTE SENSING</text>
-<text x="56" y="100" text-anchor="start" fill="#111827" font-size="32" font-weight="700">遥感分析流程图</text>
-<text x="56" y="130" text-anchor="start" fill="#64748b" font-size="16" font-weight="400">从数据与任务出发，经受控计算，回到地图成果与可核查报告</text>
-<polygon points="96,172 440,172 424,268 80,268" fill="#ecfdf5" stroke="#d1d5db" stroke-width="1.5"/>
-<text x="260.0" y="202" text-anchor="middle" fill="#111827" font-size="20" font-weight="700">本地影像</text>
-<text x="260.0" y="228" text-anchor="middle" fill="#64748b" font-size="15" font-weight="400">上传 GeoTIFF</text>
-<text x="260.0" y="251" text-anchor="middle" fill="#64748b" font-size="15" font-weight="400">保留坐标与波段语义</text>
-<polygon points="536,172 880,172 864,268 520,268" fill="#ecfdf5" stroke="#d1d5db" stroke-width="1.5"/>
-<text x="700.0" y="202" text-anchor="middle" fill="#111827" font-size="20" font-weight="700">公开影像</text>
-<text x="700.0" y="228" text-anchor="middle" fill="#64748b" font-size="15" font-weight="400">STAC 搜索 → 预览 / 导入</text>
-<text x="700.0" y="251" text-anchor="middle" fill="#64748b" font-size="15" font-weight="400">区域 / 时间 / 云量</text>
-<polygon points="976,172 1320,172 1304,268 960,268" fill="#ecfdf5" stroke="#d1d5db" stroke-width="1.5"/>
-<text x="1140.0" y="202" text-anchor="middle" fill="#111827" font-size="20" font-weight="700">地图选区</text>
-<text x="1140.0" y="228" text-anchor="middle" fill="#64748b" font-size="15" font-weight="400">prepare_map_roi 按需取图</text>
-<text x="1140.0" y="251" text-anchor="middle" fill="#64748b" font-size="15" font-weight="400">底图仅 RGB，无 NIR / SWIR</text>
-<path d="M 260,268 L 260,308 L 700,308" fill="none" stroke="#2563eb" stroke-width="2"/>
-<path d="M 700,268 L 700,308 L 700,308" fill="none" stroke="#2563eb" stroke-width="2"/>
-<path d="M 1140,268 L 1140,308 L 700,308" fill="none" stroke="#2563eb" stroke-width="2"/>
-<path d="M 700,308 L 700,352" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow-blue)"/>
-<rect x="460" y="352" width="480" height="90" rx="10" fill="#ffffff" stroke="#d1d5db" stroke-width="1.5"/>
-<text x="700.0" y="382" text-anchor="middle" fill="#111827" font-size="20" font-weight="700">确认分析对象</text>
-<text x="700.0" y="408" text-anchor="middle" fill="#64748b" font-size="15" font-weight="400">当前影像 ID · 空间范围 · 波段角色</text>
-<text x="700.0" y="431" text-anchor="middle" fill="#64748b" font-size="15" font-weight="400">可在对话工具循环中继续取图 / 导入</text>
-<path d="M 700,442 L 700,492" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow-blue)"/>
-<rect x="460" y="492" width="480" height="90" rx="10" fill="#eff6ff" stroke="#d1d5db" stroke-width="1.5"/>
-<text x="700.0" y="522" text-anchor="middle" fill="#111827" font-size="20" font-weight="700">提交自然语言任务</text>
-<text x="700.0" y="548" text-anchor="middle" fill="#64748b" font-size="15" font-weight="400">选中影像 + 可选 ROI + 用户要求</text>
-<text x="700.0" y="571" text-anchor="middle" fill="#64748b" font-size="15" font-weight="400">装配历史、已有成果与相关知识</text>
-<rect x="1010" y="492" width="310" height="90" rx="10" fill="#ffffff" stroke="#d1d5db" stroke-width="1.5"/>
-<text x="1165.0" y="522" text-anchor="middle" fill="#111827" font-size="20" font-weight="700">检索与上下文</text>
-<text x="1165.0" y="548" text-anchor="middle" fill="#64748b" font-size="15" font-weight="400">RAG / 长期记忆按需注入</text>
-<text x="1165.0" y="571" text-anchor="middle" fill="#64748b" font-size="15" font-weight="400">每次模型调用受预算约束</text>
-<path d="M 1010,537 L 940,537" fill="none" stroke="#059669" stroke-width="2" marker-end="url(#arrow-green)"/>
-<path d="M 700,582 L 700,648" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow-blue)"/>
-<polygon points="700,648 888,712 700,776 512,712" fill="#eff6ff" stroke="#93c5fd" stroke-width="1.5"/>
-<text x="700" y="712" text-anchor="middle" fill="#111827" font-size="19" font-weight="700">完整标准作业？</text>
-<text x="700" y="737" text-anchor="middle" fill="#64748b" font-size="14" font-weight="400">结构化路由</text>
-<path d="M 512,712 L 320,712 L 320,822" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow-blue)"/>
-<rect x="232.06" y="749" width="175.88" height="23" rx="4" fill="#ffffff" stroke="none" stroke-width="1.5"/>
-<text x="320" y="766" text-anchor="middle" fill="#2563eb" font-size="14" font-weight="400">否 / 不确定 / 路由失败</text>
-<path d="M 888,712 L 1080,712 L 1080,822" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow-blue)"/>
-<rect x="1065.0" y="749" width="30" height="23" rx="4" fill="#ffffff" stroke="none" stroke-width="1.5"/>
-<text x="1080" y="766" text-anchor="middle" fill="#2563eb" font-size="14" font-weight="400">是</text>
-<rect x="110" y="822" width="420" height="96" rx="10" fill="#eff6ff" stroke="#d1d5db" stroke-width="1.5"/>
-<rect x="114" y="826" width="412" height="88" rx="7" fill="none" stroke="#bfdbfe" stroke-width="1.5"/>
-<text x="320.0" y="852" text-anchor="middle" fill="#111827" font-size="20" font-weight="700">主 Agent</text>
-<text x="320.0" y="878" text-anchor="middle" fill="#64748b" font-size="15" font-weight="400">自由任务自主选择工具</text>
-<text x="320.0" y="901" text-anchor="middle" fill="#64748b" font-size="15" font-weight="400">无影像时可走快车道</text>
-<rect x="870" y="822" width="420" height="96" rx="10" fill="#eff6ff" stroke="#d1d5db" stroke-width="1.5"/>
-<rect x="874" y="826" width="412" height="88" rx="7" fill="none" stroke="#bfdbfe" stroke-width="1.5"/>
-<text x="1080.0" y="852" text-anchor="middle" fill="#111827" font-size="20" font-weight="700">GraphFlow</text>
-<text x="1080.0" y="878" text-anchor="middle" fill="#64748b" font-size="15" font-weight="400">按固定顺序执行领域节点</text>
-<text x="1080.0" y="901" text-anchor="middle" fill="#64748b" font-size="15" font-weight="400">标准作业由报告节点收尾</text>
-<path d="M 320,918 L 320,956 L 700,956" fill="none" stroke="#2563eb" stroke-width="2"/>
-<path d="M 1080,918 L 1080,956 L 700,956" fill="none" stroke="#2563eb" stroke-width="2"/>
-<path d="M 700,956 L 700,1004" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow-blue)"/>
-<rect x="490" y="1004" width="420" height="88" rx="10" fill="#eff6ff" stroke="#d1d5db" stroke-width="1.5"/>
-<text x="700.0" y="1034" text-anchor="middle" fill="#111827" font-size="20" font-weight="700">当前 Agent / 流节点</text>
-<text x="700.0" y="1060" text-anchor="middle" fill="#64748b" font-size="15" font-weight="400">选择本步工具与参数</text>
-<path d="M 700,1092 L 700,1166" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow-blue)"/>
-<rect x="664.0" y="1114" width="72" height="23" rx="4" fill="#ffffff" stroke="none" stroke-width="1.5"/>
-<text x="700" y="1131" text-anchor="middle" fill="#2563eb" font-size="14" font-weight="400">需要工具</text>
-<rect x="490" y="1166" width="420" height="96" rx="10" fill="#faf5ff" stroke="#d1d5db" stroke-width="1.5"/>
-<text x="700.0" y="1196" text-anchor="middle" fill="#111827" font-size="20" font-weight="700">校验与登记</text>
-<text x="700.0" y="1222" text-anchor="middle" fill="#64748b" font-size="15" font-weight="400">配额 / 参数 / 资源归属 / 分析前置条件</text>
-<text x="700.0" y="1245" text-anchor="middle" fill="#64748b" font-size="15" font-weight="400">登记任务 · 准备影像 · 执行期心跳</text>
-<path d="M 700,1262 L 700,1340" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow-blue)"/>
-<rect x="664.0" y="1287" width="72" height="23" rx="4" fill="#ffffff" stroke="none" stroke-width="1.5"/>
-<text x="700" y="1304" text-anchor="middle" fill="#2563eb" font-size="14" font-weight="400">校验通过</text>
-<rect x="490" y="1340" width="420" height="94" rx="10" fill="#ffffff" stroke="#d1d5db" stroke-width="1.5"/>
-<text x="700.0" y="1370" text-anchor="middle" fill="#111827" font-size="20" font-weight="700">调用能力</text>
-<text x="700.0" y="1396" text-anchor="middle" fill="#64748b" font-size="15" font-weight="400">MCP 栅格 / YOLO · HTTP SAM3</text>
-<text x="700.0" y="1419" text-anchor="middle" fill="#64748b" font-size="15" font-weight="400">或影像检索、导入、报告等共享工具</text>
-<path d="M 700,1434 L 700,1508" fill="none" stroke="#7c3aed" stroke-width="2" marker-end="url(#arrow-purple)"/>
-<rect x="490" y="1508" width="420" height="100" rx="10" fill="#ecfdf5" stroke="#d1d5db" stroke-width="1.5"/>
-<text x="700.0" y="1538" text-anchor="middle" fill="#111827" font-size="20" font-weight="700">收集执行结果</text>
-<text x="700.0" y="1564" text-anchor="middle" fill="#64748b" font-size="15" font-weight="400">摘要回到模型 · 产物进入回合状态</text>
-<text x="700.0" y="1587" text-anchor="middle" fill="#64748b" font-size="15" font-weight="400">终态记录 / SSE 阶段与地图更新</text>
-<polygon points="1110,1494 1250,1558 1110,1622 970,1558" fill="#eff6ff" stroke="#93c5fd" stroke-width="1.5"/>
-<text x="1110" y="1565" text-anchor="middle" fill="#111827" font-size="19" font-weight="700">还需下一步？</text>
-<path d="M 910,1558 L 970,1558" fill="none" stroke="#7c3aed" stroke-width="2" marker-end="url(#arrow-purple)"/>
-<path d="M 1110,1494 L 1338,1494 L 1338,1048 L 910,1048" fill="none" stroke="#7c3aed" stroke-width="2" marker-end="url(#arrow-purple)"/>
-<rect x="1030.03" y="1033" width="179.94" height="23" rx="4" fill="#ffffff" stroke="none" stroke-width="1.5"/>
-<text x="1120" y="1050" text-anchor="middle" fill="#7c3aed" font-size="14" font-weight="400">是：工具循环 / 下一节点</text>
-<path d="M 1110,1622 L 1110,1690 L 700,1690 L 700,1740" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow-blue)"/>
-<rect x="964.0" y="1675" width="72" height="23" rx="4" fill="#ffffff" stroke="none" stroke-width="1.5"/>
-<text x="1000" y="1692" text-anchor="middle" fill="#2563eb" font-size="14" font-weight="400">否：汇总</text>
-<rect x="100" y="1166" width="300" height="118" rx="10" fill="#fff7ed" stroke="#d1d5db" stroke-width="1.5"/>
-<text x="250.0" y="1196" text-anchor="middle" fill="#111827" font-size="20" font-weight="700">拒绝或执行失败</text>
-<text x="250.0" y="1222" text-anchor="middle" fill="#64748b" font-size="15" font-weight="400">给出真实原因与已完成部分</text>
-<text x="250.0" y="1245" text-anchor="middle" fill="#64748b" font-size="15" font-weight="400">修改前提后才重新执行</text>
-<text x="250.0" y="1268" text-anchor="middle" fill="#64748b" font-size="15" font-weight="400">未执行内容不生成分析结论</text>
-<path d="M 490,1214 L 400,1214" fill="none" stroke="#ea580c" stroke-width="2" stroke-dasharray="6 5" marker-end="url(#arrow-orange)"/>
-<rect x="423.0" y="1199" width="44" height="23" rx="4" fill="#ffffff" stroke="none" stroke-width="1.5"/>
-<text x="445" y="1216" text-anchor="middle" fill="#ea580c" font-size="14" font-weight="400">拒绝</text>
-<path d="M 490,1387 L 250,1387 L 250,1284" fill="none" stroke="#ea580c" stroke-width="2" stroke-dasharray="6 5" marker-end="url(#arrow-orange)"/>
-<rect x="337.0" y="1372" width="44" height="23" rx="4" fill="#ffffff" stroke="none" stroke-width="1.5"/>
-<text x="359" y="1389" text-anchor="middle" fill="#ea580c" font-size="14" font-weight="400">失败</text>
-<path d="M 100,1225 L 60,1225 L 60,1787 L 438.3,1787" fill="none" stroke="#ea580c" stroke-width="2" stroke-dasharray="6 5" marker-end="url(#arrow-orange)"/>
-<rect x="214.0" y="1772" width="72" height="23" rx="4" fill="#ffffff" stroke="none" stroke-width="1.5"/>
-<text x="250" y="1789" text-anchor="middle" fill="#ea580c" font-size="14" font-weight="400">反馈原因</text>
-<polygon points="446,1740 970,1740 954,1838 430,1838" fill="#ecfdf5" stroke="#d1d5db" stroke-width="1.5"/>
-<text x="700.0" y="1770" text-anchor="middle" fill="#111827" font-size="20" font-weight="700">交付成果</text>
-<text x="700.0" y="1796" text-anchor="middle" fill="#64748b" font-size="15" font-weight="400">地图图层 + 分析说明 + 可下载文件</text>
-<text x="700.0" y="1819" text-anchor="middle" fill="#64748b" font-size="15" font-weight="400">按需生成报告：本轮成功结果 + 会话已存成果</text>
-<path d="M 56,1870 L 94,1870" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow-blue)"/>
-<text x="105" y="1875" text-anchor="start" fill="#64748b" font-size="14" font-weight="400">请求 / 数据</text>
-<path d="M 265,1870 L 303,1870" fill="none" stroke="#059669" stroke-width="2" marker-end="url(#arrow-green)"/>
-<text x="314" y="1875" text-anchor="start" fill="#64748b" font-size="14" font-weight="400">上下文 / 存储</text>
-<path d="M 494,1870 L 532,1870" fill="none" stroke="#7c3aed" stroke-width="2" marker-end="url(#arrow-purple)"/>
-<text x="543" y="1875" text-anchor="start" fill="#64748b" font-size="14" font-weight="400">结果反馈</text>
-<path d="M 695,1870 L 733,1870" fill="none" stroke="#ea580c" stroke-width="2" stroke-dasharray="6 5" marker-end="url(#arrow-orange)"/>
-<text x="744" y="1875" text-anchor="start" fill="#64748b" font-size="14" font-weight="400">异常 / 拒绝</text>
-<text x="56" y="1908" text-anchor="start" fill="#64748b" font-size="13" font-weight="400">图聚焦需要工具的分析任务，纯问答可直接返回；底图可在工具循环中获取，报告按需生成。循环也表示 GraphFlow 节点推进。</text>
+<marker id="main" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><path d="M0 0 L9 3.5 L0 7 Z" fill="#2563eb"/></marker>
+<marker id="optional" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><path d="M0 0 L9 3.5 L0 7 Z" fill="#7c3aed"/></marker>
+<marker id="retry" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><path d="M0 0 L9 3.5 L0 7 Z" fill="#ea580c"/></marker>
+</defs><rect width="1200" height="1090" fill="#fff"/>
+<text x="60" y="54" text-anchor="start" font-size="15" font-weight="650" fill="#2563eb">AGENT-RS · 平台使用流程</text>
+<text x="60" y="98" text-anchor="start" font-size="30" font-weight="700" fill="#111827">从准备数据，到查看分析成果</text>
+<text x="60" y="127" text-anchor="start" font-size="16" font-weight="400" fill="#64748b">左侧选择功能 · 右侧发起对话 · 地图中查看结果</text>
+<path d="M76 170 H360 L344 278 H60 Z" fill="#f0fdf4" stroke="#cbd5e1" stroke-width="1.5"/>
+<text x="210.0" y="206" text-anchor="middle" font-size="21" font-weight="650" fill="#111827">上传本地影像</text>
+<text x="210.0" y="236" text-anchor="middle" font-size="16" font-weight="400" fill="#64748b">GeoTIFF 文件</text>
+<text x="210.0" y="263" text-anchor="middle" font-size="16" font-weight="400" fill="#64748b">保留影像范围与波段信息</text>
+<path d="M466 170 H750 L734 278 H450 Z" fill="#f0fdf4" stroke="#cbd5e1" stroke-width="1.5"/>
+<text x="600.0" y="206" text-anchor="middle" font-size="21" font-weight="650" fill="#111827">检索卫星影像</text>
+<text x="600.0" y="236" text-anchor="middle" font-size="16" font-weight="400" fill="#64748b">按区域、日期与云量检索</text>
+<text x="600.0" y="263" text-anchor="middle" font-size="16" font-weight="400" fill="#64748b">预览后导入需要的影像</text>
+<path d="M856 170 H1140 L1124 278 H840 Z" fill="#f0fdf4" stroke="#cbd5e1" stroke-width="1.5"/>
+<text x="990.0" y="206" text-anchor="middle" font-size="21" font-weight="650" fill="#111827">框选地图区域</text>
+<text x="990.0" y="236" text-anchor="middle" font-size="16" font-weight="400" fill="#64748b">选择分析范围与数据来源</text>
+<text x="990.0" y="263" text-anchor="middle" font-size="16" font-weight="400" fill="#64748b">使用当前影像或地图底图</text>
+<path d="M210 278 V310 H990 V278 M600 278 V310" fill="none" stroke="#2563eb" stroke-width="2.2" stroke-linejoin="round"/>
+<path d="M600 310 V350" fill="none" stroke="#2563eb" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#main)"/>
+<rect x="400" y="350" width="400" height="108" rx="12" fill="#fff" stroke="#cbd5e1" stroke-width="1.5"/>
+<text x="600.0" y="386" text-anchor="middle" font-size="21" font-weight="650" fill="#111827">确认分析对象</text>
+<text x="600.0" y="416" text-anchor="middle" font-size="16" font-weight="400" fill="#64748b">检查当前影像、区域与任务需求</text>
+<text x="600.0" y="443" text-anchor="middle" font-size="16" font-weight="400" fill="#64748b">不同分析需要相应分辨率和波段</text>
+<path d="M600 458 V520" fill="none" stroke="#2563eb" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#main)"/>
+<rect x="400" y="520" width="400" height="108" rx="12" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.5"/>
+<text x="600.0" y="556" text-anchor="middle" font-size="21" font-weight="650" fill="#111827">在右侧对话提出任务</text>
+<text x="600.0" y="586" text-anchor="middle" font-size="16" font-weight="400" fill="#64748b">例如：提取建筑、检测船舶</text>
+<text x="600.0" y="613" text-anchor="middle" font-size="16" font-weight="400" fill="#64748b">或计算指数、识别水体</text>
+<rect x="60" y="500" width="260" height="224" rx="12" fill="#faf5ff" stroke="#ddd6fe" stroke-width="1.5"/>
+<text x="190.0" y="536" text-anchor="middle" font-size="21" font-weight="650" fill="#111827">功能图谱（可选）</text>
+<text x="190.0" y="566" text-anchor="middle" font-size="16" font-weight="400" fill="#64748b">浏览平台能力与数据关系</text>
+<text x="190.0" y="593" text-anchor="middle" font-size="16" font-weight="400" fill="#64748b">查看地物分类、目标检测等工具</text>
+<text x="190.0" y="620" text-anchor="middle" font-size="16" font-weight="400" fill="#64748b">按需编辑实体、关系和条件</text>
+<text x="190.0" y="647" text-anchor="middle" font-size="16" font-weight="400" fill="#64748b">保存个人定义</text>
+<text x="190.0" y="674" text-anchor="middle" font-size="16" font-weight="400" fill="#64748b">在后续新规划中使用</text>
+<path d="M320 574 H400" fill="none" stroke="#7c3aed" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#optional)" stroke-dasharray="6 5"/>
+<rect x="339.0" y="557" width="42" height="25" rx="4" fill="#fff"/>
+<text x="360" y="574" text-anchor="middle" font-size="14" font-weight="400" fill="#7c3aed">定义</text>
+<path d="M600 628 V690" fill="none" stroke="#2563eb" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#main)"/>
+<rect x="400" y="690" width="400" height="108" rx="12" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.5"/>
+<text x="600.0" y="726" text-anchor="middle" font-size="21" font-weight="650" fill="#111827">执行任务并查看进度</text>
+<text x="600.0" y="756" text-anchor="middle" font-size="16" font-weight="400" fill="#64748b">平台核对数据条件并调用工具</text>
+<text x="600.0" y="783" text-anchor="middle" font-size="16" font-weight="400" fill="#64748b">显示进度、实际结果或失败原因</text>
+<rect x="880" y="690" width="260" height="108" rx="12" fill="#fff7ed" stroke="#fed7aa" stroke-width="1.5"/>
+<text x="1010.0" y="726" text-anchor="middle" font-size="21" font-weight="650" fill="#111827">按提示调整</text>
+<text x="1010.0" y="756" text-anchor="middle" font-size="16" font-weight="400" fill="#64748b">补充影像、范围或参数</text>
+<text x="1010.0" y="783" text-anchor="middle" font-size="16" font-weight="400" fill="#64748b">处理问题后重新提交</text>
+<path d="M800 744 H880" fill="none" stroke="#ea580c" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#retry)" stroke-dasharray="6 5"/>
+<rect x="819.0" y="727" width="42" height="25" rx="4" fill="#fff"/>
+<text x="840" y="744" text-anchor="middle" font-size="14" font-weight="400" fill="#ea580c">异常</text>
+<path d="M1010 690 V404 H800" fill="none" stroke="#ea580c" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#retry)" stroke-dasharray="6 5"/>
+<rect x="968.0" y="531" width="84" height="25" rx="4" fill="#fff"/>
+<text x="1010" y="548" text-anchor="middle" font-size="14" font-weight="400" fill="#ea580c">补充后重试</text>
+<path d="M600 798 V860" fill="none" stroke="#2563eb" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#main)"/>
+<path d="M376 860 H840 L824 980 H360 Z" fill="#f0fdf4" stroke="#bbf7d0" stroke-width="1.5"/>
+<text x="600.0" y="896" text-anchor="middle" font-size="21" font-weight="650" fill="#111827">地图查看与成果下载</text>
+<text x="600.0" y="926" text-anchor="middle" font-size="16" font-weight="400" fill="#64748b">查看图层、类别、数量及分析说明</text>
+<text x="600.0" y="953" text-anchor="middle" font-size="16" font-weight="400" fill="#64748b">下载实际生成的成果，按需汇总报告</text>
+<path d="M72 1016 H112" fill="none" stroke="#2563eb" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#main)"/>
+<text x="124" y="1021" text-anchor="start" font-size="14" font-weight="400" fill="#64748b">主要操作</text>
+<path d="M340 1016 H380" fill="none" stroke="#7c3aed" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#optional)" stroke-dasharray="6 5"/>
+<text x="392" y="1021" text-anchor="start" font-size="14" font-weight="400" fill="#64748b">可选定义</text>
+<path d="M608 1016 H648" fill="none" stroke="#ea580c" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#retry)" stroke-dasharray="6 5"/>
+<text x="660" y="1021" text-anchor="start" font-size="14" font-weight="400" fill="#64748b">补充与重试</text>
+<text x="60" y="1061" text-anchor="start" font-size="14" font-weight="400" fill="#64748b">地图底图通常只有 RGB 波段；可用能力以实际影像与模型配置为准。报告只汇总已完成的分析。</text>
 </svg>
