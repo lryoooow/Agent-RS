@@ -185,6 +185,7 @@ class Settings(BaseSettings):
     # RAG 检索引擎：仅预留开关，当前只有 builtin（现有 hybrid+RRF+rerank+MMR）。
     rag_engine: str = "builtin"
     knowledge_graph_enabled: bool = False
+    ontology_enabled: bool = True
 
     default_user_id: str = "00000000-0000-4000-8000-000000000001"
     default_workspace_id: str = "00000000-0000-4000-8000-000000000001"

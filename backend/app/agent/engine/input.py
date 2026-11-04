@@ -13,6 +13,7 @@ from app.agent.request_builder import build_provider_request_context
 from app.agent.imagery_access import user_owns_imagery, get_user_imagery_metadata
 from app.agent.imagery_selection import use_current_selection, geo_roi_mismatch
 from app.agent.tool_registry import TOOLS
+from app.agent.ontology.state import OntologySession, create_session
 from app.schemas.chat import ChatRequest
 
 
@@ -25,6 +26,7 @@ class TurnInput:
     # 也不能让快车道静默关掉 GraphFlow 通道（只有 build_turn_input 会如实设置）。
     has_imagery: bool = True
     context_metadata: dict = field(default_factory=dict)
+    ontology: OntologySession | None = None
 
     def context(self) -> BudgetedChatCompletionContext:
         # Every Agent and the group manager need their own mutable context.
@@ -110,6 +112,7 @@ async def build_turn_input(request: ChatRequest, *, user_id: str | None) -> Turn
         query=query,
         initial_messages=tuple(initial),
         trusted_tool_arguments=trusted_tool_arguments,
+        ontology=await create_session(request, user_id),
         # getattr 而非直接取属性：测试用 SimpleNamespace 伪造 provider；
         # 缺标注时按"可能有影像"处理（与 TurnInput.has_imagery 的保守默认一致）。
         has_imagery=bool(getattr(provider, "has_imagery", True)),

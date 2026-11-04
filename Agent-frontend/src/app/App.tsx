@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { AnimatePresence } from "motion/react";
 import type { Map as MapLibreMap } from "maplibre-gl";
 import { MapView } from "./components/MapView";
 import { AgentChat } from "./components/AgentChat";
 import { RightPanel } from "./components/RightPanel";
-import { WelcomeScreen } from "./components/WelcomeScreen";
+import { OntologyPage } from "./components/OntologyPage";
+import { MessageSquare } from "lucide-react";
 import { TopBar } from "./components/TopBar";
 import { TaskBar } from "./components/TaskBar";
 import { ToolsPage } from "./components/ToolsPage";
@@ -86,12 +87,19 @@ export default function App() {
   });
   const imagery = useImageryUpload(settings.endpoint);
 
-  const [view, setView] = useState<"welcome" | "chat">("welcome");
+  const [chatOpen, setChatOpen] = useState(true);
+  const [chatWidth, setChatWidth] = useState(420);
   const [toolsOpen, setToolsOpen] = useState(false);
   const [dataOpen, setDataOpen] = useState(false);
   const [tasksOpen, setTasksOpen] = useState(false);
   const [reportsOpen, setReportsOpen] = useState(false);
-  const [appSection, setAppSection] = useState<"workspace" | "satellite">("workspace");
+  const [appSection, setAppSection] = useState<"workspace" | "satellite" | "ontology">(() => window.location.hash === "#ontology" ? "ontology" : window.location.hash === "#satellite" ? "satellite" : "workspace");
+  useEffect(() => { window.history.replaceState(null, "", `#${appSection}`); }, [appSection]);
+  useEffect(() => {
+    const navigate = () => setAppSection(window.location.hash === "#ontology" ? "ontology" : window.location.hash === "#satellite" ? "satellite" : "workspace");
+    window.addEventListener("hashchange", navigate);
+    return () => window.removeEventListener("hashchange", navigate);
+  }, []);
   const [satelliteMode, setSatelliteMode] = useState<SatelliteWorkspaceMode>("orbit");
   const [scenePreviewRequest, setScenePreviewRequest] = useState<ScenePreviewRequest | null>(null);
   // 图层显隐/透明度的本地覆盖（按 layer id）；图层本体由真实 geospatialResults 派生。
@@ -232,13 +240,11 @@ export default function App() {
     setLayerOverrides({});
     // The first message can refer to a box drawn on the welcome map.
     if (!firstText?.trim()) setRoi(null);
-    setView("chat");
+    setChatOpen(true);
     if (firstText?.trim()) {
       setTimeout(() => chat.sendMessage(firstText), 0);
     }
   };
-
-  const goBack = () => setView("welcome");
 
   const openConversation = (
     id: string,
@@ -249,7 +255,8 @@ export default function App() {
     setLayerOverrides({});
     setRoi(null);
     setDataOpen(false);
-    setView("chat");
+    setAppSection("workspace");
+    setChatOpen(true);
   };
 
   // 删除的恰好是当前激活会话：重置对话状态并清掉派生的图层/ROI（与 startSession 一致），
@@ -263,12 +270,9 @@ export default function App() {
   const launchModelPrompt = (prompt: string) => {
     if (chat.loading) return;
     setToolsOpen(false);
-    if (view !== "chat") {
-      setView("chat");
-      setTimeout(() => chat.sendMessage(prompt), 0);
-    } else {
-      chat.sendMessage(prompt);
-    }
+    setAppSection("workspace");
+    setChatOpen(true);
+    chat.sendMessage(prompt);
   };
 
   // 应用门控（纯函数 resolveAppGate，可单测）：splash / login / app 三态。
@@ -289,6 +293,17 @@ export default function App() {
 
   return (
     <div className="relative h-screen w-screen overflow-hidden bg-background text-foreground">
+      <TopBar settings={settings} auth={auth} navigation={<TaskBar
+        activeSection={appSection}
+        onOpenWorkspace={openWorkspace}
+        onOpenTools={() => setToolsOpen(true)}
+        onOpenData={() => setDataOpen(true)}
+        onOpenTasks={() => setTasksOpen(true)}
+        onOpenReports={() => setReportsOpen(true)}
+        onOpenSearch={openSatellite}
+        onOpenOntology={() => setAppSection("ontology")}
+      />} />
+      <div className="absolute inset-y-0 right-0 left-[var(--nav-width)]" style={{ "--conversation-space": chatOpen ? `${chatWidth + 32}px` : "0px" } as CSSProperties}>
       <MapView
         key={auth.user?.id ?? "anonymous"}
         principalId={auth.user?.id ?? null}
@@ -309,15 +324,7 @@ export default function App() {
         onAnnotationsChange={setAnnotations}
       />
 
-      <TopBar settings={settings} auth={auth} navigation={<TaskBar
-        activeSection={appSection}
-        onOpenWorkspace={openWorkspace}
-        onOpenTools={() => setToolsOpen(true)}
-        onOpenData={() => setDataOpen(true)}
-        onOpenTasks={() => setTasksOpen(true)}
-        onOpenReports={() => setReportsOpen(true)}
-        onOpenSearch={openSatellite}
-      />} />
+      <OntologyPage key={`ontology:${auth.user?.id ?? "anonymous"}`} active={appSection === "ontology"} />
 
       <SatelliteWorkspace
         active={appSection === "satellite"}
@@ -354,7 +361,7 @@ export default function App() {
       />
 
       <AnimatePresence>
-        {appSection === "workspace" && view === "chat" && (
+        {appSection === "workspace" && (
           <RightPanel
             layers={layers}
             onToggle={(id) =>
@@ -377,12 +384,9 @@ export default function App() {
         {toolsOpen && <ToolsPage onClose={() => setToolsOpen(false)} onRun={launchModelPrompt} />}
       </AnimatePresence>
 
-      <AnimatePresence mode="wait">
-        {appSection === "workspace" && (view === "welcome" ? (
-          <WelcomeScreen key="welcome" onStart={startSession} />
-        ) : (
+      <div style={{ display: appSection !== "ontology" && chatOpen ? "contents" : "none" }}>
           <AgentChat
-            key="chat"
+            key={auth.user?.id ?? "anonymous"}
             turns={chat.turns}
             loading={chat.loading}
             activeStream={chat.activeStream}
@@ -397,7 +401,9 @@ export default function App() {
             uploading={imagery.uploading}
             onSend={chat.sendMessage}
             onUpload={triggerUpload}
-            onBack={goBack}
+            onBack={() => startSession()}
+            onMinimize={() => setChatOpen(false)}
+            onWidthChange={setChatWidth}
             onGenerateReport={chat.generateReport}
             reportPending={chat.reportPending}
             thinkingStrength={settings.thinkingStrength}
@@ -405,12 +411,13 @@ export default function App() {
             onScenePreview={previewScene}
             onSceneImport={importOnly}
           />
-        ))}
-      </AnimatePresence>
+      </div>
+      {appSection !== "ontology" && !chatOpen && <button type="button" aria-label="展开对话" onClick={() => setChatOpen(true)} className="absolute right-4 top-4 z-[40] flex items-center gap-2 rounded-xl border border-border bg-sidebar/95 px-4 py-3 text-sm shadow-lg"><MessageSquare className="size-4 text-primary" />对话</button>}
       {appSection === "workspace" && roi && <RoiAnalysisPanel roi={roi} source={roiSource} activeImageryId={chat.activeImageryId} loading={chat.loading || imagery.uploading}
         onSourceChange={setRoiSource} onClear={() => setRoi(null)}
         onRun={(target) => launchModelPrompt(target === "building" ? "提取框选区域内的建筑物。" : "请对框选区域进行地物分类。")}
         onSearch={() => { setSearchRoiVersion((v) => v + 1); setSatelliteMode("imagery"); openSatellite(); }} />}
+      </div>
     </div>
   );
 }

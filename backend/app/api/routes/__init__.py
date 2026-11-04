@@ -13,6 +13,7 @@ from app.api.routes.memories import router as memories_router
 from app.api.routes.report import router as report_router
 from app.api.routes.scenes import router as scenes_router
 from app.api.routes.satellites import router as satellites_router
+from app.api.routes.ontology import router as ontology_router
 
 router = APIRouter()
 
@@ -35,3 +36,4 @@ router.include_router(report_router, dependencies=_auth_dep)
 router.include_router(scenes_router, dependencies=_auth_dep)
 
 router.include_router(satellites_router, dependencies=_auth_dep)
+router.include_router(ontology_router, dependencies=_auth_dep)

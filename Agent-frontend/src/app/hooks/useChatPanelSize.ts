@@ -5,8 +5,9 @@ type Size = { width: number; height: number };
 type Axis = "width" | "height" | "both";
 
 function clamp(size: Size): Size {
-  const maxWidth = Math.max(240, window.innerWidth - 32);
-  const maxHeight = Math.max(180, window.innerHeight - 124);
+  const navWidth = window.innerWidth >= 1100 ? 208 : 68;
+  const maxWidth = Math.max(160, window.innerWidth - navWidth - 32);
+  const maxHeight = Math.max(120, window.innerHeight - 32);
   return {
     width: Math.min(maxWidth, Math.max(Math.min(360, maxWidth), size.width)),
     height: Math.min(maxHeight, Math.max(Math.min(340, maxHeight), size.height)),
@@ -18,7 +19,7 @@ function initialSize(): Size {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "null");
     if (saved && Number.isFinite(saved.width) && Number.isFinite(saved.height)) return clamp(saved);
   } catch { /* Storage can be disabled by the browser. */ }
-  return clamp({ width: 420, height: window.innerHeight - 124 });
+  return clamp({ width: 420, height: window.innerHeight - 32 });
 }
 
 export function useChatPanelSize() {
@@ -45,7 +46,7 @@ export function useChatPanelSize() {
         const start = drag.current;
         if (!start || !event.currentTarget.hasPointerCapture(event.pointerId)) return;
         setSize(clamp({
-          width: start.size.width + (start.axis !== "height" ? event.clientX - start.x : 0),
+          width: start.size.width + (start.axis !== "height" ? start.x - event.clientX : 0),
           height: start.size.height + (start.axis !== "width" ? event.clientY - start.y : 0),
         }));
       },
@@ -56,7 +57,7 @@ export function useChatPanelSize() {
       onLostPointerCapture() { drag.current = null; },
       onKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
         const delta = event.shiftKey ? 40 : 10;
-        const dx = axis !== "height" ? ({ ArrowLeft: -delta, ArrowRight: delta }[event.key] ?? 0) : 0;
+        const dx = axis !== "height" ? ({ ArrowLeft: delta, ArrowRight: -delta }[event.key] ?? 0) : 0;
         const dy = axis !== "width" ? ({ ArrowUp: -delta, ArrowDown: delta }[event.key] ?? 0) : 0;
         if (dx || dy) {
           event.preventDefault();
@@ -65,5 +66,5 @@ export function useChatPanelSize() {
       },
     };
   }
-  return { size, handle, reset: () => setSize(clamp({ width: 420, height: window.innerHeight - 124 })) };
+  return { size, handle, reset: () => setSize(clamp({ width: 420, height: window.innerHeight - 32 })) };
 }

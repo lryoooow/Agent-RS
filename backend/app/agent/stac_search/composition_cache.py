@@ -438,7 +438,7 @@ def _get_preview(record,user_id,cancel,renderer):
         pending=directory.parent / (".building-"+identity+"-"+uuid4().hex)
         pending.mkdir(parents=True)
         try:
-            renderer(record,pending / "preview.png")
+            renderer(record,pending / "preview.png",cancellation_event=cancel)
             if cancel.is_set(): raise SceneRasterError("场景预览已取消。")
             path=pending / "preview.png"
             manifest={"status":"complete","identity":identity,"spec":spec,

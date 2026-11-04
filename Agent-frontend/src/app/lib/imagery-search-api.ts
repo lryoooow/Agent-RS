@@ -71,7 +71,10 @@ export async function fetchScenePreview(
     throw new Error("影像预览地址必须来自当前平台。");
   }
   const response = await apiFetch(path, {
-    timeoutMs: 60_000,
+    // RGB can retry a failed band once (default HTTP timeout 20s), and a
+    // thumbnail may already be generating the same preview. Leave room for
+    // recovery instead of timing out a successful response after 60s.
+    timeoutMs: 150_000,
     signal: options?.signal,
     retryOnNetworkError: true,
   });

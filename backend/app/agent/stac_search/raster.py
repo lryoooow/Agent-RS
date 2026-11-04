@@ -9,15 +9,22 @@
 from __future__ import annotations
 
 import logging
+import re
+from collections.abc import Callable
 from pathlib import Path
+from time import monotonic, sleep
+from typing import TypeVar
 
 import numpy as np
 
 from app.agent.stac_search.model import SceneRecord
+from app.agent.stac_search.gdal_cache import clear_remote_raster_cache
 from app.agent.stac_search.sources import signed_href
 from app.core.settings import get_settings
 
 logger = logging.getLogger(__name__)
+_ReadResult = TypeVar("_ReadResult")
+_REMOTE_READ_ATTEMPTS = 2
 
 
 class SceneRasterError(Exception):
@@ -28,7 +35,7 @@ def _gdal_env() -> dict[str, str]:
     settings = get_settings()
     env = {
         "GDAL_HTTP_MAX_RETRY": "3",
-        "GDAL_HTTP_TIMEOUT": str(int(settings.stac_timeout_seconds)),
+        "GDAL_HTTP_TIMEOUT": str(max(1, int(settings.stac_timeout_seconds))),
         # 只放行 tif 后缀，避免 vsicurl 误抓目录页。
         "CPL_VSIL_CURL_ALLOWED_EXTENSIONS": ".tif",
     }
@@ -40,6 +47,63 @@ def _gdal_env() -> dict[str, str]:
 def _open_path(href: str) -> str:
     """远程 COG 经 /vsicurl；本地路径（测试用合成文件）直接打开。"""
     return f"/vsicurl/{href}" if href.startswith(("http://", "https://")) else href
+
+
+def _read_raster(
+    href: str, reader: Callable[..., _ReadResult], *, context: str,
+    cancellation_event=None,
+) -> _ReadResult:
+    """Reopen a failed remote asset once, after evicting its partial HTTP blocks."""
+    import rasterio
+    from rasterio.errors import RasterioIOError, WarpOperationError
+
+    path = _open_path(href)
+    remote = path.startswith("/vsicurl/")
+    started = monotonic()
+    # Keep a retry from extending an already-slow read indefinitely. Each HTTP
+    # request also retains the configured timeout; this is not a hard job timer.
+    retry_window = max(1.0, get_settings().stac_timeout_seconds * 2)
+    for attempt in range(1, _REMOTE_READ_ATTEMPTS + 1):
+        if cancellation_event is not None and cancellation_event.is_set():
+            raise SceneRasterError("场景读取已取消。")
+        try:
+            # Own retries here so GDAL retries cannot multiply the attempt count.
+            with rasterio.Env(**({"GDAL_HTTP_MAX_RETRY": "0"} if remote else {})):
+                with rasterio.open(path) as src:
+                    result = reader(src)
+            if cancellation_event is not None and cancellation_event.is_set():
+                raise SceneRasterError("场景读取已取消。")
+            return result
+        except (RasterioIOError, WarpOperationError) as exc:
+            if not remote:
+                raise
+            # Close the dataset before clearing, including after the final
+            # failed attempt, so a later request can recover when upstream does.
+            try:
+                clear_remote_raster_cache(path)
+            except (OSError, AttributeError, RuntimeError):
+                logger.error("scene.raster_cache_clear_failed context=%s", context)
+                raise exc
+            status = re.search(r"HTTP (?:response|error) code:\s*(\d{3})", str(exc))
+            permanent = status and 400 <= int(status[1]) < 500 and int(status[1]) not in {408, 429}
+            if (permanent or attempt == _REMOTE_READ_ATTEMPTS
+                    or monotonic() - started >= retry_window):
+                logger.warning("scene.raster_read_failed context=%s attempts=%s error=%s",
+                               context, attempt, type(exc).__name__)
+                raise
+            if cancellation_event is not None and cancellation_event.is_set():
+                raise SceneRasterError("场景读取已取消。") from exc
+            # Never log href or exception text: signed asset URLs contain tokens.
+            logger.warning("scene.raster_read_retry context=%s attempt=%s/%s error=%s",
+                           context, attempt + 1, _REMOTE_READ_ATTEMPTS, type(exc).__name__)
+            if cancellation_event is not None:
+                if cancellation_event.wait(0.2):
+                    raise SceneRasterError("场景读取已取消。") from exc
+            else:
+                sleep(0.2)
+            if monotonic() - started >= retry_window:
+                raise
+    raise AssertionError("unreachable")
 
 
 def _band_href(record: SceneRecord, role: str) -> str:
@@ -61,7 +125,7 @@ def _stretch_to_byte(values: np.ndarray) -> np.ndarray:
     return (scaled * 255).astype(np.uint8)
 
 
-def render_scene_preview(record: SceneRecord, out_path: Path) -> Path:
+def render_scene_preview(record: SceneRecord, out_path: Path, *, cancellation_event=None) -> Path:
     """RGB 三波段降采样预览 PNG。
 
     读的是 COG 的降采样视图（out_shape），不拉全图；out_path 由调用方放到
@@ -76,16 +140,21 @@ def render_scene_preview(record: SceneRecord, out_path: Path) -> Path:
     size = get_settings().agent_scene_preview_size
     roles = record.preview_roles
     channels: list[np.ndarray] = []
+    def read_preview(src):
+        shape = (
+            max(1, int(src.height * size / max(src.width, src.height))),
+            max(1, int(src.width * size / max(src.width, src.height))),
+        )
+        return src.read(1, out_shape=shape).astype(np.float32)
+
     with rasterio.Env(**_gdal_env()):
         for role in roles:
             href = _band_href(record, role)
             try:
-                with rasterio.open(_open_path(href)) as src:
-                    shape = (
-                        max(1, int(src.height * size / max(src.width, src.height))),
-                        max(1, int(src.width * size / max(src.width, src.height))),
-                    )
-                    channels.append(src.read(1, out_shape=shape).astype(np.float32))
+                channels.append(_read_raster(href, read_preview,
+                    context=f"{record.key}:{role}", cancellation_event=cancellation_event))
+            except SceneRasterError:
+                raise
             except Exception as exc:
                 raise SceneRasterError(
                     f"读取 {record.display_name} 的 {role} 波段失败：{type(exc).__name__}"
@@ -114,7 +183,7 @@ def _apply_reflectance(record: SceneRecord, band: np.ndarray, role: str) -> np.n
     return band.astype(np.float32) * calibration["scale"] + calibration["offset"]
 
 
-def _compose_quality(record: SceneRecord, path: Path, profile: dict) -> dict | None:
+def _compose_quality(record: SceneRecord, path: Path, profile: dict, *, cancellation_event=None) -> dict | None:
     if not record.quality_assets:
         return None
     import rasterio
@@ -128,16 +197,19 @@ def _compose_quality(record: SceneRecord, path: Path, profile: dict) -> dict | N
     dtype = "uint8" if kind == "sentinel2_scl" else "uint16"
     fill = 0 if kind == "sentinel2_scl" else 1  # Landsat QA_PIXEL bit0=fill; zero is a valid bit pattern.
     pending = path.with_suffix(".tif.pending")
+    def read_quality(src):
+        if src.count != 1 or np.dtype(src.dtypes[0]) != np.dtype(dtype):
+            raise SceneRasterError("场景质量分类必须为单波段整数编码。")
+        with WarpedVRT(src, crs=profile["crs"], transform=profile["transform"],
+            width=profile["width"], height=profile["height"], dtype=dtype,
+            src_nodata=src.nodata, nodata=fill,
+            resampling=Resampling.nearest) as aligned:
+            return aligned.read(1)
+
     try:
         with rasterio.Env(**_gdal_env()):
-            with rasterio.open(_open_path(signed_href(href, record.quality_sign_info.get(kind)))) as src:
-                if src.count != 1 or np.dtype(src.dtypes[0]) != np.dtype(dtype):
-                    raise SceneRasterError("场景质量分类必须为单波段整数编码。")
-                with WarpedVRT(src, crs=profile["crs"], transform=profile["transform"],
-                    width=profile["width"], height=profile["height"], dtype=dtype,
-                    src_nodata=src.nodata, nodata=fill,
-                    resampling=Resampling.nearest) as aligned:
-                    data = aligned.read(1)
+            data = _read_raster(signed_href(href, record.quality_sign_info.get(kind)),
+                read_quality, context=f"{record.key}:{kind}", cancellation_event=cancellation_event)
         quality_profile = {**profile, "count": 1, "dtype": dtype, "nodata": fill}
         with rasterio.open(pending, "w", **quality_profile) as dst:
             dst.write(data, 1)
@@ -186,36 +258,40 @@ def compose_scene_tif(
 
     with rasterio.Env(**_gdal_env()):
         try:
-            with rasterio.open(_open_path(base_href)) as base:
-                crs = base.crs
-                if bbox is not None:
-                    left, bottom, right, top = transform_bounds(
-                        "EPSG:4326", crs, *bbox, densify_pts=21
-                    )
-                else:
-                    left, bottom, right, top = base.bounds
-                # 输出分辨率不超过基准波段的 native 分辨率。
-                left, bottom, right, top = max(left, base.bounds.left), max(bottom, base.bounds.bottom), min(right, base.bounds.right), min(top, base.bounds.top)
-                if left >= right or bottom >= top:
-                    raise SceneRasterError("所选范围与场景不相交")
-                native_size = list(base.res)
-                native_span = max((right-left)/abs(base.transform.a), (top-bottom)/abs(base.transform.e))
-                scale = min(1.0, max_pixels / max(native_span, 1))
-                out_width = max(1, min(int((right - left) / abs(base.transform.a) * scale) or 1, max_pixels))
-                out_height = max(1, min(int((top - bottom) / abs(base.transform.e) * scale) or 1, max_pixels))
-                transform = from_bounds(left, bottom, right, top, out_width, out_height)
+            crs, base_bounds, base_resolution, base_transform = _read_raster(base_href,
+                lambda src: (src.crs, src.bounds, src.res, src.transform),
+                context=f"{record.key}:geometry", cancellation_event=cancellation_event)
+            if bbox is not None:
+                left, bottom, right, top = transform_bounds(
+                    "EPSG:4326", crs, *bbox, densify_pts=21
+                )
+            else:
+                left, bottom, right, top = base_bounds
+            # 输出分辨率不超过基准波段的 native 分辨率。
+            left, bottom, right, top = max(left, base_bounds.left), max(bottom, base_bounds.bottom), min(right, base_bounds.right), min(top, base_bounds.top)
+            if left >= right or bottom >= top:
+                raise SceneRasterError("所选范围与场景不相交")
+            native_size = list(base_resolution)
+            native_span = max((right-left)/abs(base_transform.a), (top-bottom)/abs(base_transform.e))
+            scale = min(1.0, max_pixels / max(native_span, 1))
+            out_width = max(1, min(int((right - left) / abs(base_transform.a) * scale) or 1, max_pixels))
+            out_height = max(1, min(int((top - bottom) / abs(base_transform.e) * scale) or 1, max_pixels))
+            transform = from_bounds(left, bottom, right, top, out_width, out_height)
 
-                bands: list[np.ndarray] = []
-                for role in roles:
-                    if cancellation_event is not None and cancellation_event.is_set():
-                        raise SceneRasterError("场景合成已取消。")
-                    href = base_href if role == "red" else _band_href(record, role)
-                    with rasterio.open(_open_path(href)) as src:
-                        with WarpedVRT(src, crs=crs, transform=transform, width=out_width, height=out_height,
-                                       src_nodata=src.nodata if src.nodata is not None else 0,
-                                       nodata=float("nan"), dtype="float32", resampling=Resampling.bilinear) as aligned:
-                            data = aligned.read(1)
-                    bands.append(_apply_reflectance(record, data, role))
+            def read_aligned(src):
+                with WarpedVRT(src, crs=crs, transform=transform, width=out_width, height=out_height,
+                               src_nodata=src.nodata if src.nodata is not None else 0,
+                               nodata=float("nan"), dtype="float32", resampling=Resampling.bilinear) as aligned:
+                    return aligned.read(1)
+
+            bands: list[np.ndarray] = []
+            for role in roles:
+                if cancellation_event is not None and cancellation_event.is_set():
+                    raise SceneRasterError("场景合成已取消。")
+                href = base_href if role == "red" else _band_href(record, role)
+                data = _read_raster(href, read_aligned, context=f"{record.key}:{role}",
+                                    cancellation_event=cancellation_event)
+                bands.append(_apply_reflectance(record, data, role))
         except SceneRasterError:
             raise
         except Exception as exc:
@@ -277,7 +353,8 @@ def compose_scene_tif(
     try:
         if cancellation_event is not None and cancellation_event.is_set():
             raise SceneRasterError("场景合成已取消。")
-        quality = _compose_quality(record, out_path.parent / "quality.tif", profile)
+        quality = _compose_quality(record, out_path.parent / "quality.tif", profile,
+                                   cancellation_event=cancellation_event)
     except SceneRasterError:
         out_path.unlink(missing_ok=True)  # This invocation created the file, no stale half-import is reusable.
         raise

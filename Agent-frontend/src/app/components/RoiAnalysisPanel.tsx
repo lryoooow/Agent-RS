@@ -23,7 +23,7 @@ export function RoiAnalysisPanel({ roi, source, activeImageryId, loading, onSour
   const current = result?.key === key ? result : null;
   const ready = current?.value?.status === "ready" && !loading;
   return <section aria-label="选区分析" data-testid="roi-analysis-panel"
-    className="absolute bottom-[84px] right-4 z-30 w-[min(28rem,calc(100vw-2rem))] max-h-[40vh] overflow-y-auto rounded-xl border border-primary/40 bg-sidebar/95 p-3 text-[12px] shadow-xl backdrop-blur-md">
+    className="absolute bottom-[84px] left-4 z-30 w-[min(28rem,calc(100vw-var(--nav-width)-2rem))] max-h-[40vh] overflow-y-auto rounded-xl border border-primary/40 bg-sidebar/95 p-3 text-[12px] shadow-xl backdrop-blur-md">
     <div className="mb-2 flex items-center justify-between gap-2">
       <strong className="text-[14px]">选区已就绪</strong>
       <button onClick={onClear} disabled={loading} className="text-muted-foreground hover:text-foreground disabled:opacity-40">清除选区</button>

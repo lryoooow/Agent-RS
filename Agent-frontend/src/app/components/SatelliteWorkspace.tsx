@@ -365,7 +365,7 @@ export function SatelliteWorkspace({
   }, [loading, scenes.length, searched]);
 
   return (
-    <section aria-label="卫星影像" className={`${active ? "fixed" : "hidden"} inset-x-0 bottom-0 top-[72px] z-[35] flex min-h-0 flex-col bg-background`}>
+    <section aria-label="卫星影像" className={`${active ? "absolute" : "hidden"} inset-0 z-[35] flex min-h-0 flex-col bg-background min-[1100px]:right-[var(--conversation-space)]`}>
       <header className="flex h-[54px] shrink-0 items-center justify-between border-b border-border bg-card/95 px-4 backdrop-blur">
         <div className="flex min-w-0 items-center gap-3">
           <div className="flex size-9 shrink-0 items-center justify-center rounded-xl border border-primary/25 bg-primary/10"><Satellite className="size-4.5 text-primary" /></div>

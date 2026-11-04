@@ -135,6 +135,15 @@ async def building_readiness(request: RoiBuildingRequest, *, user_id: str | None
 
 
 async def direct_building_events(request: ChatRequest, *, user_id: str | None):
+    from contextlib import aclosing
+    from app.agent.ontology.state import create_session, ontology_scope
+    with ontology_scope(await create_session(request, user_id)):
+        async with aclosing(_direct_building_events(request, user_id=user_id)) as events:
+            async for event in events:
+                yield event
+
+
+async def _direct_building_events(request: ChatRequest, *, user_id: str | None):
     from app.agent.engine import AutogenTurnOutput
     from app.agent.tool_execution import PrepareRejected, prepare_tool_call, run_prepared_tool
     from app.agent.types import AgentTrace
@@ -167,6 +176,9 @@ async def direct_building_events(request: ChatRequest, *, user_id: str | None):
         yield 'status', trace.add('tool_execution_started', '正在获取框选区域的地图影像', **acquisition)
         try:
             image_id,meta = await import_map_roi(request.analysis_roi.bbox,user_id=user_id)
+            from app.agent.ontology.state import current_session, image_fact
+            if session := current_session():
+                session.add(image_fact(image_id, meta))
         except MapROIError as exc:
             yield 'status', trace.add('tool_execution_failed','选区地图影像获取失败',error_code='map_image_unavailable',**acquisition)
             yield 'final', AutogenTurnOutput(content=str(exc),trace=trace,strategy='roi_building')

@@ -254,7 +254,7 @@ async def run_turn(
         task = None
         finished = False
         try:
-            with turn_scope(trusted_tool_arguments=turn.trusted_tool_arguments) as state:
+            with turn_scope(trusted_tool_arguments=turn.trusted_tool_arguments, ontology=turn.ontology) as state:
                 task = asyncio.create_task(orchestration.team.run(
                     task=TextMessage(content=turn.query, source="user"),
                     cancellation_token=token,
@@ -330,7 +330,7 @@ async def stream_turn(
                 cancellation_token=token,
                 output_task_messages=False,
             )
-            with turn_scope(trusted_tool_arguments=turn.trusted_tool_arguments) as state:
+            with turn_scope(trusted_tool_arguments=turn.trusted_tool_arguments, ontology=turn.ontology) as state:
                 final: TaskResult | None = None
                 while True:
                     if token.is_cancelled():

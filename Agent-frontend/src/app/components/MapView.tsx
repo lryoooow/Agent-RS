@@ -638,7 +638,7 @@ export function MapView({
       )}
 
       {/* 地名搜索框（左上角，避开右侧图层面板） */}
-      <div className="absolute left-4 top-[116px] z-10 w-[240px]">
+      <div className="absolute left-4 top-4 z-10 w-[240px] max-w-[calc(100%-2rem)]">
         <div className="flex items-center gap-1.5 rounded-full border border-border bg-card/80 px-3 py-1.5 backdrop-blur-md focus-within:border-primary/50">
           {searching ? (
             <Loader2 className="size-3.5 shrink-0 animate-spin text-primary" />
@@ -682,7 +682,7 @@ export function MapView({
       <div className="pointer-events-none absolute inset-0 shadow-[inset_0_0_140px_rgba(0,0,0,0.5)]" />
 
       {/* top-center readout */}
-      <div data-testid="map-center-readout" title="当前地图视角中心（非影像中心）" className="pointer-events-none absolute left-1/2 top-[116px] -translate-x-1/2">
+      <div data-testid="map-center-readout" title="当前地图视角中心（非影像中心）" className="pointer-events-none absolute left-1/2 top-4 hidden -translate-x-1/2 min-[1600px]:block">
         <div className="flex items-center gap-2 rounded-full border border-border bg-card/80 px-3.5 py-1.5 font-mono text-[11px] tracking-tight text-foreground backdrop-blur-md">
           <span className="size-1.5 rounded-full bg-primary" />
           <span className="text-muted-foreground">LAT</span>

@@ -68,6 +68,7 @@ include = ["app*"]
 "app" = ["data/satellite_catalog/*.json", "data/satellite_catalog/*.gz", "data/satellite_catalog/README.md"]
 "app.agent.prompting.templates" = ["*.jinja", "README.md"]
 "app.agent.search" = ["*.jinja"]
+"app.agent.ontology" = ["*.json"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

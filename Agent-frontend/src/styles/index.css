@@ -1,3 +1,6 @@
 @import './fonts.css';
 @import './tailwind.css';
 @import './theme.css';
+
+:root { --nav-width: 68px; }
+@media (min-width: 1100px) { :root { --nav-width: 208px; } }

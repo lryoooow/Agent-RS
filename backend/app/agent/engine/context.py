@@ -108,6 +108,12 @@ class BudgetedChatCompletionContext(ChatCompletionContext):
             self._blocks.pop(key, None)
 
     async def get_messages(self) -> List[LLMMessage]:
+        from app.agent.ontology.state import current_session
+        from app.agent.tool_registry import TOOLS
+        from app.agent.engine.turn_context import current_turn_state
+        session, state = current_session(), current_turn_state()
+        enabled = {name for name, tool in TOOLS.items() if tool.is_enabled() and (state is None or state.available(name))}
+        self.upsert_block("ontology", session.context(enabled) if session else "")
         budget = self.token_budget
         required = _protected_message_tokens(self._messages)
         if required > budget:

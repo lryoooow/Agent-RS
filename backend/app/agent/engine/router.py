@@ -56,6 +56,14 @@ flow_name 置空。不得根据历史内容替用户补出当前没要求的步�
 """.strip()
 
 
+def _routing_task(turn: TurnInput) -> str:
+    if turn.ontology is None:
+        return turn.query
+    from app.agent.tool_registry import TOOLS
+    enabled = {name for name, tool in TOOLS.items() if tool.is_enabled()}
+    return turn.query + "\n\n" + turn.ontology.context(enabled)
+
+
 async def choose_route(turn: TurnInput, config: ResolvedAIConfig) -> RouteResult:
     settings = get_settings()
     if not settings.agent_auto_flow_enabled:
@@ -121,7 +129,7 @@ async def _run_structured_router(turn: TurnInput, client) -> FlowDecision:
         # Routing depends only on this request; full tool prompts/history needlessly duplicate tokens.
         output_content_type=FlowDecision,
     )
-    result = await agent.run(task=turn.query, output_task_messages=False)
+    result = await agent.run(task=_routing_task(turn), output_task_messages=False)
     decision = next(
         (
             message.content
@@ -149,7 +157,7 @@ async def _run_plain_router(turn: TurnInput, client) -> FlowDecision:
         ),
         # Routing depends only on this request; full tool prompts/history needlessly duplicate tokens.
     )
-    result = await agent.run(task=turn.query, output_task_messages=False)
+    result = await agent.run(task=_routing_task(turn), output_task_messages=False)
     text = next(
         (
             message.to_model_text()

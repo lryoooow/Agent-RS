@@ -126,7 +126,7 @@ export function RightPanel({
   onOpacity: (id: string, v: number) => void;
   onRemove: (id: string) => void;
 }) {
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(false);
   const panel = useLayerPanelSize();
 
   return (
@@ -135,7 +135,7 @@ export function RightPanel({
       animate={{ opacity: 1, x: 0 }}
       exit={{ opacity: 0, x: 24 }}
       transition={{ duration: 0.38, ease: [0.22, 1, 0.36, 1], delay: 0.12 }}
-      className="absolute right-4 top-[108px] z-20 flex flex-col items-end"
+      className="absolute left-4 top-[76px] z-20 flex flex-col items-start"
     >
       <AnimatePresence mode="wait">
         {open ? (
@@ -147,14 +147,14 @@ export function RightPanel({
             transition={{ duration: 0.26, ease: [0.22, 1, 0.36, 1] }}
             data-testid="layer-panel"
             style={{ width: panel.size.width, height: panel.size.height }}
-            className="relative flex max-h-[calc(100vh-124px)] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl border border-border bg-sidebar/85 shadow-2xl shadow-black/40 backdrop-blur-xl"
+            className="relative flex max-h-[calc(100vh-92px)] max-w-[calc(100vw-var(--nav-width)-2rem)] flex-col overflow-hidden rounded-2xl border border-border bg-sidebar/95 shadow-xl backdrop-blur-xl"
           >
-            <button type="button" aria-label="调整图层面板宽度" title="拖动左边缘调整宽度，方向键微调" {...panel.handle("width")}
-              className="absolute bottom-5 left-0 top-12 z-30 w-2 touch-none cursor-ew-resize hover:bg-primary/20 focus-visible:bg-primary/30" />
+            <button type="button" aria-label="调整图层面板宽度" title="拖动右边缘调整宽度，方向键微调" {...panel.handle("width")}
+              className="absolute bottom-5 right-0 top-12 z-30 w-2 touch-none cursor-ew-resize hover:bg-primary/20 focus-visible:bg-primary/30" />
             <button type="button" aria-label="调整图层面板高度" title="拖动底边调整高度，方向键微调" {...panel.handle("height")}
               className="absolute bottom-0 left-5 right-5 z-30 h-2 touch-none cursor-ns-resize hover:bg-primary/20 focus-visible:bg-primary/30" />
             <button type="button" aria-label="调整图层面板宽高" title="拖动调整宽高；双击恢复默认大小" {...panel.handle("both")} onDoubleClick={panel.reset}
-              className="absolute bottom-0 left-0 z-40 flex size-5 touch-none cursor-nesw-resize items-center justify-center rounded-tr bg-card text-primary hover:bg-primary/20 focus-visible:outline-primary">◣</button>
+              className="absolute bottom-0 right-0 z-40 flex size-5 touch-none cursor-nwse-resize items-center justify-center rounded-tl bg-card text-primary hover:bg-primary/20 focus-visible:outline-primary">◢</button>
             <div className="flex items-center gap-2 border-b border-border px-3 py-2.5">
               <Layers className="size-4 text-primary" />
               <span className="text-[13px] text-foreground">图层</span>

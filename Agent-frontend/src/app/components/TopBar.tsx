@@ -81,35 +81,32 @@ export function TopBar({ settings, auth, navigation }: { settings: Settings; aut
       variants={reduce ? undefined : slideDown}
       initial={reduce ? false : "hidden"}
       animate="show"
-      className="absolute inset-x-0 top-0 z-40 grid h-[72px] grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3 border-b border-border bg-background/85 px-3 backdrop-blur-xl sm:px-5"
+      className="absolute inset-y-0 left-0 z-40 flex w-[var(--nav-width)] flex-col items-center border-r border-border bg-background/95 px-2 py-5 backdrop-blur-xl min-[1100px]:px-4"
     >
       <div data-testid="platform-brand" className="flex min-w-0 items-center gap-2.5">
         <Logo size={38} rounded="rounded-lg" />
-        <div className="hidden min-w-0 leading-tight sm:block">
+        <div className="hidden min-w-0 leading-tight min-[1100px]:block">
           <div
             className="flex items-center gap-2 whitespace-nowrap text-[18px] font-semibold tracking-tight text-foreground"
             style={{ fontFamily: "var(--font-display)" }}
           >
             Agent-RS
-            <span className="hidden rounded-md border border-primary/25 bg-primary/10 px-1.5 py-px font-mono text-[10px] font-normal text-primary 2xl:inline">
-              workbench
-            </span>
           </div>
-          <div className="mt-0.5 whitespace-nowrap text-[11px] tracking-wide text-muted-foreground">
-            遥感大模型应用智能体
+          <div className="mt-0.5 whitespace-nowrap text-[10px] tracking-wide text-muted-foreground">
+            遥感分析工作平台
           </div>
         </div>
       </div>
 
       {navigation}
 
-      <div className="flex min-w-0 items-center justify-end gap-2">
-      <div className="hidden min-w-0 items-center min-[1440px]:flex">
+      <div className="flex w-full min-w-0 flex-col items-center gap-3 border-t border-border pt-4">
+      <div className="hidden w-full min-w-0 items-center min-[1100px]:flex">
         <DropdownMenu onOpenChange={(nextOpen) => nextOpen && void settings.refreshModels()}>
           <DropdownMenuTrigger asChild>
             <button
               type="button"
-              className="flex max-w-[132px] items-center gap-1.5 rounded-full border border-border bg-card/60 px-3 py-1.5 text-[12px] text-muted-foreground transition-colors hover:border-primary/45 hover:text-foreground 2xl:max-w-[180px]"
+              className="flex w-full min-w-0 items-center gap-1.5 rounded-lg border border-border bg-card/60 px-2 py-2 text-[11px] text-muted-foreground transition-colors hover:border-primary/45 hover:text-foreground"
               aria-label="选择模型"
             >
               <Cpu className="size-3.5 shrink-0 text-primary" />
@@ -171,7 +168,7 @@ export function TopBar({ settings, auth, navigation }: { settings: Settings; aut
         </DropdownMenu>
       </div>
 
-      <div className="flex shrink-0 items-center gap-2">
+      <div className="flex shrink-0 flex-col items-center gap-2 min-[1100px]:flex-row">
         <AuthDialog auth={auth} compact />
         <Dialog
           open={open}
@@ -188,7 +185,7 @@ export function TopBar({ settings, auth, navigation }: { settings: Settings; aut
               aria-label="配置"
             >
               <Settings2 className="size-3.5" />
-              <span className="hidden sm:inline">配置</span>
+              <span className="hidden min-[1100px]:inline">配置</span>
             </Button>
           </DialogTrigger>
         <DialogContent className="bg-card sm:max-w-md">

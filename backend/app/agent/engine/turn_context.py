@@ -34,6 +34,7 @@ from typing import Iterator
 
 from app.agent.types import ToolRunResult
 from app.agent.tool_context import swap_analysis_provider
+from app.agent.ontology.state import OntologySession, ontology_scope
 from app.core.settings import get_settings
 
 # 需要 GPU 的重工具。与工具注册表里的 Agent 所有权正交：
@@ -238,7 +239,8 @@ def reset_turn_state(token: Token[TurnToolState | None]) -> None:
 
 @contextmanager
 def turn_scope(
-    *, trusted_tool_arguments: dict[str, dict] | None = None
+    *, trusted_tool_arguments: dict[str, dict] | None = None,
+    ontology: OntologySession | None = None,
 ) -> Iterator[TurnToolState]:
     """一个回合的工具状态作用域。编排层在处理一次用户消息时包住整个链路。
 
@@ -259,7 +261,8 @@ def turn_scope(
     _turn_state.set(state)
     previous_analysis_provider = swap_analysis_provider(state.completed_analysis_results)
     try:
-        yield state
+        with ontology_scope(ontology):
+            yield state
     finally:
         swap_analysis_provider(previous_analysis_provider)
         _turn_state.set(previous)

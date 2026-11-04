@@ -34,6 +34,7 @@ from app.agent.tool_registry import RegisteredTool, get_tool
 from app.agent.tools.staging import stage_imagery
 from app.agent.types import ToolRunResult
 from app.core.error_logging import log_exception_diagnostics
+from app.agent.ontology.state import current_session
 
 logger = logging.getLogger(__name__)
 _CANCEL_FINALIZE_SECONDS = 3.0
@@ -135,6 +136,12 @@ async def prepare_tool_call(
             return PrepareRejected(failure="analysis_precondition", error_detail=code,
                 result=ToolRunResult(tool_context=message, error=code, metadata={"error_code": code}))
 
+    session = current_session()
+    reason = session.reject(tool_name, validated.model_dump(exclude_unset=True)) if session else None
+    if reason:
+        return PrepareRejected(failure="analysis_precondition", error_detail="ontology_precondition",
+            result=ToolRunResult(tool_context=f"当前实体状态不满足工具条件：{reason}",
+                error="ontology_precondition", metadata={"error_code": "ontology_precondition"}))
     return PreparedTool(tool=tool, arguments=validated, user_id=user_id)
 
 
@@ -207,6 +214,14 @@ async def run_prepared_tool(prepared: PreparedTool) -> ToolRunResult:
         else:
             await _finalize_interrupted(job_id, outcome_unknown=runner_started)
         raise
+    session = current_session()
+    if session is not None:
+        try:
+            session.observe(prepared.name, result)
+        except (TypeError, ValueError, KeyError, AttributeError):
+            # A new tool can introduce a different result shape. Its successful result
+            # must not be lost because the optional semantic projection is incomplete.
+            logger.warning("Ontology result projection skipped for tool %s", prepared.name)
     return result
 
 

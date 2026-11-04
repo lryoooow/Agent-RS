@@ -10,7 +10,7 @@ import {
   Loader2,
   Terminal,
   AlertTriangle,
-  ChevronLeft,
+  Plus, Minus,
 } from "lucide-react";
 import type { ImageryMeta } from "../hooks/useImageryUpload";
 import { Button } from "./ui/button";
@@ -179,6 +179,8 @@ export function AgentChat({
   onThinkingChange,
   onScenePreview,
   onSceneImport,
+  onMinimize,
+  onWidthChange,
 }: {
   turns: ChatTurn[];
   loading: boolean;
@@ -199,8 +201,11 @@ export function AgentChat({
   onThinkingChange: (s: ThinkingStrength) => void;
   onScenePreview?: (scene: SceneCardInfo) => void;
   onSceneImport?: (sceneKey: string) => Promise<string | null>;
+  onMinimize?: () => void;
+  onWidthChange?: (width: number) => void;
 }) {
   const panel = useChatPanelSize();
+  useEffect(() => { onWidthChange?.(panel.size.width); }, [panel.size.width, onWidthChange]);
   const [text, setText] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -242,41 +247,44 @@ export function AgentChat({
     <motion.div
       data-testid="chat-panel"
       style={{ width: panel.size.width, height: panel.size.height }}
-      initial={{ opacity: 0, x: -28, scale: 0.985 }}
+      initial={{ opacity: 0, x: 28, scale: 0.985 }}
       animate={{ opacity: 1, x: 0, scale: 1 }}
-      exit={{ opacity: 0, x: -28, scale: 0.985 }}
+      exit={{ opacity: 0, x: 28, scale: 0.985 }}
       transition={{ duration: 0.42, ease: [0.22, 1, 0.36, 1] }}
-      className="absolute left-4 top-[108px] z-20 flex max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl border border-border bg-sidebar/85 shadow-2xl shadow-black/40 backdrop-blur-xl"
+      className="absolute right-4 top-4 z-[40] flex max-w-[calc(100%-2rem)] flex-col overflow-hidden rounded-2xl border border-border bg-sidebar/95 shadow-xl shadow-black/20 backdrop-blur-xl"
     >
       <button type="button" aria-label="调整对话框宽度" title="拖动调整宽度，方向键微调" {...panel.handle("width")}
-        className="absolute right-0 top-12 bottom-5 z-30 w-2 touch-none cursor-ew-resize hover:bg-primary/20 focus-visible:bg-primary/30" />
+        className="absolute left-0 top-12 bottom-5 z-30 w-2 touch-none cursor-ew-resize hover:bg-primary/20 focus-visible:bg-primary/30" />
       <button type="button" aria-label="调整对话框高度" title="拖动调整高度，方向键微调" {...panel.handle("height")}
         className="absolute bottom-0 left-5 right-5 z-30 h-2 touch-none cursor-ns-resize hover:bg-primary/20 focus-visible:bg-primary/30" />
       <button type="button" aria-label="调整对话框宽高" title="拖动调整宽高；双击恢复默认大小" {...panel.handle("both")} onDoubleClick={panel.reset}
-        className="absolute bottom-0 right-0 z-40 flex size-5 touch-none cursor-nwse-resize items-center justify-center rounded-tl bg-card text-primary hover:bg-primary/20 focus-visible:outline-primary">◢</button>
+        className="absolute bottom-0 left-0 z-40 flex size-5 touch-none cursor-nesw-resize items-center justify-center rounded-tr bg-card text-primary hover:bg-primary/20 focus-visible:outline-primary">◣</button>
       {/* header */}
       <div className="flex shrink-0 items-center gap-2.5 border-b border-border px-3 py-2.5">
         <button
           onClick={onBack}
+          disabled={loading}
+          aria-label="新对话"
           className="flex h-8 shrink-0 items-center gap-1 rounded-lg border border-border bg-card px-2 text-muted-foreground transition-colors hover:border-primary/50 hover:text-primary"
-          title="返回主页查看历史"
+          title="新建对话"
         >
-          <ChevronLeft className="size-4" />
-          <span className="text-[11px]">返回</span>
+          <Plus className="size-4" />
+          {panel.size.width >= 340 && <span className="text-[11px]">新对话</span>}
         </button>
         <Logo size={28} rounded="rounded-lg" />
-        <div className="leading-tight">
-          <div className="text-[13px] text-foreground" style={{ fontFamily: "var(--font-display)" }}>
+        <div className="min-w-0 flex-1 leading-tight">
+          <div className="truncate text-[13px] text-foreground" style={{ fontFamily: "var(--font-display)" }}>
             RS Agent
           </div>
-          <div className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-            领域专家 · 共享工具编排
+          <div className="truncate text-[10px] text-muted-foreground">
+            遥感分析助手
           </div>
         </div>
-        <span className="ml-auto flex items-center gap-1.5 font-mono text-[10px] text-primary">
+        {panel.size.width >= 400 && <span className="ml-auto flex shrink-0 items-center gap-1.5 font-mono text-[10px] text-primary">
           <span className="size-1.5 rounded-full bg-primary" />
           online
-        </span>
+        </span>}
+        {onMinimize && <button type="button" aria-label="收起对话" title="收起对话" className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted" onClick={onMinimize}><Minus className="size-4" /></button>}
       </div>
 
       {onSelectImagery && <div className="shrink-0 min-w-0 border-b border-border px-3 py-1.5 text-[11px]">

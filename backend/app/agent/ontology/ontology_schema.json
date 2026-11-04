@@ -1,0 +1,1627 @@
+{
+  "schema_version": 1,
+  "name": "Agent-RS 功能图谱",
+  "description": "以真实工具、数据和前置条件连接平台能力。地物分类、目标检测及其他算子保持原有执行管线。",
+  "entity_types": [
+    {
+      "id": "request",
+      "name": "用户请求",
+      "description": "ChatRequest / TurnInput",
+      "origin": "platform",
+      "color": "#14b8a6",
+      "properties": [
+        {
+          "name": "query",
+          "type": "string",
+          "is_identifier": false
+        },
+        {
+          "name": "conversation_id",
+          "type": "string",
+          "is_identifier": false
+        },
+        {
+          "name": "active_imagery_id",
+          "type": "string",
+          "is_identifier": false
+        },
+        {
+          "name": "analysis_source",
+          "type": "string",
+          "is_identifier": false
+        }
+      ]
+    },
+    {
+      "id": "region",
+      "name": "分析选区",
+      "description": "AnalysisROI",
+      "origin": "platform",
+      "color": "#14b8a6",
+      "properties": [
+        {
+          "name": "kind",
+          "type": "string",
+          "is_identifier": false
+        },
+        {
+          "name": "bbox",
+          "type": "array",
+          "is_identifier": false
+        },
+        {
+          "name": "rel",
+          "type": "array",
+          "is_identifier": false
+        }
+      ]
+    },
+    {
+      "id": "satellite_scene",
+      "name": "卫星场景",
+      "description": "SceneRecord / 用户场景缓存",
+      "origin": "platform",
+      "color": "#14b8a6",
+      "properties": [
+        {
+          "name": "key",
+          "type": "string",
+          "is_identifier": true
+        },
+        {
+          "name": "source",
+          "type": "string",
+          "is_identifier": false
+        },
+        {
+          "name": "item_id",
+          "type": "string",
+          "is_identifier": false
+        },
+        {
+          "name": "satellite",
+          "type": "string",
+          "is_identifier": false
+        },
+        {
+          "name": "datetime",
+          "type": "string",
+          "is_identifier": false
+        },
+        {
+          "name": "cloud_cover",
+          "type": "double",
+          "is_identifier": false
+        },
+        {
+          "name": "bbox",
+          "type": "array",
+          "is_identifier": false
+        },
+        {
+          "name": "band_assets",
+          "type": "object",
+          "is_identifier": false
+        },
+        {
+          "name": "quality_assets",
+          "type": "object",
+          "is_identifier": false
+        }
+      ]
+    },
+    {
+      "id": "imagery",
+      "name": "遥感影像",
+      "description": "影像仓储 / metadata.json",
+      "origin": "platform",
+      "color": "#38bdf8",
+      "properties": [
+        {
+          "name": "imagery_id",
+          "type": "string",
+          "is_identifier": true
+        },
+        {
+          "name": "filename",
+          "type": "string",
+          "is_identifier": false
+        },
+        {
+          "name": "owner_user_id",
+          "type": "string",
+          "is_identifier": false
+        },
+        {
+          "name": "width",
+          "type": "integer",
+          "is_identifier": false
+        },
+        {
+          "name": "height",
+          "type": "integer",
+          "is_identifier": false
+        },
+        {
+          "name": "band_count",
+          "type": "integer",
+          "is_identifier": false
+        },
+        {
+          "name": "crs",
+          "type": "string",
+          "is_identifier": false
+        },
+        {
+          "name": "bounds",
+          "type": "array",
+          "is_identifier": false
+        },
+        {
+          "name": "band_roles",
+          "type": "object",
+          "is_identifier": false
+        },
+        {
+          "name": "alpha_bands",
+          "type": "array",
+          "is_identifier": false
+        },
+        {
+          "name": "band_calibration",
+          "type": "object",
+          "is_identifier": false
+        },
+        {
+          "name": "quality_mask",
+          "type": "object",
+          "is_identifier": false
+        }
+      ]
+    },
+    {
+      "id": "analysis_result",
+      "name": "分析结果",
+      "description": "ToolRunResult / 对话历史",
+      "origin": "platform",
+      "color": "#14b8a6",
+      "properties": [
+        {
+          "name": "type",
+          "type": "string",
+          "is_identifier": false
+        },
+        {
+          "name": "imagery_id",
+          "type": "string",
+          "is_identifier": true
+        },
+        {
+          "name": "stats",
+          "type": "object",
+          "is_identifier": false
+        },
+        {
+          "name": "result_url",
+          "type": "string",
+          "is_identifier": false
+        },
+        {
+          "name": "bounds",
+          "type": "array",
+          "is_identifier": false
+        },
+        {
+          "name": "execution",
+          "type": "object",
+          "is_identifier": false
+        }
+      ]
+    },
+    {
+      "id": "raster_profile",
+      "name": "影像质检",
+      "description": "raster_inspect 返回值",
+      "origin": "platform",
+      "color": "#14b8a6",
+      "properties": [
+        {
+          "name": "imagery_id",
+          "type": "string",
+          "is_identifier": true
+        },
+        {
+          "name": "capabilities",
+          "type": "object",
+          "is_identifier": false
+        },
+        {
+          "name": "per_band_stats",
+          "type": "array",
+          "is_identifier": false
+        },
+        {
+          "name": "band_roles",
+          "type": "object",
+          "is_identifier": false
+        },
+        {
+          "name": "source_grid",
+          "type": "object",
+          "is_identifier": false
+        },
+        {
+          "name": "analysis_grid",
+          "type": "object",
+          "is_identifier": false
+        },
+        {
+          "name": "resampled",
+          "type": "boolean",
+          "is_identifier": false
+        }
+      ],
+      "parent": "analysis_result"
+    },
+    {
+      "id": "land_cover_result",
+      "name": "地物分类与提取",
+      "description": "SAM3 多概念实例分割；包括建筑、森林、水体、道路、农田",
+      "origin": "platform",
+      "color": "#a78bfa",
+      "properties": [
+        {
+          "name": "imagery_id",
+          "type": "string",
+          "is_identifier": true
+        },
+        {
+          "name": "concepts",
+          "type": "array",
+          "is_identifier": false
+        },
+        {
+          "name": "instance_count",
+          "type": "integer",
+          "is_identifier": false
+        },
+        {
+          "name": "counts",
+          "type": "object",
+          "is_identifier": false
+        },
+        {
+          "name": "union_pixels",
+          "type": "integer",
+          "is_identifier": false
+        },
+        {
+          "name": "area_m2",
+          "type": "double",
+          "is_identifier": false
+        },
+        {
+          "name": "mask_url",
+          "type": "string",
+          "is_identifier": false
+        },
+        {
+          "name": "vector_url",
+          "type": "string",
+          "is_identifier": false
+        }
+      ],
+      "parent": "analysis_result"
+    },
+    {
+      "id": "object_detection_result",
+      "name": "目标检测结果",
+      "description": "YOLO11s-OBB / DOTA 15 类",
+      "origin": "platform",
+      "color": "#fbbf24",
+      "properties": [
+        {
+          "name": "imagery_id",
+          "type": "string",
+          "is_identifier": true
+        },
+        {
+          "name": "detection_count",
+          "type": "integer",
+          "is_identifier": false
+        },
+        {
+          "name": "classes",
+          "type": "array",
+          "is_identifier": false
+        },
+        {
+          "name": "score_threshold",
+          "type": "double",
+          "is_identifier": false
+        },
+        {
+          "name": "vector_url",
+          "type": "string",
+          "is_identifier": false
+        },
+        {
+          "name": "detections_url",
+          "type": "string",
+          "is_identifier": false
+        }
+      ],
+      "parent": "analysis_result"
+    },
+    {
+      "id": "derived_raster",
+      "name": "派生栅格",
+      "description": "裁剪或重投影产物；imagery_id 仍为源影像，不自动注册新影像",
+      "origin": "platform",
+      "color": "#14b8a6",
+      "properties": [
+        {
+          "name": "imagery_id",
+          "type": "string",
+          "is_identifier": true
+        },
+        {
+          "name": "download_url",
+          "type": "string",
+          "is_identifier": false
+        },
+        {
+          "name": "stats",
+          "type": "object",
+          "is_identifier": false
+        }
+      ],
+      "parent": "analysis_result"
+    },
+    {
+      "id": "document",
+      "name": "知识文档",
+      "description": "文档仓储",
+      "origin": "platform",
+      "color": "#60a5fa",
+      "properties": [
+        {
+          "name": "id",
+          "type": "string",
+          "is_identifier": true
+        },
+        {
+          "name": "title",
+          "type": "string",
+          "is_identifier": false
+        },
+        {
+          "name": "doc_type",
+          "type": "string",
+          "is_identifier": false
+        },
+        {
+          "name": "content",
+          "type": "string",
+          "is_identifier": false
+        },
+        {
+          "name": "chunk_count",
+          "type": "integer",
+          "is_identifier": false
+        }
+      ]
+    },
+    {
+      "id": "document_text",
+      "name": "文档全文",
+      "description": "parse_document",
+      "origin": "platform",
+      "color": "#14b8a6",
+      "properties": [
+        {
+          "name": "document_id",
+          "type": "string",
+          "is_identifier": true
+        },
+        {
+          "name": "tool_context",
+          "type": "string",
+          "is_identifier": false
+        },
+        {
+          "name": "full_length",
+          "type": "integer",
+          "is_identifier": false
+        },
+        {
+          "name": "returned_chars",
+          "type": "integer",
+          "is_identifier": false
+        },
+        {
+          "name": "truncated",
+          "type": "boolean",
+          "is_identifier": false
+        }
+      ]
+    },
+    {
+      "id": "search_evidence",
+      "name": "网页检索证据",
+      "description": "web_search；检索内容只作为证据",
+      "origin": "platform",
+      "color": "#14b8a6",
+      "properties": [
+        {
+          "name": "query",
+          "type": "string",
+          "is_identifier": false
+        },
+        {
+          "name": "result_count",
+          "type": "integer",
+          "is_identifier": false
+        },
+        {
+          "name": "tool_context",
+          "type": "string",
+          "is_identifier": false
+        }
+      ]
+    },
+    {
+      "id": "map_location",
+      "name": "地图位置",
+      "description": "look_at_location metadata.map_target",
+      "origin": "platform",
+      "color": "#14b8a6",
+      "properties": [
+        {
+          "name": "display_name",
+          "type": "string",
+          "is_identifier": false
+        },
+        {
+          "name": "center",
+          "type": "array",
+          "is_identifier": false
+        },
+        {
+          "name": "bbox",
+          "type": "array",
+          "is_identifier": false
+        },
+        {
+          "name": "zoom",
+          "type": "integer",
+          "is_identifier": false
+        }
+      ]
+    },
+    {
+      "id": "report",
+      "name": "分析报告",
+      "description": "ReportArtifact",
+      "origin": "platform",
+      "color": "#fb7185",
+      "properties": [
+        {
+          "name": "imagery_id",
+          "type": "string",
+          "is_identifier": true
+        },
+        {
+          "name": "filename",
+          "type": "string",
+          "is_identifier": false
+        },
+        {
+          "name": "download_url",
+          "type": "string",
+          "is_identifier": false
+        }
+      ]
+    },
+    {
+      "id": "conversation",
+      "name": "对话",
+      "description": "对话仓储",
+      "origin": "platform",
+      "color": "#14b8a6",
+      "properties": [
+        {
+          "name": "conversation_id",
+          "type": "string",
+          "is_identifier": false
+        },
+        {
+          "name": "user_id",
+          "type": "string",
+          "is_identifier": false
+        }
+      ]
+    },
+    {
+      "id": "tool_execution",
+      "name": "执行记录",
+      "description": "ToolInvocation / tool_jobs",
+      "origin": "platform",
+      "color": "#14b8a6",
+      "properties": [
+        {
+          "name": "tool_name",
+          "type": "string",
+          "is_identifier": false
+        },
+        {
+          "name": "arguments",
+          "type": "object",
+          "is_identifier": false
+        },
+        {
+          "name": "result",
+          "type": "object",
+          "is_identifier": false
+        },
+        {
+          "name": "status",
+          "type": "string",
+          "is_identifier": false
+        },
+        {
+          "name": "error_code",
+          "type": "string",
+          "is_identifier": false
+        }
+      ]
+    },
+    {
+      "id": "document_chunk",
+      "name": "知识片段",
+      "description": "document_chunks；语义相关不代表工具可用",
+      "origin": "platform",
+      "color": "#14b8a6",
+      "properties": [
+        {
+          "name": "id",
+          "type": "string",
+          "is_identifier": true
+        },
+        {
+          "name": "document_id",
+          "type": "string",
+          "is_identifier": true
+        },
+        {
+          "name": "chunk_index",
+          "type": "integer",
+          "is_identifier": false
+        },
+        {
+          "name": "content",
+          "type": "string",
+          "is_identifier": false
+        }
+      ]
+    },
+    {
+      "id": "memory_record",
+      "name": "长期记忆",
+      "description": "记忆仓储；只读上下文",
+      "origin": "platform",
+      "color": "#14b8a6",
+      "properties": [
+        {
+          "name": "id",
+          "type": "string",
+          "is_identifier": true
+        },
+        {
+          "name": "content",
+          "type": "string",
+          "is_identifier": false
+        },
+        {
+          "name": "memory_type",
+          "type": "string",
+          "is_identifier": false
+        },
+        {
+          "name": "importance",
+          "type": "double",
+          "is_identifier": false
+        }
+      ]
+    },
+    {
+      "id": "orbit_satellite",
+      "name": "轨道卫星",
+      "description": "卫星目录；目前没有注册 Agent 执行工具",
+      "origin": "platform",
+      "color": "#14b8a6",
+      "properties": [
+        {
+          "name": "NORAD_CAT_ID",
+          "type": "integer",
+          "is_identifier": false
+        },
+        {
+          "name": "OBJECT_NAME",
+          "type": "string",
+          "is_identifier": false
+        },
+        {
+          "name": "EPOCH",
+          "type": "string",
+          "is_identifier": false
+        },
+        {
+          "name": "MEAN_MOTION",
+          "type": "double",
+          "is_identifier": false
+        },
+        {
+          "name": "INCLINATION",
+          "type": "double",
+          "is_identifier": false
+        }
+      ]
+    }
+  ],
+  "relationships": [
+    {
+      "id": "rel_prepare_map_roi",
+      "name": "获取地图选区影像",
+      "description": "地图底图仅有 RGB/Alpha，无 NIR/SWIR。",
+      "origin": "platform",
+      "source_entity": "region",
+      "target_entity": "imagery",
+      "cardinality": "one-to-many"
+    },
+    {
+      "id": "rel_search_imagery",
+      "name": "检索卫星影像",
+      "description": "",
+      "origin": "platform",
+      "source_entity": "request",
+      "target_entity": "satellite_scene",
+      "cardinality": "one-to-many"
+    },
+    {
+      "id": "rel_fetch_scene",
+      "name": "导入卫星场景",
+      "description": "",
+      "origin": "platform",
+      "source_entity": "satellite_scene",
+      "target_entity": "imagery",
+      "cardinality": "one-to-many"
+    },
+    {
+      "id": "rel_raster_inspect",
+      "name": "影像质检",
+      "description": "",
+      "origin": "platform",
+      "source_entity": "imagery",
+      "target_entity": "raster_profile",
+      "cardinality": "one-to-many"
+    },
+    {
+      "id": "rel_calculate_ndvi",
+      "name": "NDVI 植被指数",
+      "description": "",
+      "origin": "platform",
+      "source_entity": "imagery",
+      "target_entity": "analysis_result",
+      "cardinality": "one-to-many"
+    },
+    {
+      "id": "rel_calculate_spectral_index",
+      "name": "光谱指数分析",
+      "description": "",
+      "origin": "platform",
+      "source_entity": "imagery",
+      "target_entity": "analysis_result",
+      "cardinality": "one-to-many"
+    },
+    {
+      "id": "rel_render_band_composite",
+      "name": "波段组合预览",
+      "description": "",
+      "origin": "platform",
+      "source_entity": "imagery",
+      "target_entity": "analysis_result",
+      "cardinality": "one-to-many"
+    },
+    {
+      "id": "rel_detect_objects",
+      "name": "目标检测 · 船舶 / 车辆 / 飞机",
+      "description": "YOLO11s-OBB；DOTA 15 类，输出旋转框、置信度和类别数量。",
+      "origin": "platform",
+      "source_entity": "imagery",
+      "target_entity": "object_detection_result",
+      "cardinality": "one-to-many"
+    },
+    {
+      "id": "rel_segment_instances",
+      "name": "地物分类 · 建筑 / 农田 / 道路",
+      "description": "SAM3 开放词汇实例分割；支持地理或像素选区。概念由 concepts 指定。",
+      "origin": "platform",
+      "source_entity": "imagery",
+      "target_entity": "land_cover_result",
+      "cardinality": "one-to-many"
+    },
+    {
+      "id": "rel_cloud_shadow_mask",
+      "name": "云与云影掩膜",
+      "description": "",
+      "origin": "platform",
+      "source_entity": "imagery",
+      "target_entity": "analysis_result",
+      "cardinality": "one-to-many"
+    },
+    {
+      "id": "rel_extract_water_mask",
+      "name": "水体提取",
+      "description": "",
+      "origin": "platform",
+      "source_entity": "imagery",
+      "target_entity": "analysis_result",
+      "cardinality": "one-to-many"
+    },
+    {
+      "id": "rel_clip_reproject_raster",
+      "name": "裁剪与重投影",
+      "description": "生成可下载栅格；不会产生新的 imagery_id。",
+      "origin": "platform",
+      "source_entity": "imagery",
+      "target_entity": "derived_raster",
+      "cardinality": "one-to-many"
+    },
+    {
+      "id": "rel_ocr_recognize",
+      "name": "影像文字识别",
+      "description": "",
+      "origin": "platform",
+      "source_entity": "imagery",
+      "target_entity": "analysis_result",
+      "cardinality": "one-to-many"
+    },
+    {
+      "id": "rel_parse_document",
+      "name": "读取文档全文",
+      "description": "",
+      "origin": "platform",
+      "source_entity": "document",
+      "target_entity": "document_text",
+      "cardinality": "one-to-many"
+    },
+    {
+      "id": "rel_generate_report",
+      "name": "生成分析报告",
+      "description": "",
+      "origin": "platform",
+      "source_entity": "analysis_result",
+      "target_entity": "report",
+      "cardinality": "one-to-many"
+    },
+    {
+      "id": "rel_look_at_location",
+      "name": "地图定位",
+      "description": "",
+      "origin": "platform",
+      "source_entity": "request",
+      "target_entity": "map_location",
+      "cardinality": "one-to-many"
+    },
+    {
+      "id": "rel_web_search",
+      "name": "联网检索",
+      "description": "",
+      "origin": "platform",
+      "source_entity": "request",
+      "target_entity": "search_evidence",
+      "cardinality": "one-to-many"
+    },
+    {
+      "id": "selects",
+      "name": "选择分析影像",
+      "source_entity": "request",
+      "target_entity": "imagery",
+      "origin": "platform",
+      "cardinality": "one-to-many"
+    },
+    {
+      "id": "scopes_to",
+      "name": "限定分析范围",
+      "source_entity": "request",
+      "target_entity": "region",
+      "origin": "platform",
+      "cardinality": "one-to-many"
+    },
+    {
+      "id": "contains_results",
+      "name": "保存分析结果",
+      "source_entity": "conversation",
+      "target_entity": "analysis_result",
+      "origin": "platform",
+      "cardinality": "one-to-many"
+    },
+    {
+      "id": "produces",
+      "name": "产出",
+      "source_entity": "tool_execution",
+      "target_entity": "analysis_result",
+      "origin": "platform",
+      "cardinality": "one-to-many"
+    },
+    {
+      "id": "contains_chunks",
+      "name": "包含",
+      "source_entity": "document",
+      "target_entity": "document_chunk",
+      "origin": "platform",
+      "cardinality": "one-to-many"
+    },
+    {
+      "id": "provides_context",
+      "name": "提供上下文",
+      "source_entity": "memory_record",
+      "target_entity": "request",
+      "origin": "platform",
+      "cardinality": "one-to-many"
+    }
+  ],
+  "bindings": {
+    "data_bindings": [
+      {
+        "entity_id": "request",
+        "source": "app/schemas/chat.py:ChatRequest",
+        "fields": {
+          "query": "query",
+          "conversation_id": "conversation_id",
+          "active_imagery_id": "active_imagery_id",
+          "analysis_source": "analysis_source"
+        }
+      },
+      {
+        "entity_id": "region",
+        "source": "app/schemas/chat.py:AnalysisROI",
+        "fields": {
+          "kind": "kind",
+          "bbox": "bbox",
+          "rel": "rel"
+        }
+      },
+      {
+        "entity_id": "satellite_scene",
+        "source": "app/agent/stac_search/model.py:SceneRecord",
+        "fields": {
+          "key": "key",
+          "source": "source",
+          "item_id": "item_id",
+          "satellite": "satellite",
+          "datetime": "datetime",
+          "cloud_cover": "cloud_cover",
+          "bbox": "bbox",
+          "band_assets": "band_assets",
+          "quality_assets": "quality_assets"
+        }
+      },
+      {
+        "entity_id": "imagery",
+        "source": "app/agent/imagery_access.py:iter_user_imagery_metadata",
+        "fields": {
+          "imagery_id": "imagery_id",
+          "filename": "filename",
+          "owner_user_id": "owner_user_id",
+          "width": "width",
+          "height": "height",
+          "band_count": "band_count",
+          "crs": "crs",
+          "bounds": "bounds",
+          "band_roles": "band_roles",
+          "alpha_bands": "alpha_bands",
+          "band_calibration": "band_calibration",
+          "quality_mask": "quality_mask"
+        }
+      },
+      {
+        "entity_id": "analysis_result",
+        "source": "app/agent/types.py:ToolRunResult",
+        "fields": {
+          "type": "type",
+          "imagery_id": "imagery_id",
+          "stats": "stats",
+          "result_url": "result_url",
+          "bounds": "bounds",
+          "execution": "execution"
+        }
+      },
+      {
+        "entity_id": "raster_profile",
+        "source": "app/agent/tools/raster_inspect/runner.py:_tool_result",
+        "fields": {
+          "imagery_id": "imagery_id",
+          "capabilities": "capabilities",
+          "per_band_stats": "per_band_stats",
+          "band_roles": "band_roles",
+          "source_grid": "source_grid",
+          "analysis_grid": "analysis_grid",
+          "resampled": "resampled"
+        }
+      },
+      {
+        "entity_id": "land_cover_result",
+        "source": "app/agent/tools/instance_segment/runner.py",
+        "fields": {
+          "imagery_id": "imagery_id",
+          "concepts": "concepts",
+          "instance_count": "instance_count",
+          "counts": "counts",
+          "union_pixels": "union_pixels",
+          "area_m2": "area_m2",
+          "mask_url": "mask_url",
+          "vector_url": "vector_url"
+        }
+      },
+      {
+        "entity_id": "object_detection_result",
+        "source": "app/agent/tools/detect/runner.py",
+        "fields": {
+          "imagery_id": "imagery_id",
+          "detection_count": "detection_count",
+          "classes": "classes",
+          "score_threshold": "score_threshold",
+          "vector_url": "vector_url",
+          "detections_url": "detections_url"
+        }
+      },
+      {
+        "entity_id": "derived_raster",
+        "source": "app/agent/tools/clip_reproject/runner.py",
+        "fields": {
+          "imagery_id": "imagery_id",
+          "download_url": "download_url",
+          "stats": "stats"
+        }
+      },
+      {
+        "entity_id": "document",
+        "source": "app/db/repositories/document.py",
+        "fields": {
+          "id": "id",
+          "title": "title",
+          "doc_type": "doc_type",
+          "content": "content",
+          "chunk_count": "chunk_count"
+        }
+      },
+      {
+        "entity_id": "document_text",
+        "source": "app/agent/tools/parse_document/runner.py",
+        "fields": {
+          "document_id": "document_id",
+          "tool_context": "tool_context",
+          "full_length": "full_length",
+          "returned_chars": "returned_chars",
+          "truncated": "truncated"
+        }
+      },
+      {
+        "entity_id": "search_evidence",
+        "source": "app/agent/tools/web_search/runner.py",
+        "fields": {
+          "query": "query",
+          "result_count": "result_count",
+          "tool_context": "tool_context"
+        }
+      },
+      {
+        "entity_id": "map_location",
+        "source": "app/agent/tools/look_at_location/runner.py",
+        "fields": {
+          "display_name": "display_name",
+          "center": "center",
+          "bbox": "bbox",
+          "zoom": "zoom"
+        }
+      },
+      {
+        "entity_id": "report",
+        "source": "app/agent/tools/report/runner.py",
+        "fields": {
+          "imagery_id": "imagery_id",
+          "filename": "filename",
+          "download_url": "download_url"
+        }
+      },
+      {
+        "entity_id": "conversation",
+        "source": "app/db/repositories/conversation.py",
+        "fields": {
+          "conversation_id": "conversation_id",
+          "user_id": "user_id"
+        }
+      },
+      {
+        "entity_id": "tool_execution",
+        "source": "app/agent/tool_jobs.py",
+        "fields": {
+          "tool_name": "tool_name",
+          "arguments": "arguments",
+          "result": "result",
+          "status": "status",
+          "error_code": "error_code"
+        }
+      },
+      {
+        "entity_id": "document_chunk",
+        "source": "app/db/repositories/document.py",
+        "fields": {
+          "id": "id",
+          "document_id": "document_id",
+          "chunk_index": "chunk_index",
+          "content": "content"
+        }
+      },
+      {
+        "entity_id": "memory_record",
+        "source": "app/db/repositories/memory.py",
+        "fields": {
+          "id": "id",
+          "content": "content",
+          "memory_type": "memory_type",
+          "importance": "importance"
+        }
+      },
+      {
+        "entity_id": "orbit_satellite",
+        "source": "app/services/satellite_catalog.py",
+        "fields": {
+          "NORAD_CAT_ID": "NORAD_CAT_ID",
+          "OBJECT_NAME": "OBJECT_NAME",
+          "EPOCH": "EPOCH",
+          "MEAN_MOTION": "MEAN_MOTION",
+          "INCLINATION": "INCLINATION"
+        }
+      }
+    ],
+    "action_bindings": [
+      {
+        "id": "action_prepare_map_roi",
+        "name": "获取地图选区影像",
+        "description": "地图底图仅有 RGB/Alpha，无 NIR/SWIR。",
+        "origin": "platform",
+        "tool_name": "prepare_map_roi",
+        "relationship_id": "rel_prepare_map_roi",
+        "preconditions": [],
+        "parameter_bindings": {
+          "bbox": "entity.bbox"
+        },
+        "output_entities": [
+          "imagery"
+        ]
+      },
+      {
+        "id": "action_search_imagery",
+        "name": "检索卫星影像",
+        "description": "",
+        "origin": "platform",
+        "tool_name": "search_imagery",
+        "relationship_id": "rel_search_imagery",
+        "preconditions": [],
+        "parameter_bindings": {},
+        "output_entities": [
+          "satellite_scene"
+        ]
+      },
+      {
+        "id": "action_fetch_scene",
+        "name": "导入卫星场景",
+        "description": "",
+        "origin": "platform",
+        "tool_name": "fetch_scene",
+        "relationship_id": "rel_fetch_scene",
+        "preconditions": [
+          {
+            "field": "entity.cached",
+            "op": "eq",
+            "value": true,
+            "message": "场景不存在、已过期或不属于当前用户",
+            "when": {}
+          }
+        ],
+        "parameter_bindings": {
+          "scene_key": "entity.key"
+        },
+        "output_entities": [
+          "imagery"
+        ]
+      },
+      {
+        "id": "action_raster_inspect",
+        "name": "影像质检",
+        "description": "",
+        "origin": "platform",
+        "tool_name": "raster_inspect",
+        "relationship_id": "rel_raster_inspect",
+        "preconditions": [],
+        "parameter_bindings": {
+          "imagery_id": "entity.imagery_id"
+        },
+        "output_entities": [
+          "raster_profile"
+        ]
+      },
+      {
+        "id": "action_calculate_ndvi",
+        "name": "NDVI 植被指数",
+        "description": "",
+        "origin": "platform",
+        "tool_name": "calculate_ndvi",
+        "relationship_id": "rel_calculate_ndvi",
+        "preconditions": [
+          {
+            "field": "entity.resolved_roles",
+            "op": "contains_all",
+            "value": [
+              "red",
+              "nir"
+            ],
+            "message": "需要确认波段：red/nir",
+            "when": {}
+          }
+        ],
+        "parameter_bindings": {
+          "imagery_id": "entity.imagery_id"
+        },
+        "output_entities": [
+          "analysis_result"
+        ]
+      },
+      {
+        "id": "action_calculate_spectral_index",
+        "name": "光谱指数分析",
+        "description": "",
+        "origin": "platform",
+        "tool_name": "calculate_spectral_index",
+        "relationship_id": "rel_calculate_spectral_index",
+        "preconditions": [
+          {
+            "field": "entity.resolved_roles",
+            "op": "contains_all",
+            "value": [
+              "green",
+              "nir"
+            ],
+            "message": "需要确认波段：green/nir",
+            "when": {
+              "index_type": "ndwi"
+            }
+          },
+          {
+            "field": "entity.resolved_roles",
+            "op": "contains_all",
+            "value": [
+              "green",
+              "swir1"
+            ],
+            "message": "需要确认波段：green/swir1",
+            "when": {
+              "index_type": "mndwi"
+            }
+          },
+          {
+            "field": "entity.resolved_roles",
+            "op": "contains_all",
+            "value": [
+              "nir",
+              "swir1"
+            ],
+            "message": "需要确认波段：nir/swir1",
+            "when": {
+              "index_type": "ndbi"
+            }
+          },
+          {
+            "field": "entity.resolved_roles",
+            "op": "contains_all",
+            "value": [
+              "blue",
+              "red",
+              "nir"
+            ],
+            "message": "需要确认波段：blue/red/nir",
+            "when": {
+              "index_type": "evi"
+            }
+          },
+          {
+            "field": "entity.resolved_roles",
+            "op": "contains_all",
+            "value": [
+              "red",
+              "nir"
+            ],
+            "message": "需要确认波段：red/nir",
+            "when": {
+              "index_type": "savi"
+            }
+          },
+          {
+            "field": "entity.resolved_roles",
+            "op": "contains_all",
+            "value": [
+              "green",
+              "nir"
+            ],
+            "message": "需要确认波段：green/nir",
+            "when": {
+              "index_type": "gndvi"
+            }
+          },
+          {
+            "field": "entity.resolved_roles",
+            "op": "contains_all",
+            "value": [
+              "nir",
+              "swir1"
+            ],
+            "message": "需要确认波段：nir/swir1",
+            "when": {
+              "index_type": "ndmi"
+            }
+          },
+          {
+            "field": "entity.resolved_roles",
+            "op": "contains_all",
+            "value": [
+              "nir",
+              "swir2"
+            ],
+            "message": "需要确认波段：nir/swir2",
+            "when": {
+              "index_type": "nbr"
+            }
+          },
+          {
+            "field": "entity.resolved_roles",
+            "op": "contains_all",
+            "value": [
+              "red",
+              "nir"
+            ],
+            "message": "需要确认波段：red/nir",
+            "when": {
+              "index_type": "msavi"
+            }
+          },
+          {
+            "field": "entity.resolved_roles",
+            "op": "contains_all",
+            "value": [
+              "blue",
+              "red",
+              "nir",
+              "swir1"
+            ],
+            "message": "需要确认波段：blue/red/nir/swir1",
+            "when": {
+              "index_type": "bsi"
+            }
+          },
+          {
+            "field": "entity.reflectance_ready",
+            "op": "eq",
+            "value": true,
+            "message": "该指数需要可用反射率定标",
+            "when": {
+              "index_type": "evi"
+            }
+          },
+          {
+            "field": "entity.reflectance_ready",
+            "op": "eq",
+            "value": true,
+            "message": "该指数需要可用反射率定标",
+            "when": {
+              "index_type": "savi"
+            }
+          },
+          {
+            "field": "entity.reflectance_ready",
+            "op": "eq",
+            "value": true,
+            "message": "该指数需要可用反射率定标",
+            "when": {
+              "index_type": "msavi"
+            }
+          }
+        ],
+        "parameter_bindings": {
+          "imagery_id": "entity.imagery_id"
+        },
+        "output_entities": [
+          "analysis_result"
+        ]
+      },
+      {
+        "id": "action_render_band_composite",
+        "name": "波段组合预览",
+        "description": "",
+        "origin": "platform",
+        "tool_name": "render_band_composite",
+        "relationship_id": "rel_render_band_composite",
+        "preconditions": [
+          {
+            "field": "entity.resolved_roles",
+            "op": "contains_all",
+            "value": [
+              "red",
+              "green",
+              "blue"
+            ],
+            "message": "需要确认波段：red/green/blue",
+            "when": {
+              "mode": "true_color"
+            }
+          },
+          {
+            "field": "entity.resolved_roles",
+            "op": "contains_all",
+            "value": [
+              "nir",
+              "red",
+              "green"
+            ],
+            "message": "需要确认波段：nir/red/green",
+            "when": {
+              "mode": "false_color"
+            }
+          }
+        ],
+        "parameter_bindings": {
+          "imagery_id": "entity.imagery_id"
+        },
+        "output_entities": [
+          "analysis_result"
+        ]
+      },
+      {
+        "id": "action_detect_objects",
+        "name": "目标检测 · 船舶 / 车辆 / 飞机",
+        "description": "YOLO11s-OBB；DOTA 15 类，输出旋转框、置信度和类别数量。",
+        "origin": "platform",
+        "tool_name": "detect_objects",
+        "relationship_id": "rel_detect_objects",
+        "preconditions": [
+          {
+            "field": "entity.resolved_roles",
+            "op": "contains_all",
+            "value": [
+              "red",
+              "green",
+              "blue"
+            ],
+            "message": "需要确认波段：red/green/blue",
+            "when": {}
+          }
+        ],
+        "parameter_bindings": {
+          "imagery_id": "entity.imagery_id"
+        },
+        "output_entities": [
+          "object_detection_result"
+        ]
+      },
+      {
+        "id": "action_segment_instances",
+        "name": "地物分类 · 建筑 / 农田 / 道路",
+        "description": "SAM3 开放词汇实例分割；支持地理或像素选区。概念由 concepts 指定。",
+        "origin": "platform",
+        "tool_name": "segment_instances",
+        "relationship_id": "rel_segment_instances",
+        "preconditions": [
+          {
+            "field": "entity.resolved_roles",
+            "op": "contains_all",
+            "value": [
+              "red",
+              "green",
+              "blue"
+            ],
+            "message": "需要确认波段：red/green/blue",
+            "when": {}
+          }
+        ],
+        "parameter_bindings": {
+          "imagery_id": "entity.imagery_id"
+        },
+        "output_entities": [
+          "land_cover_result"
+        ]
+      },
+      {
+        "id": "action_cloud_shadow_mask",
+        "name": "云与云影掩膜",
+        "description": "",
+        "origin": "platform",
+        "tool_name": "cloud_shadow_mask",
+        "relationship_id": "rel_cloud_shadow_mask",
+        "preconditions": [
+          {
+            "field": "entity.quality_available",
+            "op": "eq",
+            "value": true,
+            "message": "需要可信 QA/SCL 质量产品，缺少时不能自动改为启发式",
+            "when": {
+              "method": "quality"
+            }
+          },
+          {
+            "field": "entity.resolved_roles",
+            "op": "contains_all",
+            "value": [
+              "red",
+              "green",
+              "blue",
+              "nir"
+            ],
+            "message": "需要确认波段：red/green/blue/nir",
+            "when": {
+              "method": "heuristic"
+            }
+          }
+        ],
+        "parameter_bindings": {
+          "imagery_id": "entity.imagery_id"
+        },
+        "output_entities": [
+          "analysis_result"
+        ]
+      },
+      {
+        "id": "action_extract_water_mask",
+        "name": "水体提取",
+        "description": "",
+        "origin": "platform",
+        "tool_name": "extract_water_mask",
+        "relationship_id": "rel_extract_water_mask",
+        "preconditions": [
+          {
+            "field": "entity.resolved_roles",
+            "op": "contains_all",
+            "value": [
+              "green",
+              "nir"
+            ],
+            "message": "需要确认波段：green/nir",
+            "when": {}
+          },
+          {
+            "field": "entity.reflectance_ready",
+            "op": "eq",
+            "value": true,
+            "message": "水体阈值计算需要反射率定标",
+            "when": {}
+          }
+        ],
+        "parameter_bindings": {
+          "imagery_id": "entity.imagery_id"
+        },
+        "output_entities": [
+          "analysis_result"
+        ]
+      },
+      {
+        "id": "action_clip_reproject_raster",
+        "name": "裁剪与重投影",
+        "description": "生成可下载栅格；不会产生新的 imagery_id。",
+        "origin": "platform",
+        "tool_name": "clip_reproject_raster",
+        "relationship_id": "rel_clip_reproject_raster",
+        "preconditions": [],
+        "parameter_bindings": {
+          "imagery_id": "entity.imagery_id"
+        },
+        "output_entities": [
+          "derived_raster"
+        ]
+      },
+      {
+        "id": "action_ocr_recognize",
+        "name": "影像文字识别",
+        "description": "",
+        "origin": "platform",
+        "tool_name": "ocr_recognize",
+        "relationship_id": "rel_ocr_recognize",
+        "preconditions": [
+          {
+            "field": "entity.resolved_roles",
+            "op": "contains_all",
+            "value": [
+              "red",
+              "green",
+              "blue"
+            ],
+            "message": "需要确认波段：red/green/blue",
+            "when": {
+              "grayscale": false
+            }
+          }
+        ],
+        "parameter_bindings": {
+          "imagery_id": "entity.imagery_id"
+        },
+        "output_entities": [
+          "analysis_result"
+        ]
+      },
+      {
+        "id": "action_parse_document",
+        "name": "读取文档全文",
+        "description": "",
+        "origin": "platform",
+        "tool_name": "parse_document",
+        "relationship_id": "rel_parse_document",
+        "preconditions": [],
+        "parameter_bindings": {
+          "document_id": "entity.id"
+        },
+        "output_entities": [
+          "document_text"
+        ]
+      },
+      {
+        "id": "action_generate_report",
+        "name": "生成分析报告",
+        "description": "",
+        "origin": "platform",
+        "tool_name": "generate_report",
+        "relationship_id": "rel_generate_report",
+        "preconditions": [
+          {
+            "field": "entity.reportable",
+            "op": "eq",
+            "value": true,
+            "message": "需要本对话中同一影像的真实分析结果",
+            "when": {}
+          }
+        ],
+        "parameter_bindings": {
+          "imagery_id": "entity.imagery_id"
+        },
+        "output_entities": [
+          "report"
+        ]
+      },
+      {
+        "id": "action_look_at_location",
+        "name": "地图定位",
+        "description": "",
+        "origin": "platform",
+        "tool_name": "look_at_location",
+        "relationship_id": "rel_look_at_location",
+        "preconditions": [],
+        "parameter_bindings": {},
+        "output_entities": [
+          "map_location"
+        ]
+      },
+      {
+        "id": "action_web_search",
+        "name": "联网检索",
+        "description": "",
+        "origin": "platform",
+        "tool_name": "web_search",
+        "relationship_id": "rel_web_search",
+        "preconditions": [],
+        "parameter_bindings": {},
+        "output_entities": [
+          "search_evidence"
+        ]
+      }
+    ]
+  }
+}
