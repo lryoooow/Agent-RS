@@ -30,6 +30,7 @@ from app.core.settings import get_settings
 from app.core.resource_limits import resource_semaphore
 from app.services.imagery_persist import await_settled_operation
 from app.mcp.concurrency import tool_semaphore
+from app.mcp.types import MCPCallError
 from app.schemas.chat import ToolExecutionInfo
 from app.services.raster_semantics import resolve_rgb
 
@@ -81,6 +82,7 @@ async def _run_instance_segment(args: InstanceSegmentArguments) -> ToolRunResult
     display_bounds = None
     inference_started = False
     inference_settled = False
+    mode = "local_service" if settings.sam3_transport == "local_service" else "docker_mcp"
     try:
         if args.bbox is not None or args.pixel_bbox is not None:
             async def make_crop():
@@ -107,6 +109,19 @@ async def _run_instance_segment(args: InstanceSegmentArguments) -> ToolRunResult
         async def infer_and_settle():
             nonlocal inference_started, inference_settled
             async with tool_semaphore():
+                if settings.sam3_transport != "local_service":
+                    from app.mcp.sam3_gateway import infer_via_gateway
+                    inference_started = True
+                    outcome = await infer_via_gateway(job_dir, args.concepts)
+                    inference_settled = outcome.get("settled") is True
+                    error = outcome.get("error")
+                    if error == "inference_timeout":
+                        raise httpx.ReadTimeout("SAM3 inference timeout")
+                    if error == "service_unavailable":
+                        raise httpx.ConnectError("SAM3 service unavailable")
+                    if error or not inference_settled or not isinstance(outcome.get("output"), dict):
+                        raise MCPCallError("SAM3 网关未返回完整推理结果")
+                    return outcome["output"]
                 async with httpx.AsyncClient(timeout=timeout) as client:
                     inference_started = True
                     response = await client.post(f"{settings.sam3_service_url.rstrip('/')}/infer",
@@ -122,9 +137,12 @@ async def _run_instance_segment(args: InstanceSegmentArguments) -> ToolRunResult
     except httpx.ConnectError:
         logger.warning("SAM3 service is unavailable", exc_info=True)
         return _error_result("SAM3 推理服务不可用，本次没有产生结果；需要检查本地 GPU 服务。", "service_unavailable")
-    except httpx.TimeoutException:
+    except (httpx.TimeoutException, TimeoutError):
         logger.warning("SAM3 inference timed out", exc_info=True)
         return _error_result("SAM3 推理超时，未取得完整结果；可缩小框选区域后再执行。", "inference_timeout")
+    except MCPCallError:
+        logger.warning("SAM3 MCP gateway did not return a usable result")
+        return _error_result("SAM3 网关没有返回可用结果，请检查网关与私有推理服务。", "service_error")
     except httpx.HTTPStatusError as exc:
         logger.warning("SAM3 service returned HTTP %s", exc.response.status_code)
         return _error_result("SAM3 推理服务返回错误，未产出可用结果；详细原因已写入服务日志。", "service_error")
@@ -147,7 +165,7 @@ async def _run_instance_segment(args: InstanceSegmentArguments) -> ToolRunResult
             shutil.rmtree(job_dir, ignore_errors=True)
 
     bounds = display_bounds or read_bounds(imagery_dir / "metadata.json")
-    execution = ToolExecutionInfo(mode="local_service", fallback_used=False)
+    execution = ToolExecutionInfo(mode=mode, fallback_used=False)
     geospatial_result = {
         "type": "instance_segmentation",
         "imagery_id": args.imagery_id,
@@ -156,7 +174,7 @@ async def _run_instance_segment(args: InstanceSegmentArguments) -> ToolRunResult
         "model_name": "SAM3",
         "inference_grid": {"width":png_grid[0],"height":png_grid[1]},
         "resampled": promoted.get("resampled", False),
-        "device": result.get("device") or "hygon-dcu",
+        "device": result.get("device") or "unknown",
         "concepts": args.concepts,
         "instance_count": int(result.get("instance_count") or 0),
         "counts": result.get("counts") or {},
@@ -180,7 +198,7 @@ async def _run_instance_segment(args: InstanceSegmentArguments) -> ToolRunResult
         query=f"segment_instances({args.imagery_id}, {','.join(args.concepts)})",
         geospatial_result=geospatial_result,
         artifacts=[AgentArtifact(type="geospatial", payload=geospatial_result)],
-        metadata=execution_metadata("local_service"),
+        metadata=execution_metadata(mode),
     )
 
 

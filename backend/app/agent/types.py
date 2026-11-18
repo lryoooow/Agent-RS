@@ -12,6 +12,7 @@ AgentStage = Literal[
     "tool_requested",
     "child_agent_running",
     "tool_execution_started",
+    "tool_execution_progress",
     "tool_execution_completed",
     "tool_execution_failed",
     "tool_context_ready",

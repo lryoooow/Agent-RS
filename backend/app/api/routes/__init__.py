@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends
 
 from app.api.deps import require_authenticated_user
+from app.api.mcp_admin import router as mcp_admin_router
 from app.api.routes.auth import router as auth_router
 from app.api.routes.chat import router as chat_router
 from app.api.routes.config import router as config_router
@@ -37,3 +38,4 @@ router.include_router(scenes_router, dependencies=_auth_dep)
 
 router.include_router(satellites_router, dependencies=_auth_dep)
 router.include_router(ontology_router, dependencies=_auth_dep)
+router.include_router(mcp_admin_router)

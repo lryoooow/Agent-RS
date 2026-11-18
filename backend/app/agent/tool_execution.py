@@ -218,6 +218,8 @@ async def run_prepared_tool(prepared: PreparedTool) -> ToolRunResult:
     if session is not None:
         try:
             session.observe(prepared.name, result)
+            if not result.error and session.notify_observers:
+                await session.notify_observers()
         except (TypeError, ValueError, KeyError, AttributeError):
             # A new tool can introduce a different result shape. Its successful result
             # must not be lost because the optional semantic projection is incomplete.

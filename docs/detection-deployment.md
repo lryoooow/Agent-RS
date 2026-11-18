@@ -1,36 +1,14 @@
-# 目标检测与影像语义修复（2026-09-15）
+# NVIDIA CUDA 目标检测部署
 
-## 部署
+检测镜像使用 NVIDIA CUDA PyTorch 和 YOLO11s-OBB。按模型来源清单从官方取得 `yolo11s-obb.pt`，放到本地 `docker/rs_detect/` 构建目录。Dockerfile 校验 SHA-256，然后将权重放入供本机使用的镜像。来源及许可证见 [模型清单](../docker/rs_detect/provenance.json)。
 
-旧检测 Docker 镜像未安装，且旧 Paddle CUDA 配方与海光 K100 不兼容。当前使用
-YOLO11s-OBB、Ultralytics 8.3.40 和海光 PyTorch 2.1 / torchvision 0.16。
-先按 `segmentation-deployment.md` 构建海光 `rs-segment-mcp:0.1.0`，再构建检测镜像。
-服务器验证的分割基础镜像 ID 为
-`sha256:d0428d34cf674e5056eb0b77ea8e85274a0dbf05c227ec0b50b75a94155b27a0`。
+安装 NVIDIA 驱动及 Docker GPU 支持后，在项目根目录构建镜像。
 
-下载 `docker/rs_detect/provenance.json` 指定的官方权重到构建目录，命名
-`yolo11s-obb.pt`，校验 SHA256 后执行：
-
-```sh
+```bash
 docker build -t rs-detect-mcp:0.2.0 docker/rs_detect
 ```
 
-后端配置：
-
-```dotenv
-RS_DETECT_MCP_IMAGE=rs-detect-mcp:0.2.0
-RS_DETECT_MCP_ACCELERATOR=hygon
-RS_DETECT_MCP_GPUS=
-RS_DETECT_MCP_MEMORY_LIMIT=8g
-RS_DETECT_MCP_CPUS=8
-RS_TOOLS_MCP_IMAGE=rs-tools-mcp:0.2.0
-```
-
-海光模式映射 `/dev/kfd`、`/dev/mkfd`、`/dev/dri` 和主机 hyhal 库，
-不使用 NVIDIA `--gpus`。生产检测镜像额外设置 `RS_DETECT_REQUIRE_GPU=1`，
-GPU 不可用时明确失败；运行时 `--network none`，权重预置在镜像中。
-未安装镜像、推理超时和服务异常分别返回错误码，不再提示无条件换轮重试。
-健康接口报告镜像是否存在；该检查不代替实际模型推理验证。
+后端设置 `RS_DETECT_MCP_IMAGE=rs-detect-mcp:0.2.0`、`RS_DETECT_MCP_ACCELERATOR=nvidia` 和 `RS_DETECT_MCP_GPUS=all`。算子使用 `--gpus all` 访问 GPU，运行期离线读取权重。镜像默认要求 CUDA 可用。
 
 ## 推理和输出
 
@@ -47,10 +25,6 @@ runtime 指标 `edge_tiles_padded` 记录补齐切片数。该行为随镜像重
 输出包括唯一命名的透明 PNG、像素旋转框和分数 JSON、WGS84 GeoJSON。
 无坐标系时不伪造 GeoJSON。零检测也是成功结果，输出空集合。
 所有结果下载继续经过影像所有者鉴权。
-
-真实验证：`fec6252c9325`，4096×4096 分析网格，RGB [1,2,3]，
-K100_AI 上 25 个分块约 12.7 秒，阈值 0.5 返回 4 个候选：桥梁 2、
-田径场 1、足球场 1。它们是模型预测，尚无标注样本验证精度，不属于建筑提取结果。
 
 ## 波段、网格和对话
 
@@ -71,7 +45,3 @@ K100_AI 上 25 个分块约 12.7 秒，阈值 0.5 返回 4 个候选：桥梁 2�
 [固定版本源代码](https://github.com/ultralytics/ultralytics/tree/v8.3.40)。
 模型及 Ultralytics 组件采用 AGPL-3.0，完整许可和权重来源见 `docker/rs_detect/`。
 平台的开源下载页同时提供本次平台代码与固定版本上游源代码包。
-
-验证覆盖实际 GPU MCP 推理、结果 JSON/GeoJSON、SSE 模型校验、后端回归、前端测试、
-公开站点 UI 和真实鉴权下载。UI 使用实际模型结果在临时测试账号中回放，
-不冒充用户新对话；未以用户浏览器私有模型 Key 重放整段自然语言对话。

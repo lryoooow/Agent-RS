@@ -10,7 +10,7 @@ from fastapi import FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 from transformers import AutoModel, AutoTokenizer
 
-MODEL_PATH = os.environ.get("BGE_MODEL_PATH", "/home/LRY/models/bge-m3")
+MODEL_PATH = os.environ["BGE_MODEL_PATH"]
 API_KEY = os.environ["LOCAL_EMBEDDING_API_KEY"]
 MAX_TOKENS = 2048
 tokenizer = None
@@ -22,15 +22,15 @@ device = "cuda"
 @asynccontextmanager
 async def lifespan(app):
     global tokenizer, model
-    if not torch.cuda.is_available():
-        raise RuntimeError("Hygon DCU is not available to PyTorch")
+    if not torch.version.cuda or not torch.cuda.is_available():
+        raise RuntimeError("NVIDIA CUDA is unavailable to PyTorch")
     torch.set_num_threads(8)
     tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH, local_files_only=True, trust_remote_code=False)
     model = AutoModel.from_pretrained(MODEL_PATH, local_files_only=True, trust_remote_code=False,
                                       torch_dtype=torch.float16, attn_implementation="eager").to(device).eval()
     with torch.inference_mode():
         model(**tokenizer("模型启动检测", return_tensors="pt").to(device))
-    print("BGE-M3 ready on", torch.cuda.get_device_name(0), "HIP", torch.version.hip, flush=True)
+    print("BGE-M3 ready on", torch.cuda.get_device_name(0), "CUDA", torch.version.cuda, flush=True)
     yield
 
 
@@ -56,7 +56,7 @@ class EmbeddingRequest(BaseModel):
 @app.get("/health")
 def health():
     return {"status": "ready", "model": "bge-m3", "dimensions": 1024, "max_tokens": MAX_TOKENS,
-            "device": torch.cuda.get_device_name(0), "hip": torch.version.hip}
+            "device": torch.cuda.get_device_name(0), "cuda": torch.version.cuda}
 
 
 @app.post("/v1/embeddings")

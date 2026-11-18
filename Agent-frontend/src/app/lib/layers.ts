@@ -1,4 +1,4 @@
-import type { GeospatialReportResult, GeospatialResult,
+import type { GeospatialOcrResult, GeospatialReportResult, GeospatialResult,
   GeospatialSceneSearchResult, ChatTurn, LegendInfo } from "../types";
 import { maskLegend, maskRows, maskTitle } from "./analysis-results";
 import { DETECTION_CLASSES, LANDCOVER_CLASSES, NDVI_RAMP, WATER_RAMP } from "../data/rs";
@@ -48,9 +48,9 @@ function backendLegend(legend: LegendInfo | null | undefined): LegendStop[] | un
 }
 
 /** 把一条 geospatial 结果转成一个图层视图模型（id 用 imagery_id + 类型，保证同图同类可替换）。 */
-// 报告/影像检索结果不是图层（由 layersFromTurns 提前排除），故入参排除这两种类型。
+// 报告、影像检索与 OCR 结果没有地图图层，由 layersFromTurns 提前排除。
 function layerFromResult(
-  result: Exclude<GeospatialResult, GeospatialReportResult | GeospatialSceneSearchResult>,
+  result: Exclude<GeospatialResult, GeospatialReportResult | GeospatialSceneSearchResult | GeospatialOcrResult>,
 ): RSLayer {
   const idShort = result.imagery_id.slice(0, 8);
   const base = {
@@ -61,6 +61,15 @@ function layerFromResult(
     opacity: 1,
   };
   switch (result.type) {
+    case "clip_reproject":
+      return {
+        ...base,
+        id: `clip-${result.imagery_id}`,
+        name: "裁剪与重投影",
+        sublabel: result.stats.dst_crs ?? "坐标系未知",
+        kind: "imagery",
+        color: KIND_COLOR.imagery,
+      };
     case "preview":
       return {
         ...base,
@@ -165,7 +174,7 @@ export function layersFromTurns(
   for (const turn of turns) {
     if (!turn.geospatialResult) continue;
     // 报告结果是可下载文档、不是地图图层，跳过（无 result_url/bounds）。
-    if (turn.geospatialResult.type === "report" || turn.geospatialResult.type === "scene_search") continue;
+    if (turn.geospatialResult.type === "report" || turn.geospatialResult.type === "scene_search" || turn.geospatialResult.type === "ocr") continue;
     const layer = layerFromResult(turn.geospatialResult);
     if (turn.geospatialResult.type !== "preview" && layer.url) {
       layer.id += `-${encodeURIComponent(layer.url.split("/").pop()!)}`;

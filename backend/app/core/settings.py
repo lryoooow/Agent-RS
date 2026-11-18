@@ -1,6 +1,7 @@
 import logging
 import os
 from datetime import date
+from pathlib import Path
 from typing import Literal
 from functools import lru_cache
 from pydantic import field_validator
@@ -15,6 +16,20 @@ _DEPRECATED_AGENT_ENV = (
     "AGENT_DECISION_CACHE_TTL_SECONDS",
     "AGENT_DECISION_CACHE_MAX_SIZE",
 )
+
+
+def runtime_choice(path: str, default: str, choices: set[str]) -> str:
+    """Read a small, operator-owned choice for a new turn or operator invocation."""
+    if path:
+        try:
+            with Path(path).open(encoding="ascii") as source:
+                value = source.read(32).strip()
+                if value in choices and not source.read(1):
+                    return value
+        except (OSError, UnicodeError):
+            pass
+        logger.warning("Runtime selection file missing or invalid, using configured default")
+    return default
 
 
 class Settings(BaseSettings):
@@ -185,6 +200,20 @@ class Settings(BaseSettings):
     # RAG 检索引擎：仅预留开关，当前只有 builtin（现有 hybrid+RRF+rerank+MMR）。
     rag_engine: str = "builtin"
     knowledge_graph_enabled: bool = False
+    mcp_hotplug_enabled: bool = True
+    mcp_allowed_hosts: str = ""
+    mcp_static_servers_file: str = ""
+    mcp_external_default_timeout: float = Field(default=30, gt=0, le=600)
+    mcp_external_max_calls_per_turn: int = Field(default=3, ge=0, le=100)
+    rs_tools_transport: Literal["stdio_docker", "streamable_http"] = "stdio_docker"
+    rs_tools_transport_file: str = ""
+    rs_tools_http_url: str = ""
+    rs_detect_http_url: str = ""
+    rs_doc_http_url: str = ""
+    rs_tools_http_token: str = ""
+    rs_tools_http_workspace: str = ""
+    agent_engine_backend: Literal["autogen", "langgraph"] = "autogen"
+    agent_engine_backend_file: str = ""
     ontology_enabled: bool = True
 
     default_user_id: str = "00000000-0000-4000-8000-000000000001"
@@ -309,6 +338,12 @@ class Settings(BaseSettings):
     rs_detect_mcp_gpus: str = "all"
     rs_detect_mcp_accelerator: str = "nvidia"
     sam3_enabled: bool = True
+    sam3_transport: Literal["local_service", "stdio_docker", "streamable_http"] = "local_service"
+    sam3_gateway_image: str = "rs-sam3-gateway:local"
+    sam3_gateway_url: str = ""
+    sam3_gateway_token: str = ""
+    sam3_upstream_root: str = ""
+    sam3_gateway_network: str = "host"
     sam3_service_url: str = "http://127.0.0.1:18082"
     sam3_inference_timeout_seconds: float = 900.0
     rs_doc_docker_timeout_seconds: int = 180

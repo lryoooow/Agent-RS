@@ -16,7 +16,7 @@ def format_ocr_context(
     min_conf = stats.get("min_confidence_seen")
     grayscale = bool(stats.get("grayscale"))
 
-    truncated = False
+    truncated = bool(stats.get("truncated"))
     shown = full_text
     if max_chars and len(full_text) > max_chars:
         shown = full_text[:max_chars]
@@ -30,7 +30,7 @@ def format_ocr_context(
         "",
         f"- 影像ID: {imagery_id}",
         f"- 识别文本块数: {block_count}",
-        f"- 总字数: {len(full_text)}",
+        f"- 总字数: {stats.get('char_count', len(full_text))}",
         f"- 识别模式: {'灰度' if grayscale else 'RGB'}",
     ]
     if avg_conf is not None:
@@ -45,7 +45,7 @@ def format_ocr_context(
         return "\n".join(header)
 
     if truncated:
-        header.append(f"- 注意: 全文较长，仅返回前 {max_chars} 字，结论请仅基于已返回部分，剩余内容未包含。")
+        header.append(f"- 注意: 全文较长，仅返回前 {len(shown)} 字，结论请仅基于已返回部分，剩余内容未包含。")
 
     header.append("")
     header.append("--- 识别全文 ---")

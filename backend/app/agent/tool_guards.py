@@ -10,6 +10,8 @@ from app.db.repositories.document import get_document
 
 async def validate_tool_access(tool_name: str, arguments: dict[str, Any], user_id: str | None) -> str | None:
     tool = get_tool(tool_name)
+    if tool_name.startswith("ext_") and not user_id:
+        return "owner_required"
     if tool is None:
         return None
     if tool.resource_kind == "document":

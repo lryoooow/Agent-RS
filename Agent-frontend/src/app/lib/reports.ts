@@ -33,6 +33,25 @@ function entryFromGeospatial(turn: ChatTurn, r: GeospatialResult): ReportEntry |
   if (r.type === "scene_search") return null;
   const base = { id: `${turn.id}-geo`, turnId: turn.id, imageryId: r.imagery_id };
   switch (r.type) {
+    case "ocr":
+      return {
+        ...base, kind: "文字识别", title: "OCR 文字识别",
+        stats: [
+          { label: "文字块", value: String(r.stats.block_count) },
+          { label: "字符数", value: String(r.stats.char_count) },
+          { label: "平均置信度", value: fmt(r.stats.avg_confidence) },
+        ], execution: r.execution,
+      };
+    case "clip_reproject":
+      return {
+        ...base, kind: "裁剪与重投影", title: "裁剪与重投影",
+        stats: [
+          { label: "源坐标系", value: r.stats.src_crs ?? "未知" },
+          { label: "目标坐标系", value: r.stats.dst_crs ?? "未知" },
+          { label: "输出尺寸", value: `${r.stats.width ?? "?"} × ${r.stats.height ?? "?"}` },
+          { label: "波段数", value: fmt(r.stats.band_count) },
+        ], execution: r.execution,
+      };
     case "preview":
       return null; // 预览不算分析结果
     case "report":

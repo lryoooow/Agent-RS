@@ -1,0 +1,46 @@
+x-operator: &operator
+  user: "${RS_TOOLS_WORKER_UID:-1000}:${RS_TOOLS_WORKER_GID:-1000}"
+  environment:
+    MCP_TRANSPORT: streamable_http
+    MCP_OPERATOR_TOKEN: ${RS_TOOLS_HTTP_TOKEN:?Set RS_TOOLS_HTTP_TOKEN}
+  volumes:
+    - type: bind
+      source: ${RS_TOOLS_HTTP_WORKSPACE:?Set an absolute shared workspace directory}
+      target: /jobs
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  read_only: true
+  tmpfs:
+    - /tmp
+  cpus: 2
+  healthcheck:
+    test: ["CMD", "/opt/operator-mcp/bin/python", "-c", "import socket; socket.create_connection(('127.0.0.1',8000),2).close()"]
+    interval: 30s
+    timeout: 4s
+    retries: 3
+
+services:
+  raster:
+    <<: *operator
+    build:
+      context: .
+      args:
+        OPERATOR_IMAGE: ${RS_TOOLS_MCP_IMAGE:-rs-tools-mcp:0.1.0}
+    image: agent-rs-mcp-raster-http:local
+    ports:
+      - "127.0.0.1:${RS_TOOLS_HTTP_PORT:-18130}:8000"
+    mem_limit: 2g
+
+  ocr:
+    <<: *operator
+    profiles: ["ocr"]
+    build:
+      context: .
+      args:
+        OPERATOR_IMAGE: ${RS_DOC_MCP_IMAGE:-rs-doc-mcp:0.1.0}
+    image: agent-rs-mcp-ocr-http:local
+    ports:
+      - "127.0.0.1:${RS_DOC_HTTP_PORT:-18132}:8000"
+    mem_limit: 4g

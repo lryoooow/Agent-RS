@@ -53,6 +53,18 @@ class RSToolsMCPClient:
         output_dir: Path | None = None,
         arguments: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        from app.core.settings import get_settings, runtime_choice
+        from app.mcp.progress import current_progress
+        settings = get_settings()
+        dedicated_endpoints = {"detect_objects": settings.rs_detect_http_url, "ocr_recognize": settings.rs_doc_http_url}
+        transport = runtime_choice(settings.rs_tools_transport_file, settings.rs_tools_transport, {"stdio_docker", "streamable_http"})
+        if transport == "streamable_http" and (tool_name not in dedicated_endpoints or dedicated_endpoints[tool_name]):
+            from app.mcp.operator_pool import call_operator
+            async with tool_semaphore():
+                return await call_operator(tool_name, source_path, output_dir, arguments or {},
+                                           timeout=self.timeout_seconds, on_progress=current_progress())
+        progress = current_progress()
+        progress_options = {"on_progress": progress} if progress else {}
         mount_root = source_path.resolve().parent
         payload = dict(arguments or {})
         payload["input_path"] = self.host_to_container(source_path, mount_root=mount_root)
@@ -82,9 +94,7 @@ class RSToolsMCPClient:
         # can read staged inputs and write outputs without opening them to others.
         if hasattr(os, "getuid") and hasattr(os, "getgid"):
             command.extend(["--user", f"{os.getuid()}:{os.getgid()}"])
-        if self.accelerator == "hygon":
-            command.extend(["--device=/dev/kfd", "--device=/dev/mkfd", "--device=/dev/dri", "-v", "/opt/hyhal:/opt/hyhal:ro"])
-        elif self.accelerator == "nvidia" and self.gpus:
+        if self.accelerator == "nvidia" and self.gpus:
             command.extend(["--gpus", self.gpus])
         command.extend(
             [
@@ -105,7 +115,7 @@ class RSToolsMCPClient:
                 client_version=CLIENT_VERSION,
             )
             if output_dir is None:
-                return await client.call_tool(tool_name, payload)
+                return await client.call_tool(tool_name, payload, **progress_options)
             # Each execution writes outside the public results directory. Only
             # complete, successful outputs are promoted; cancelled/failed calls
             # cannot leave half-files available through result download routes.
@@ -114,7 +124,7 @@ class RSToolsMCPClient:
                 work_dir = Path(directory)
                 work_dir.resolve().relative_to(mount_root)
                 payload["output_dir"] = self.host_to_container(work_dir, mount_root=mount_root)
-                result = await client.call_tool(tool_name, payload)
+                result = await client.call_tool(tool_name, payload, **progress_options)
                 _publish_outputs(work_dir, output_dir.resolve(), result)
                 return result
 

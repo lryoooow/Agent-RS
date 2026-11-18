@@ -55,6 +55,7 @@ class AIService:
     async def chat(self, request: ChatRequest) -> ChatResponse:
         setup = await self._prepare_chat_execution(request)
         persistence = setup.persistence
+        turn = None
         try:
             with conversation_scope(persistence.conversation_id):
                 turn = await complete_turn(
@@ -64,38 +65,41 @@ class AIService:
                 )
             if not turn.content.strip():
                 raise EmptyResponseError()
+            finish_reason = _finish_reason_from_stop(turn.stop_reason)
+            result = ChatResponse(
+                content=turn.content,
+                model=setup.config.model,
+                provider=setup.config.provider,
+                usage=turn.usage,
+                finish_reason=finish_reason,
+                conversation_id=persistence.conversation_id,
+                user_message_id=persistence.user_message_id,
+                retrieved_chunks=turn.retrieved_chunks,
+                rag_trace=turn.rag_trace,
+                agent_trace=self._agent_trace_payload(turn.trace),
+                active_imagery_id=getattr(turn, "active_imagery_id", None),
+                geospatial_result=turn.geospatial_result,
+                tool_result=turn.tool_result,
+                task_failure=getattr(turn, "task_failure", None),
+            )
+            persistence.assistant_message_id = await save_assistant_response(
+                persistence,
+                content=result.content,
+                usage=turn.usage or {},
+                finish_reason=finish_reason,
+                active_imagery_id=getattr(turn, "active_imagery_id", None),
+                geospatial_result=turn.geospatial_result,
+                tool_result=turn.tool_result,
+                task_failure=result.task_failure.model_dump() if result.task_failure else None,
+                agent_trace=result.agent_trace,
+            )
+            result.assistant_message_id = persistence.assistant_message_id
         except Exception as exc:
-            await mark_assistant_failed(persistence, exc)
+            await mark_assistant_failed(persistence, exc, content=getattr(turn, "content", ""))
             if isinstance(exc, AIError):
                 raise
             raise map_provider_error(exc) from exc
 
-        finish_reason = _finish_reason_from_stop(turn.stop_reason)
-        result = ChatResponse(
-            content=turn.content,
-            model=setup.config.model,
-            provider=setup.config.provider,
-            usage=turn.usage,
-            finish_reason=finish_reason,
-            conversation_id=persistence.conversation_id,
-            user_message_id=persistence.user_message_id,
-            retrieved_chunks=turn.retrieved_chunks,
-            rag_trace=turn.rag_trace,
-            agent_trace=self._agent_trace_payload(turn.trace),
-            active_imagery_id=getattr(turn, "active_imagery_id", None),
-            geospatial_result=turn.geospatial_result,
-            tool_result=turn.tool_result,
-        )
-        persistence.assistant_message_id = await save_assistant_response(
-            persistence,
-            content=result.content,
-            usage=turn.usage or {},
-            finish_reason=finish_reason,
-            active_imagery_id=getattr(turn, "active_imagery_id", None),
-            geospatial_result=turn.geospatial_result,
-            tool_result=turn.tool_result,
-        )
-        result.assistant_message_id = persistence.assistant_message_id
         schedule_after_response(persistence, assistant_content=result.content)
         self._log_response(setup, turn, finish_reason=finish_reason, stream=False)
         return result
@@ -193,6 +197,8 @@ class AIService:
                 done_payload["geospatial_result"] = turn.geospatial_result
             if turn.tool_result:
                 done_payload["tool_result"] = turn.tool_result
+            failure = getattr(turn, "task_failure", None)
+            done_payload["task_failure"] = failure.model_dump() if failure else None
             await save_streamed_assistant(
                 persistence,
                 content=content,
@@ -252,6 +258,7 @@ class AIService:
 
     @staticmethod
     def _log_response(setup, turn, *, finish_reason: str, stream: bool) -> None:
+        failure = getattr(turn, "task_failure", None)
         log_event(
             logger,
             "chat.response",
@@ -262,6 +269,7 @@ class AIService:
             route_reason_class=_route_reason_class(turn.route_reason),
             retrieved_chunks=turn.retrieved_chunks,
             finish_reason=finish_reason,
+            **({"failed_tool": failure.tool_name, "task_error_code": failure.error_code} if failure else {}),
             total_tokens=(turn.usage or {}).get("total_tokens"),
             stream=stream,
         )

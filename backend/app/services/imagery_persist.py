@@ -149,7 +149,9 @@ def _display_bounds(crs: Any, bounds: Any) -> list[float] | None:
 def _extract_metadata(tif_path: Path) -> dict[str, Any]:
     import rasterio
 
-    with rasterio.open(tif_path) as src:
+    # Restrict GDAL before opening untrusted bytes. A .tif name can hide a VRT
+    # whose sources cause network or local-file access during parsing/reading.
+    with rasterio.open(tif_path, driver="GTiff") as src:
         descriptions = list(src.descriptions or [])
         # 键统一小写：GDAL 标签键大小写不稳定（SENSOR_ID/sensor_id 都见过）。
         tags = {str(k).lower(): str(v) for k, v in (src.tags() or {}).items()}

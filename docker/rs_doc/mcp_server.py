@@ -7,7 +7,7 @@ import traceback
 from compute_ocr import compute as compute_ocr
 
 
-PROTOCOL_VERSION = "2024-11-05"
+PROTOCOL_VERSION = "2025-06-18"
 SERVER_NAME = "rs-doc-mcp"
 SERVER_VERSION = "0.1.0"
 
@@ -52,7 +52,7 @@ def handle(request: dict) -> dict | None:
         return _ok(
             req_id,
             {
-                "protocolVersion": PROTOCOL_VERSION,
+                "protocolVersion": "2024-11-05" if params.get("protocolVersion") == "2024-11-05" else PROTOCOL_VERSION,
                 "capabilities": {"tools": {}},
                 "serverInfo": {"name": SERVER_NAME, "version": SERVER_VERSION},
             },
@@ -67,6 +67,10 @@ def handle(request: dict) -> dict | None:
         try:
             if name == "ocr_recognize":
                 result = compute_ocr(**args)
+                if (params.get("_meta") or {}).get("agent-rs/compact-result"):
+                    text = result["full_text"]
+                    result = {k: v for k, v in result.items() if k not in ("full_text", "blocks")}
+                    result.update(full_text=text[:4096], truncated=len(text) > 4096)
             else:
                 return _err(req_id, -32601, f"Unknown tool: {name}")
             return _ok(
@@ -99,8 +103,18 @@ def main():
             sys.stderr.write(f"Invalid JSON: {exc}\n")
             sys.stderr.flush()
             continue
+        token = (request.get("params", {}).get("_meta") or {}).get("progressToken")
+        out = sys.stdout
+        def progress(value, total, message):
+            if token is not None and request.get("method") == "tools/call":
+                notice = {"jsonrpc": "2.0", "method": "notifications/progress", "params": {
+                    "progressToken": token, "progress": value, "total": total, "message": message}}
+                print(json.dumps(notice), file=out, flush=True)
         try:
+            progress(0, 100, "已开始处理影像")
             response = handle(request)
+            if response and "result" in response and not response["result"].get("isError"):
+                progress(100, 100, "算子已完成")
         except Exception:
             traceback.print_exc(file=sys.stderr)
             response = _err(request.get("id"), -32603, "Internal server error")

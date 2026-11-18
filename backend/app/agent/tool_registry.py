@@ -389,13 +389,29 @@ TOOLS: dict[str, RegisteredTool] = {
 }
 
 
+# The original dict remains the platform baseline and the compatibility API for callers.
+BUILTIN_TOOLS = TOOLS
+
+
+def effective_registry() -> dict[str, RegisteredTool]:
+    from app.mcp.hub import get_mcp_hub
+    return get_mcp_hub().get_effective_registry()
+
+
+def iter_registered_tools():
+    return iter(effective_registry().values())
+
+
 def list_tool_definitions(*, available_only: bool = True) -> list[dict]:
     return [
         tool.definition
-        for tool in TOOLS.values()
+        for tool in iter_registered_tools()
         if not available_only or tool.is_enabled()
     ]
 
 
 def get_tool(name: str) -> RegisteredTool | None:
-    return TOOLS.get(name)
+    if name.startswith("ontology_"):
+        from app.mcp.ontology_server import ONTOLOGY_TOOLS
+        return ONTOLOGY_TOOLS.get(name)
+    return effective_registry().get(name)

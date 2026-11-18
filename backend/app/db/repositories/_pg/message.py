@@ -51,7 +51,7 @@ async def update_message_complete(
     tokens_in: int | None = None,
     tokens_out: int | None = None,
 ) -> None:
-    await conn.execute(
+    result = await conn.execute(
         """
         UPDATE agent_rs.messages
         SET content = $2,
@@ -68,6 +68,8 @@ async def update_message_complete(
         tokens_in,
         tokens_out,
     )
+    if result == "UPDATE 0":
+        raise LookupError("Assistant message no longer exists")
 
 
 async def set_embedding(conn, *, message_id: str, embedding: list[float]) -> None:

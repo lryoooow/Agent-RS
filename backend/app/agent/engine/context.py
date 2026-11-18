@@ -109,11 +109,16 @@ class BudgetedChatCompletionContext(ChatCompletionContext):
 
     async def get_messages(self) -> List[LLMMessage]:
         from app.agent.ontology.state import current_session
-        from app.agent.tool_registry import TOOLS
+        from app.mcp.hub import get_mcp_hub
         from app.agent.engine.turn_context import current_turn_state
         session, state = current_session(), current_turn_state()
-        enabled = {name for name, tool in TOOLS.items() if tool.is_enabled() and (state is None or state.available(name))}
-        self.upsert_block("ontology", session.context(enabled) if session else "")
+        hub = get_mcp_hub()
+        enabled = set(hub.active_tools())
+        if session and state and session.user_id and "ontology" in hub.builtins:
+            context = await hub.read_ontology_context(state.session_id)
+        else:
+            context = session.context(enabled) if session else ""
+        self.upsert_block("ontology", context)
         budget = self.token_budget
         required = _protected_message_tokens(self._messages)
         if required > budget:

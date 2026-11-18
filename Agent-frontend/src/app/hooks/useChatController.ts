@@ -6,6 +6,7 @@ import {
   createStreamHandlers,
   parseGeospatialResult,
   parseToolResult,
+  parseTaskFailure,
 } from "../lib/chat-events";
 import { buildChatRequestBody } from "../lib/chat-request";
 import { createReport } from "../lib/reports-api";
@@ -285,7 +286,7 @@ export function useChatController({
   // 让分析结果卡片在重开会话时重现（根治"重载后只剩文字、卡片丢失"）。
   function loadConversation(
     nextConversationId: string,
-    messages: { role: string; content: string; metadata?: Record<string, unknown> | null }[],
+    messages: { role: string; content: string; status?: string; metadata?: Record<string, unknown> | null }[],
   ) {
     abortRef.current?.abort();
     ++requestEpoch.current;
@@ -301,8 +302,12 @@ export function useChatController({
           role: (m.role === "assistant" || m.role === "system" ? m.role : "user") as ChatTurn["role"],
           content: m.content,
           restored: true,
+          error: m.status === "failed",
+          agentTrace: meta?.agent_trace && typeof meta.agent_trace === "object"
+            ? meta.agent_trace as Record<string, unknown> : undefined,
           geospatialResult,
           toolResult,
+          taskFailure: m.role === "assistant" ? parseTaskFailure(meta?.task_failure) : undefined,
         };
       });
     turnsRef.current = restored;

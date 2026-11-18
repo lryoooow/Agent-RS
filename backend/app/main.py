@@ -36,6 +36,8 @@ async def lifespan(_: FastAPI):
     await init_db_pool()
     await _verify_database_connection()
     await _ensure_object_storage_ready()
+    from app.mcp.hub import init_mcp_hub, close_mcp_hub
+    await init_mcp_hub()
     await recover_document_jobs()
     start_tool_job_worker()
     from app.knowledge.service import start_worker as start_knowledge_worker
@@ -55,6 +57,7 @@ async def lifespan(_: FastAPI):
         from app.services.satellite_catalog import close_catalog
         await close_catalog()
         await aclose_geocode_client()  # O5: 关闭模块全局 httpx 客户端
+        await close_mcp_hub()
         await close_db_pool()
 
 

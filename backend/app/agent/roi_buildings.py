@@ -12,7 +12,7 @@ from app.agent.imagery_access import iter_user_imagery_metadata
 from app.agent.imagery_selection import grid_resolution_m
 from app.agent.prompting.scenarios import latest_user_text
 from app.core.settings import get_settings
-from app.schemas.chat import AnalysisROI, ChatRequest
+from app.schemas.chat import AnalysisROI, ChatRequest, TaskFailure
 
 
 class RoiBuildingRequest(BaseModel):
@@ -136,20 +136,23 @@ async def building_readiness(request: RoiBuildingRequest, *, user_id: str | None
 
 async def direct_building_events(request: ChatRequest, *, user_id: str | None):
     from contextlib import aclosing
-    from app.agent.ontology.state import create_session, ontology_scope
-    with ontology_scope(await create_session(request, user_id)):
+    from app.agent.ontology.state import create_session
+    from app.agent.engine import turn_scope
+    with turn_scope(ontology=await create_session(request, user_id)):
         async with aclosing(_direct_building_events(request, user_id=user_id)) as events:
             async for event in events:
                 yield event
 
 
 async def _direct_building_events(request: ChatRequest, *, user_id: str | None):
-    from app.agent.engine import AutogenTurnOutput
+    from contextlib import aclosing
+    from app.agent.engine import AutogenTurnOutput, current_turn_state, operator_events
     from app.agent.tool_execution import PrepareRejected, prepare_tool_call, run_prepared_tool
     from app.agent.types import AgentTrace
 
     from app.services.map_roi import MapROIError, import_map_roi
     target = direct_roi_target(request)
+    task = '选区建筑提取' if target == 'building' else '选区地物分类'
     task_label = 'SAM3 建筑实例提取' if target == 'building' else 'SAM3 开放词汇地物分割'
     trace = AgentTrace(enabled=True)
     common = dict(tool_name='segment_instances', agent_name='segmentation_agent', domain='segmentation_agent',
@@ -180,8 +183,22 @@ async def _direct_building_events(request: ChatRequest, *, user_id: str | None):
             if session := current_session():
                 session.add(image_fact(image_id, meta))
         except MapROIError as exc:
-            yield 'status', trace.add('tool_execution_failed','选区地图影像获取失败',error_code='map_image_unavailable',**acquisition)
-            yield 'final', AutogenTurnOutput(content=str(exc),trace=trace,strategy='roi_building')
+            failure = TaskFailure(tool_name=acquisition['tool_name'], error_code=exc.code, label='选区地图影像获取失败')
+            yield 'status', trace.add('tool_execution_failed', failure.label, error_code=failure.error_code, **acquisition)
+            content = f'**本次{task}未执行，也未生成结果图层。** {exc}\n\n'
+            if exc.retryable:
+                action = '提取建筑' if target == 'building' else '地物分类'
+                content += f'可以稍后在原选区再次点击「{action}」。'
+            eligible_ids = [c.imagery_id for c in readiness.candidates if c.eligible]
+            if (request.metadata or {}).get('active_imagery_id') in eligible_ids:
+                guidance = '当前选中的影像也符合这个选区的分析条件。如要使用它，'
+            elif eligible_ids:
+                guidance = f'已有 {len(eligible_ids)} 张影像符合选区条件。可在「当前分析影像」中选择 `{eligible_ids[0]}`，'
+            else:
+                guidance = f'如要改用自己的影像，可上传完整覆盖选区、像元尺寸不超过 {readiness.resolution_limit_m:g} 米的 RGB GeoTIFF，'
+            content += guidance + '在「分析数据」中选择「当前已选影像」，再发起分析。'
+            yield 'final', AutogenTurnOutput(content=content, trace=trace, strategy='roi_building',
+                route_reason='roi_map_acquisition', task_failure=failure)
             return
         candidate = _candidate(image_id,meta,request.analysis_roi,readiness.resolution_limit_m)
         yield 'status', trace.add('tool_execution_completed','选区地图影像已就绪',imagery_id=image_id,**acquisition)
@@ -192,37 +209,58 @@ async def _direct_building_events(request: ChatRequest, *, user_id: str | None):
     arguments = dict(imagery_id=candidate.imagery_id, concepts=concepts,
         **{role+'_band':band for role,band in candidate.rgb.items()})
     arguments.update(dict(bbox=roi.bbox, bbox_crs='EPSG:4326') if roi.kind == 'geo' else dict(pixel_bbox=roi.rel))
-    prepared = await prepare_tool_call('segment_instances', arguments, user_id=user_id)
+    state = current_turn_state()
+    state.trusted_tool_arguments['segment_instances'] = dict(arguments)
+    if not state.try_reserve('segment_instances'):
+        failure = TaskFailure(tool_name='segment_instances', label='本轮分割配额已用完', error_code='tool_quota_exceeded')
+        yield 'status', trace.add('tool_execution_failed', failure.label, error_code=failure.error_code, **common)
+        yield 'final', AutogenTurnOutput(content=failure.label, trace=trace, strategy='roi_building', task_failure=failure)
+        return
+    prepared = await prepare_tool_call('segment_instances', state.arguments_for('segment_instances', arguments), user_id=user_id)
     if isinstance(prepared, PrepareRejected):
-        yield 'status', trace.add('final_answering', f'{task_label}未执行', error_code=prepared.error_detail)
-        yield 'final', AutogenTurnOutput(content=prepared.result.tool_context, trace=trace, strategy='roi_building')
+        state.release('segment_instances')
+        failure = TaskFailure(tool_name='segment_instances', label=f'{task}未通过执行检查',
+            error_code=prepared.result.metadata.get('error_code') or prepared.failure)
+        yield 'status', trace.add('tool_execution_failed', failure.label, error_code=failure.error_code, **common)
+        yield 'final', AutogenTurnOutput(content=f'**本次{task}未执行。** {prepared.result.tool_context}',
+            trace=trace, strategy='roi_building', task_failure=failure)
         return
     common['imagery_id'] = candidate.imagery_id
     yield 'status', trace.add('tool_requested', f'已匹配分析影像，准备{task_label}', **common)
     yield 'status', trace.add('tool_execution_started', f'正在进行选区{task_label}', **common)
-    result = await run_prepared_tool(prepared)
-    yield 'status', trace.add('tool_execution_failed' if result.error else 'tool_execution_completed',
-        f'{task_label}失败' if result.error else f'{task_label}完成', error_code=result.error, **common)
-    if result.geospatial_result:
-        yield 'status', trace.add('geospatial_result_ready', f'选区{task_label}结果已生成', **common)
+    async with aclosing(operator_events(lambda: run_prepared_tool(prepared), state, common['child_run_id'], 'segment_instances')) as events:
+        async for progress, completed in events:
+            if completed is not None:
+                result = completed
+            else:
+                yield 'status', trace.add('tool_execution_progress', progress.message or task_label,
+                    progress=progress.progress, total=progress.total,
+                    percent=100 * progress.progress / progress.total if progress.total else None, **common)
+    if result.error or not result.geospatial_result:
+        failure = TaskFailure(tool_name='segment_instances', label=f'{task}失败',
+            error_code=(result.metadata.get('error_code') or 'segmentation_failed') if result.error else 'segmentation_result_missing')
+        detail = result.tool_context if result.error else '分割工具未返回结果图层，请重新运行选区分析。'
+        yield 'status', trace.add('tool_execution_failed', failure.label, error_code=failure.error_code, **common)
+        yield 'final', AutogenTurnOutput(content=f'**本次{task}未完成，无法提供分析结果。** {detail}',
+            trace=trace, active_imagery_id=candidate.imagery_id, used_tool=True, strategy='roi_building', task_failure=failure)
+        return
+    yield 'status', trace.add('tool_execution_completed', f'{task_label}完成', **common)
+    yield 'status', trace.add('geospatial_result_ready', f'选区{task_label}结果已生成', **common)
     geo = result.geospatial_result
     if geo is not None and not isinstance(geo,dict):
         geo = geo.model_dump(exclude_none=True)
-    if result.error:
-        content = result.tool_context
-    else:
-        content = f'**选区{task_label}已完成。** 使用影像：{candidate.filename}（`{candidate.imagery_id}`）。结果已叠加到地图。'
-        if target == 'building':
-            content += f"\n\n识别到建筑实例：{int((geo or {}).get('counts', {}).get('building', 0)):,} 个。"
-            if (geo or {}).get('area_m2') is not None:
-                content += f" SAM3 掩膜估算面积：{geo['area_m2']:,.2f} 平方米。"
-        if (geo or {}).get('mask_url'):
-            content += f"\n\n[下载 SAM3 合并掩膜 GeoTIFF]({geo['mask_url']})"
-        if (geo or {}).get('vector_url'):
-            content += f" · [下载实例矢量 GeoJSON]({geo['vector_url']})"
-        if readiness.source == 'current_map':
-            content += '\n\n数据来源：当前地图卫星底图（Esri 及其影像提供方）；仅包含 RGB，拍摄日期及原始传感器分辨率未确认。'
-        content += '\n\n结果来自 SAM3 开放词汇实例分割，目标数量、地物边界和面积需结合原始影像核查。'
+    content = f'**选区{task_label}已完成。** 使用影像：{candidate.filename}（`{candidate.imagery_id}`）。结果已叠加到地图。'
+    if target == 'building':
+        content += f"\n\n识别到建筑实例：{int((geo or {}).get('counts', {}).get('building', 0)):,} 个。"
+        if (geo or {}).get('area_m2') is not None:
+            content += f" SAM3 掩膜估算面积：{geo['area_m2']:,.2f} 平方米。"
+    if (geo or {}).get('mask_url'):
+        content += f"\n\n[下载 SAM3 合并掩膜 GeoTIFF]({geo['mask_url']})"
+    if (geo or {}).get('vector_url'):
+        content += f" · [下载实例矢量 GeoJSON]({geo['vector_url']})"
+    if readiness.source == 'current_map':
+        content += '\n\n数据来源：当前地图卫星底图（Esri 及其影像提供方）；仅包含 RGB，拍摄日期及原始传感器分辨率未确认。'
+    content += '\n\n结果来自 SAM3 开放词汇实例分割，目标数量、地物边界和面积需结合原始影像核查。'
     yield 'status', trace.add('final_answering', f'{task_label}处理完成')
     yield 'final', AutogenTurnOutput(content=content, trace=trace, active_imagery_id=candidate.imagery_id,
         geospatial_result=geo, tool_result=result.tool_result, used_tool=True, strategy='roi_building', route_reason='roi_direct')

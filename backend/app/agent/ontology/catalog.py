@@ -77,8 +77,8 @@ def discover_schemas(root: Path = SCHEMAS_ROOT) -> list[EntityType]:
 
 def build_catalog(registry=None, *, discover: bool = True) -> tuple[OntologySchema, list[dict], str]:
     if registry is None:
-        from app.agent.tool_registry import TOOLS
-        registry = TOOLS
+        from app.agent.tool_registry import effective_registry
+        registry = effective_registry()
     schema = load_schema()
     by_tool = {a.tool_name: a for a in schema.bindings.action_bindings}
     known_entities = {e.id for e in schema.entity_types}

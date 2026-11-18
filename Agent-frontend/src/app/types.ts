@@ -46,6 +46,7 @@ export type AgentStatus =
   | "tool_requested"
   | "child_agent_running"
   | "tool_execution_started"
+  | "tool_execution_progress"
   | "tool_execution_completed"
   | "tool_execution_failed"
   | "tool_context_ready"
@@ -215,6 +216,36 @@ export type GeospatialSceneSearchResult = {
   notes?: string[];
 };
 
+export type GeospatialOcrResult = {
+  type: "ocr";
+  download_url?: string;
+  imagery_id: string;
+  bounds: [number, number, number, number] | null;
+  stats: {
+    block_count: number;
+    char_count: number;
+    avg_confidence: number | null;
+    min_confidence_seen: number | null;
+    grayscale: boolean;
+  };
+  execution?: ToolExecutionInfo;
+};
+
+export type GeospatialClipReprojectResult = GeospatialBaseResult & {
+  type: "clip_reproject";
+  download_url: string;
+  stats: {
+    src_crs: string | null;
+    dst_crs: string | null;
+    width: number | null;
+    height: number | null;
+    band_count: number | null;
+    clipped: boolean;
+    reprojected: boolean;
+  };
+  execution?: ToolExecutionInfo;
+};
+
 export type GeospatialResult =
   | GeospatialPreviewResult
   | GeospatialNdviResult
@@ -225,7 +256,9 @@ export type GeospatialResult =
   | GeospatialSegmentationResult
   | GeospatialInstanceSegmentationResult
   | GeospatialReportResult
-  | GeospatialSceneSearchResult;
+  | GeospatialSceneSearchResult
+  | GeospatialOcrResult
+  | GeospatialClipReprojectResult;
 
 export type RasterBandStats = {
   band: number;
@@ -273,6 +306,15 @@ export type RasterInspectResult = {
 
 export type ToolResult = RasterInspectResult;
 
+export type TaskFailure = { tool_name: string; error_code: string; label: string };
+
+export type ToolRunStatus = {
+  runId: string;
+  label: string;
+  status: "running" | "done" | "error";
+  progress?: { percent?: number };
+};
+
 export type ChatTurn = ChatMessage & {
   historyExcluded?: boolean;
   selectedImageryId?: string;
@@ -289,9 +331,11 @@ export type ChatTurn = ChatMessage & {
   ragTrace?: Record<string, unknown> | null;
   agentStatus?: AgentStatus;
   agentLabel?: string;
+  toolRuns?: ToolRunStatus[];
   agentTrace?: Record<string, unknown> | null;
   geospatialResult?: GeospatialResult;
   toolResult?: ToolResult;
+  taskFailure?: TaskFailure;
   error?: boolean;
 };
 
@@ -310,6 +354,7 @@ export type ChatResponse = {
   agent_trace?: Record<string, unknown> | null;
   geospatial_result?: GeospatialResult;
   tool_result?: ToolResult;
+  task_failure?: TaskFailure | null;
 };
 
 export type BootstrapConfigResponse = {

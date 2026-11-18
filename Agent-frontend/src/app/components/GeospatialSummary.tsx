@@ -51,6 +51,30 @@ export function GeospatialSummary({
   if (result.type === "preview") {
     return <Row icon={<ImageIcon className="size-3.5 text-primary" />} title="原图预览图层已添加" id={result.imagery_id} />;
   }
+  if (result.type === "ocr") {
+    return (
+      <div className="mt-2 rounded-lg border border-border bg-background/50 p-2.5 text-[12px]">
+        <div className="font-medium">OCR 文字识别</div>
+        <div className="mt-1 text-muted-foreground">{result.stats.block_count} 个文字块 · {result.stats.char_count} 个字符</div>
+        {result.download_url && <a href={result.download_url} download className="underline">下载识别全文和文字框 JSON</a>}
+        {reportButton}
+      </div>
+    );
+  }
+  if (result.type === "clip_reproject") {
+    return (
+      <div className="mt-2 rounded-lg border border-border bg-background/50 p-2.5 text-[12px]">
+        <div className="font-medium">裁剪与重投影</div>
+        <div className="mt-1 text-muted-foreground">
+          {result.stats.dst_crs ?? "坐标系未知"} · {result.stats.width ?? "?"} × {result.stats.height ?? "?"} 像元
+        </div>
+        <a href={absoluteUrl(result.download_url)} download className="mt-2 inline-flex items-center gap-1 text-primary">
+          <Download className="size-3" />下载 GeoTIFF
+        </a>
+        {reportButton}
+      </div>
+    );
+  }
   if (result.type === "composite") {
     return <CompositeRow result={result} footer={reportButton} />;
   }

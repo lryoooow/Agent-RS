@@ -31,6 +31,8 @@ from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from typing import Iterator
+from uuid import uuid4
+from app.mcp.types import ProgressCallback
 
 from app.agent.types import ToolRunResult
 from app.agent.tool_context import swap_analysis_provider
@@ -58,8 +60,14 @@ _QUOTA_BUCKETS: dict[str, str] = {
 }
 
 
+def _quota_bucket(name: str) -> str | None:
+    return "external_mcp" if name.startswith("ext_") else _QUOTA_BUCKETS.get(name)
+
+
 def _bucket_limit(bucket: str) -> int:
     settings = get_settings()
+    if bucket == "external_mcp":
+        return settings.mcp_external_max_calls_per_turn
     if bucket == "gpu":
         return settings.agent_max_gpu_tool_calls
     if bucket == "imagery_search":
@@ -98,9 +106,19 @@ class TurnToolState:
     # arguments for the named tool so an LLM cannot silently expand a selected ROI.
     trusted_tool_arguments: dict[str, dict] = field(default_factory=dict)
     precondition_blocks: dict[str, str] = field(default_factory=dict)
+    session_id: str = field(default_factory=lambda: uuid4().hex)
+    progress_callback: ProgressCallback | None = None
 
     def arguments_for(self, tool_name: str, arguments: dict) -> dict:
         trusted = dict(self.trusted_tool_arguments.get(tool_name) or {})
+        if tool_name.startswith("ext_"):
+            from app.agent.tool_registry import get_tool
+            tool = get_tool(tool_name)
+            fields = tool.argument_model.model_fields if tool else {}
+            for values in self.trusted_tool_arguments.values():
+                for key in ("imagery_id", "document_id", "roi", "bbox", "bbox_crs"):
+                    if key in values and key in fields:
+                        trusted.setdefault(key, values[key])
         # A successful scene import within this turn becomes the current resource for follow-up tools.
         if "imagery_id" in trusted:
             for invocation in reversed(self.succeeded):
@@ -140,7 +158,16 @@ class TurnToolState:
     def available(self, tool_name: str) -> bool:
         if tool_name in self.precondition_blocks:
             return False
-        bucket = _QUOTA_BUCKETS.get(tool_name)
+        if tool_name.startswith("ext_"):
+            from app.agent.tool_registry import get_tool
+            if get_tool(tool_name) is None:
+                return False
+        from app.agent.ontology.state import current_session
+        session = current_session()
+        trusted = self.trusted_tool_arguments.get(tool_name)
+        if session and trusted and session.reject(tool_name, self.arguments_for(tool_name, trusted)):
+            return False
+        bucket = _quota_bucket(tool_name)
         return bucket is None or self.reservations.get(bucket, 0) < _bucket_limit(bucket)
 
     def try_reserve(self, tool_name: str) -> bool:
@@ -149,7 +176,7 @@ class TurnToolState:
         同步方法，中间没有 await，所以在单线程事件循环里对并行的工具调用是原子的——
         这正是它必须先于执行的原因。
         """
-        bucket = _QUOTA_BUCKETS.get(tool_name)
+        bucket = _quota_bucket(tool_name)
         if bucket is None:
             return True
         used = self.reservations.get(bucket, 0)
@@ -160,7 +187,7 @@ class TurnToolState:
 
     def release(self, tool_name: str) -> None:
         """把占而未用的名额还回去（如工具在鉴权阶段就被拒，根本没真跑）。"""
-        bucket = _QUOTA_BUCKETS.get(tool_name)
+        bucket = _quota_bucket(tool_name)
         if bucket is None:
             return
         self.reservations[bucket] = max(0, self.reservations.get(bucket, 0) - 1)
@@ -170,7 +197,7 @@ class TurnToolState:
         return self.reservations.get("gpu", 0)
 
     def quota_limit(self, tool_name: str) -> int | None:
-        bucket = _QUOTA_BUCKETS.get(tool_name)
+        bucket = _quota_bucket(tool_name)
         return None if bucket is None else _bucket_limit(bucket)
 
     @property

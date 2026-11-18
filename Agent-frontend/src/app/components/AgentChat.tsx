@@ -62,6 +62,10 @@ function ToolBubbleCard({ bubble }: { bubble: ToolBubble }) {
           <span className={`min-w-0 break-words [overflow-wrap:anywhere] ${isError ? "text-destructive" : ""}`}>{bubble.label}</span>
         </span>
       </div>
+      {bubble.status === "running" && bubble.progress && (
+        <progress className="mt-1 w-full accent-primary" max={100} value={bubble.progress.percent}
+          aria-label={bubble.label} />
+      )}
     </div>
   );
 }
@@ -82,6 +86,7 @@ function AssistantTurn({
   onSceneImport?: (sceneKey: string) => Promise<string | null>;
 }) {
   const bubble = toolBubbleForTurn(turn);
+  const runs = turn.toolRuns ?? [];
   const showAnalysis = turn.analysisStatus != null && !turn.content && turn.analysisStatus !== "complete";
   const analysisText = turn.analysisLabel ?? ANALYSIS_FALLBACK[turn.analysisStatus ?? ""] ?? "";
   const summaries = turn.thinkingSummary ?? [];
@@ -140,7 +145,9 @@ function AssistantTurn({
             )}
           </div>
         )}
-        {bubble && <ToolBubbleCard bubble={bubble} />}
+        {runs.length > 0 && streaming
+          ? runs.map(run => <ToolBubbleCard key={run.runId} bubble={run} />)
+          : bubble && <ToolBubbleCard bubble={bubble} />}
         {turn.geospatialResult && (
           <GeospatialSummary
             result={turn.geospatialResult}

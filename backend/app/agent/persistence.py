@@ -10,6 +10,7 @@ from app.agent.errors import (
     AIError,
     ConversationAccessError,
     PersistenceUnavailableError,
+    ResponsePersistenceError,
     map_provider_error,
 )
 from app.agent.memory_judge import maybe_store_memory
@@ -135,13 +136,17 @@ async def save_assistant_response(
     active_imagery_id: str | None = None,
     geospatial_result: dict | None = None,
     tool_result: dict | None = None,
+    task_failure: dict | None = None,
+    agent_trace: dict | None = None,
 ) -> str | None:
     if not persistence.conversation_id:
         return None
-    pool = await fetch_optional_pool()
-    if pool is None:
-        return None
     try:
+        pool = await fetch_optional_pool()
+        if pool is None:
+            if persistence.user_message_id or get_settings().storage_active:
+                raise ResponsePersistenceError()
+            return None
         async with pool.acquire() as conn:
             message_id = await append_message(
                 conn,
@@ -154,15 +159,19 @@ async def save_assistant_response(
                     active_imagery_id=active_imagery_id,
                     geospatial_result=geospatial_result,
                     tool_result=tool_result,
+                    task_failure=task_failure,
+                    agent_trace=agent_trace,
                 ),
-                tokens_in=_optional_int(usage.get("input_tokens")),
-                tokens_out=_optional_int(usage.get("output_tokens")),
+                # INSERT requires counts even for deterministic replies without LLM usage.
+                tokens_in=int(usage.get("input_tokens") or 0),
+                tokens_out=int(usage.get("output_tokens") or 0),
             )
-            await touch_conversation(conn, persistence.conversation_id)
-            return message_id
-    except Exception:
+    except Exception as exc:
         logger.exception("Failed to save assistant response.")
-        return None
+        raise ResponsePersistenceError() from exc
+    persistence.assistant_message_id = message_id
+    await _touch_after_response(pool, persistence.conversation_id)
+    return message_id
 
 
 async def save_streamed_assistant(
@@ -174,12 +183,14 @@ async def save_streamed_assistant(
     tool_result: dict | None = None,
 ) -> None:
     if not persistence.assistant_message_id:
-        return
-    pool = await fetch_optional_pool()
-    if pool is None:
+        if persistence.user_message_id:
+            raise ResponsePersistenceError()
         return
     usage = done_payload.get("usage") or {}
     try:
+        pool = await fetch_optional_pool()
+        if pool is None:
+            raise ResponsePersistenceError()
         async with pool.acquire() as conn:
             await update_message_complete(
                 conn,
@@ -189,25 +200,38 @@ async def save_streamed_assistant(
                 metadata=_assistant_metadata(
                     finish_reason=done_payload.get("finish_reason"),
                     active_imagery_id=done_payload.get("active_imagery_id"),
+                    task_failure=done_payload.get("task_failure"),
+                    agent_trace=done_payload.get("agent_trace"),
                     geospatial_result=geospatial_result,
                     tool_result=tool_result,
                 ),
                 tokens_in=_optional_int(usage.get("input_tokens")),
                 tokens_out=_optional_int(usage.get("output_tokens")),
             )
-            if persistence.conversation_id:
-                await touch_conversation(conn, persistence.conversation_id)
-    except Exception:
+    except Exception as exc:
         logger.exception("Failed to save streamed assistant response.")
+        raise ResponsePersistenceError() from exc
+    await _touch_after_response(pool, persistence.conversation_id)
+
+
+async def _touch_after_response(pool, conversation_id: str | None) -> None:
+    if not conversation_id:
+        return
+    try:
+        async with pool.acquire() as conn:
+            await touch_conversation(conn, conversation_id)
+    except Exception:
+        # The reply is already committed. Sidebar ordering is best effort.
+        logger.warning("Reply saved; conversation timestamp update failed.", exc_info=True)
 
 
 async def mark_assistant_failed(
     persistence: PersistenceContext, exc: Exception, *, content: str = ""
 ) -> None:
-    pool = await fetch_optional_pool()
-    if pool is None:
-        return
     try:
+        pool = await fetch_optional_pool()
+        if pool is None:
+            return
         async with pool.acquire() as conn:
             if persistence.assistant_message_id:
                 await update_message_complete(
@@ -297,7 +321,7 @@ def latest_user_content(request: ChatRequest) -> str:
 def _failure_metadata(exc: Exception) -> dict[str, str]:
     """失败记录只保存类别，不落异常原文（供应商异常可能携带请求/响应正文）。"""
     return {
-        "error_code": map_provider_error(exc).code,
+        "error_code": exc.code if isinstance(exc, AIError) else map_provider_error(exc).code,
         "error_type": type(exc).__name__,
     }
 
@@ -312,6 +336,8 @@ def _assistant_metadata(
     active_imagery_id: str | None = None,
     geospatial_result: dict | None,
     tool_result: dict | None,
+    task_failure: dict | None = None,
+    agent_trace: dict | None = None,
 ) -> dict:
     """组装助手消息 metadata：在 finish_reason 之外，把结构化工具结果一并落库。
 
@@ -326,6 +352,10 @@ def _assistant_metadata(
         metadata["geospatial_result"] = geospatial_result
     if tool_result:
         metadata["tool_result"] = tool_result
+    if task_failure:
+        metadata["task_failure"] = task_failure
+    if agent_trace:
+        metadata["agent_trace"] = agent_trace
     return metadata
 
 

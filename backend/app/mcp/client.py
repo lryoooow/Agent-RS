@@ -7,7 +7,9 @@ import subprocess
 import threading
 from typing import Any
 
-PROTOCOL_VERSION = "2024-11-05"
+from app.mcp.types import LEGACY_VERSIONS, MAX_FRAME_BYTES, MCPCallError, MCPPrimitives, Request, response
+
+PROTOCOL_VERSION = LEGACY_VERSIONS[0]
 
 logger = logging.getLogger(__name__)
 
@@ -15,10 +17,6 @@ logger = logging.getLogger(__name__)
 STDERR_TAIL_LIMIT = 16 * 1024
 # G10：docker kill 的等待上限；容器已退出/不存在时 docker kill 非零返回，忽略。
 CONTAINER_KILL_TIMEOUT_SECONDS = 10.0
-
-
-class MCPCallError(Exception):
-    """Raised when the MCP server returns an error or the transport fails."""
 
 
 def _container_name_from_command(command: list[str]) -> str | None:
@@ -32,7 +30,7 @@ def _container_name_from_command(command: list[str]) -> str | None:
     return None
 
 
-class StdioMCPClient:
+class StdioMCPClient(MCPPrimitives):
     def __init__(
         self,
         *,
@@ -52,16 +50,45 @@ class StdioMCPClient:
         self._stderr_tail = bytearray()
         self._stderr_drain: asyncio.Task | None = None
 
-    async def call_tool(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    def for_invocation(self):
+        """A static server may run several subprocesses concurrently, each with its own stderr."""
+        return type(self)(command=self.command, timeout_seconds=self.timeout_seconds,
+                          client_name=self.client_name, client_version=self.client_version)
+
+    async def _list(self, key: str):
+        result = await self.request(Request(f"{key}/list", {}, collection=key))
+        return result[key]
+
+    @staticmethod
+    def _collect_page(request, page, items, cursors):
+        if not request.collection:
+            return page
+        entries = page.get(request.collection)
+        if (not isinstance(entries, list) or not all(isinstance(item, dict) for item in entries)
+                or len(items) + len(entries) > 2048):
+            raise MCPCallError("invalid MCP listing")
+        items.extend(entries)
+        cursor = page.get("nextCursor")
+        if cursor is None:
+            return {request.collection: items}
+        if not isinstance(cursor, str) or cursor in cursors or len(cursors) >= 63:
+            raise MCPCallError("invalid or excessive MCP pagination")
+        cursors.add(cursor)
+        request.request_id += 1
+        request.params = {"cursor": cursor}
+        return None
+
+    async def request(self, request: Request) -> dict[str, Any]:
         try:
             proc = await asyncio.create_subprocess_exec(
                 *self.command,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                limit=MAX_FRAME_BYTES,
             )
         except NotImplementedError:
-            return await self._call_tool_sync_with_timeout(tool_name, arguments)
+            return await self._call_tool_sync_with_timeout(request)
         completed = False
         # G11：后台持续读取 stderr。OS 管道缓冲有限（Linux ~64KB），只写不读
         # 时子进程会在写满后阻塞，永不产出 stdout 应答——表现为"假超时"。
@@ -70,12 +97,17 @@ class StdioMCPClient:
         self._stderr_drain = drain
         try:
             result = await asyncio.wait_for(
-                self._handshake_and_call(proc, tool_name, arguments),
+                self._handshake_and_call(proc, request),
                 timeout=self.timeout_seconds,
             )
             completed = True
             return result
-        except (asyncio.CancelledError, Exception):
+        except (asyncio.CancelledError, Exception) as error:
+            if request.sent and isinstance(error, (asyncio.CancelledError, TimeoutError)):
+                try:
+                    await asyncio.wait_for(self._send(proc, self._cancel_frame(request.request_id)), timeout=0.2)
+                except Exception:
+                    pass
             # G10：先按名杀容器（容器退出后其占用的 stdin/stdout/stderr 管道
             # 写端关闭，stderr 读取与本地进程回收才能正常收尾），再回收本地进程。
             await self._kill_container()
@@ -88,69 +120,42 @@ class StdioMCPClient:
             if completed:
                 await self._close_stdin_and_wait(proc)
 
-    async def _handshake_and_call(
-        self,
-        proc: asyncio.subprocess.Process,
-        tool_name: str,
-        arguments: dict[str, Any],
-    ) -> dict[str, Any]:
-        await self._send(
-            proc,
-            {
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "initialize",
-                "params": {
-                    "protocolVersion": PROTOCOL_VERSION,
-                    "capabilities": {},
-                    "clientInfo": {
-                        "name": self.client_name,
-                        "version": self.client_version,
-                    },
-                },
-            },
-        )
-        init_resp = await self._recv(proc)
-        if "error" in init_resp:
-            raise MCPCallError(f"initialize failed: {init_resp['error']}")
+    def _initialize_frame(self) -> dict:
+        return {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+            "protocolVersion": PROTOCOL_VERSION, "capabilities": {},
+            "clientInfo": {"name": self.client_name, "version": self.client_version},
+        }}
 
-        await self._send(
-            proc,
-            {
-                "jsonrpc": "2.0",
-                "method": "notifications/initialized",
-            },
-        )
+    @staticmethod
+    def _cancel_frame(request_id: int) -> dict:
+        return {"jsonrpc": "2.0", "method": "notifications/cancelled",
+                "params": {"requestId": request_id, "reason": "caller cancelled"}}
 
-        await self._send(
-            proc,
-            {
-                "jsonrpc": "2.0",
-                "id": 2,
-                "method": "tools/call",
-                "params": {
-                    "name": tool_name,
-                    "arguments": arguments,
-                },
-            },
-        )
-        call_resp = await self._recv(proc)
-        if "error" in call_resp:
-            raise MCPCallError(f"tools/call failed: {call_resp['error']}")
+    @staticmethod
+    def _check_version(result: dict) -> None:
+        if result.get("protocolVersion", PROTOCOL_VERSION) not in LEGACY_VERSIONS:
+            raise MCPCallError("unsupported MCP handshake version")
 
-        result = call_resp.get("result") or {}
-        if result.get("isError"):
-            text = ""
-            for item in result.get("content", []):
-                if item.get("type") == "text":
-                    text = item.get("text", "")
-                    break
-            raise MCPCallError(text or "tool returned isError without message")
+    async def _receive_response(self, proc, request_id, method, request):
+        while True:
+            frame = await self._recv(proc)
+            result = response(frame, request_id, method)
+            if result is not None:
+                return result
+            request.notification(frame)
 
-        structured_content = result.get("structuredContent")
-        if not isinstance(structured_content, dict):
-            raise MCPCallError("missing structuredContent in tool response")
-        return structured_content
+    async def _handshake_and_call(self, proc, request: Request) -> dict:
+        await self._send(proc, self._initialize_frame())
+        self._check_version(await self._receive_response(proc, 1, "initialize", request))
+        await self._send(proc, {"jsonrpc": "2.0", "method": "notifications/initialized"})
+        items, cursors = [], set()
+        while True:
+            await self._send(proc, request.frame())
+            request.sent = True
+            page = await self._receive_response(proc, request.request_id, request.method, request)
+            result = self._collect_page(request, page, items, cursors)
+            if result is not None:
+                return result
 
     @staticmethod
     async def _send(proc: asyncio.subprocess.Process, msg: dict[str, Any]) -> None:
@@ -196,7 +201,12 @@ class StdioMCPClient:
     async def _recv(self, proc: asyncio.subprocess.Process) -> dict[str, Any]:
         if proc.stdout is None:
             raise MCPCallError("MCP process stdout is not available")
-        line = await proc.stdout.readline()
+        try:
+            line = await proc.stdout.readline()
+        except ValueError as exc:
+            raise MCPCallError("MCP response exceeds frame limit") from exc
+        if len(line) > MAX_FRAME_BYTES:
+            raise MCPCallError("MCP response exceeds frame limit")
         if not line:
             await self._await_stderr_drain(proc)
             # 取尾部而非开头：stderr 的末尾通常是致命错误的落点。
@@ -271,20 +281,28 @@ class StdioMCPClient:
 
     async def _call_tool_sync_with_timeout(
         self,
-        tool_name: str,
-        arguments: dict[str, Any],
+        request: Request,
     ) -> dict[str, Any]:
+        if request.on_progress:
+            loop = asyncio.get_running_loop()
+            callback = request.on_progress
+            request.on_progress = lambda progress: loop.call_soon_threadsafe(callback, progress)
         proc_holder: dict[str, subprocess.Popen] = {}
         cancelled = threading.Event()
         try:
             return await asyncio.wait_for(
-                asyncio.to_thread(self._call_tool_sync, tool_name, arguments, proc_holder, cancelled),
+                asyncio.to_thread(self._call_tool_sync, request, proc_holder, cancelled),
                 timeout=self.timeout_seconds,
             )
         except (asyncio.TimeoutError, asyncio.CancelledError):
             cancelled.set()
             proc = proc_holder.get("proc")
             if proc is not None:
+                if request.sent:
+                    try:
+                        await asyncio.wait_for(asyncio.to_thread(self._send_sync, proc, self._cancel_frame(request.request_id)), 0.2)
+                    except Exception:
+                        pass
                 # G10：线程内先按名杀容器再回收本地进程（同异步路径的顺序）。
                 await asyncio.to_thread(self._kill_container_sync)
                 await asyncio.to_thread(self._kill_process_sync, proc)
@@ -292,8 +310,7 @@ class StdioMCPClient:
 
     def _call_tool_sync(
         self,
-        tool_name: str,
-        arguments: dict[str, Any],
+        request: Request,
         proc_holder: dict[str, subprocess.Popen] | None = None,
         cancelled: threading.Event | None = None,
     ) -> dict[str, Any]:
@@ -317,7 +334,7 @@ class StdioMCPClient:
             # start the handshake/tool in that race; the exception closes it.
             if cancelled is not None and cancelled.is_set():
                 raise MCPCallError("MCP execution cancelled before startup completed")
-            result = self._handshake_and_call_sync(proc, tool_name, arguments)
+            result = self._handshake_and_call_sync(proc, request)
             completed = True
             return result
         except Exception:
@@ -342,69 +359,26 @@ class StdioMCPClient:
             if len(self._stderr_tail) > STDERR_TAIL_LIMIT:
                 del self._stderr_tail[:-STDERR_TAIL_LIMIT]
 
-    def _handshake_and_call_sync(
-        self,
-        proc: subprocess.Popen,
-        tool_name: str,
-        arguments: dict[str, Any],
-    ) -> dict[str, Any]:
-        self._send_sync(
-            proc,
-            {
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "initialize",
-                "params": {
-                    "protocolVersion": PROTOCOL_VERSION,
-                    "capabilities": {},
-                    "clientInfo": {
-                        "name": self.client_name,
-                        "version": self.client_version,
-                    },
-                },
-            },
-        )
-        init_resp = self._recv_sync(proc)
-        if "error" in init_resp:
-            raise MCPCallError(f"initialize failed: {init_resp['error']}")
+    def _receive_response_sync(self, proc, request_id, method, request):
+        while True:
+            frame = self._recv_sync(proc)
+            result = response(frame, request_id, method)
+            if result is not None:
+                return result
+            request.notification(frame)
 
-        self._send_sync(
-            proc,
-            {
-                "jsonrpc": "2.0",
-                "method": "notifications/initialized",
-            },
-        )
-
-        self._send_sync(
-            proc,
-            {
-                "jsonrpc": "2.0",
-                "id": 2,
-                "method": "tools/call",
-                "params": {
-                    "name": tool_name,
-                    "arguments": arguments,
-                },
-            },
-        )
-        call_resp = self._recv_sync(proc)
-        if "error" in call_resp:
-            raise MCPCallError(f"tools/call failed: {call_resp['error']}")
-
-        result = call_resp.get("result") or {}
-        if result.get("isError"):
-            text = ""
-            for item in result.get("content", []):
-                if item.get("type") == "text":
-                    text = item.get("text", "")
-                    break
-            raise MCPCallError(text or "tool returned isError without message")
-
-        structured_content = result.get("structuredContent")
-        if not isinstance(structured_content, dict):
-            raise MCPCallError("missing structuredContent in tool response")
-        return structured_content
+    def _handshake_and_call_sync(self, proc, request: Request) -> dict:
+        self._send_sync(proc, self._initialize_frame())
+        self._check_version(self._receive_response_sync(proc, 1, "initialize", request))
+        self._send_sync(proc, {"jsonrpc": "2.0", "method": "notifications/initialized"})
+        items, cursors = [], set()
+        while True:
+            self._send_sync(proc, request.frame())
+            request.sent = True
+            page = self._receive_response_sync(proc, request.request_id, request.method, request)
+            result = self._collect_page(request, page, items, cursors)
+            if result is not None:
+                return result
 
     @staticmethod
     def _send_sync(proc: subprocess.Popen, msg: dict[str, Any]) -> None:
@@ -416,7 +390,9 @@ class StdioMCPClient:
     def _recv_sync(self, proc: subprocess.Popen) -> dict[str, Any]:
         if proc.stdout is None:
             raise MCPCallError("MCP process stdout is not available")
-        line = proc.stdout.readline()
+        line = proc.stdout.readline(MAX_FRAME_BYTES + 1)
+        if len(line.encode("utf-8")) > MAX_FRAME_BYTES:
+            raise MCPCallError("MCP response exceeds frame limit")
         if not line:
             # G11：不再在这里 read() 到 EOF——若子进程因 stderr 管道写满而阻塞，
             # 该调用本身就会挂死。改用后台读取线程攒下的尾部。

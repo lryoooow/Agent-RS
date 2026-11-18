@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from pathlib import Path
 
 from app.agent.tools.common import (
     IMAGERY_ID_PATTERN,
@@ -89,6 +90,9 @@ async def run_ocr(args: OcrArguments) -> ToolRunResult:
         },
         "execution": execution_info.model_dump(exclude_none=True),
     }
+    detail = stats.get("output_json")
+    if isinstance(detail, str) and Path(detail).name == detail and (results_dir / detail).is_file():
+        geospatial_result["download_url"] = f"/api/imagery/{args.imagery_id}/results/{detail}"
     return ToolRunResult(
         tool_context=format_ocr_context(args.imagery_id, stats, max_chars=max_chars),
         result_count=block_count,

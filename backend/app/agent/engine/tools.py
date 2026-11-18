@@ -39,7 +39,7 @@ from app.agent.engine.turn_context import (
     current_turn_state,
 )
 from app.agent.tool_execution import PrepareRejected, prepare_tool_call, run_prepared_tool
-from app.agent.tool_registry import TOOLS, RegisteredTool
+from app.agent.tool_registry import TOOLS, RegisteredTool, effective_registry
 from app.agent.types import ToolRunResult
 from app.auth import peek_current_user_id
 from app.core.settings import get_settings
@@ -67,6 +67,14 @@ class RemoteSensingTool(BaseTool[BaseModel, str]):
             description=definition.get("description", "") or tool.name,
         )
         self._tool = tool
+
+    async def run_json(self, args: dict, cancellation_token: CancellationToken, call_id: str | None = None):
+        from app.mcp.progress import progress_scope
+        state = current_turn_state()
+        if call_id and state and state.progress_callback:
+            with progress_scope(lambda update: state.progress_callback(call_id, self.name, update)):
+                return await super().run_json(args, cancellation_token, call_id=call_id)
+        return await super().run_json(args, cancellation_token, call_id=call_id)
 
     async def run(self, args: BaseModel, cancellation_token: CancellationToken) -> str:
         if cancellation_token.is_cancelled():
@@ -174,13 +182,24 @@ class RemoteSensingTool(BaseTool[BaseModel, str]):
         return hints[rejected.failure]
 
 
+async def invoke_mcp_tool(name: str, arguments: dict):
+    from app.agent.tool_registry import get_tool
+    if current_turn_state() is None or not peek_current_user_id():
+        raise ValueError("需要已鉴权的平台回合")
+    tool = get_tool(name)
+    if tool is None:
+        raise ValueError("工具已停用")
+    return await RemoteSensingTool(tool).run_json(arguments, CancellationToken())
+
+
 def build_tools(names: tuple[str, ...] | None = None) -> list[RemoteSensingTool]:
     """构造工具包装列表。
 
     Args:
         names: 只包这些工具（领域 Agent 用来限定自己的工具集）。None = 全部已启用工具。
     """
-    selected = TOOLS if names is None else {n: TOOLS[n] for n in names if n in TOOLS}
+    registry = effective_registry()
+    selected = registry if names is None else {n: registry[n] for n in names if n in registry}
     return [RemoteSensingTool(tool) for tool in selected.values() if tool.is_enabled()]
 
 

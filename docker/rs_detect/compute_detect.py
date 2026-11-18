@@ -43,6 +43,7 @@ def compute(
     green_band: int = 2,
     blue_band: int = 3,
     score_threshold: float = 0.5,
+    progress=None,
 ) -> dict[str, Any]:
     inp = Path(input_path)
     out = Path(output_dir)
@@ -52,7 +53,7 @@ def compute(
     from tiled_obb import infer
     # stdout is reserved for JSON-RPC; model logs must go to stderr.
     with redirect_stdout(sys.stderr):
-        detections, runtime = infer(rgb, score_threshold, DOTA_CLASSES)
+        detections, runtime = infer(rgb, score_threshold, DOTA_CLASSES, **({"progress": progress} if progress else {}))
     with rasterio.open(inp) as src:
         valid = src.dataset_mask() > 0
         def valid_center(det):

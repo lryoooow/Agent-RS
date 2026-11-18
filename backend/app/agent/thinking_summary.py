@@ -36,6 +36,7 @@ _STAGE_BY_AGENT_EVENT: dict[AgentStage, ThinkingSummaryStage] = {
     "tool_requested": "tool",
     "child_agent_running": "tool",
     "tool_execution_started": "tool",
+    "tool_execution_progress": "tool",
     "tool_execution_completed": "verification",
     "tool_execution_failed": "verification",
     "tool_context_ready": "verification",

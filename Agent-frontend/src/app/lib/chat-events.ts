@@ -1,6 +1,6 @@
 import type { Dispatch, SetStateAction } from "react";
 import type { StreamHandlers } from "./sse";
-import { isHiddenAgentStatus, isToolRunningStatus, isToolSettlingStatus } from "./agent-status";
+import { isHiddenAgentStatus, isToolRunningStatus, isToolSettlingStatus, updateToolRuns } from "./agent-status";
 import {
   appendThinkingSummary,
   appendToTurn,
@@ -20,6 +20,7 @@ import type {
   GeospatialResult,
   LegendInfo,
   RasterCapabilities,
+  TaskFailure,
   ToolExecutionInfo,
   ToolResult,
   Usage,
@@ -66,11 +67,23 @@ export function createStreamHandlers(
       const status = normalizeAgentStatus(data.status);
       if (!status) return;
       const label = typeof data.label === "string" ? data.label : undefined;
+      const failureUpdate: { taskFailure?: TaskFailure } = {};
+      if ("task_failure" in data) {
+        failureUpdate.taskFailure = parseTaskFailure(data.task_failure);
+      } else if (status === "tool_execution_failed") {
+        failureUpdate.taskFailure = {
+          tool_name: typeof data.tool_name === "string" ? data.tool_name : "tool",
+          error_code: typeof data.error_code === "string" ? data.error_code : "tool_error",
+          label: label || "工具执行失败",
+        };
+      } else if (status === "tool_execution_completed") {
+        failureUpdate.taskFailure = undefined;
+      }
       // AutoGen 路由/选人等内部步骤只记录 agentStatus，不覆盖顶部进度行，
       // 避免“正在思考中”被框架调度噪声闪掉。
       if (isHiddenAgentStatus(status)) {
         setTurns((prev) =>
-          updateTurn(prev, assistantId, { agentStatus: status, agentLabel: label }),
+          updateTurn(prev, assistantId, { agentStatus: status, agentLabel: label, ...failureUpdate }),
         );
         return;
       }
@@ -93,25 +106,39 @@ export function createStreamHandlers(
         analysisStatus = "preparing";
         analysisLabel = label;
       }
-      setTurns((prev) =>
-        updateTurn(prev, assistantId, {
+      setTurns((prev) => {
+        const turn = prev.find(item => item.id === assistantId);
+        if (!turn) return prev;
+        const runId = data.child_run_id;
+        if (runId && status === "tool_execution_progress" && (turn.finishReason || turn.analysisStatus === "complete"))
+          return prev;
+        const toolRuns = typeof runId === "string" && runId.length > 0
+          ? updateToolRuns(turn.toolRuns, status, runId, label, data.percent)
+          : turn.toolRuns;
+        if (status === "tool_execution_progress" && toolRuns === turn.toolRuns && runId) return prev;
+        return updateTurn(prev, assistantId, {
           agentStatus: status,
           agentLabel: label,
+          toolRuns,
           analysisStatus,
           analysisLabel,
-        }),
-      );
+          ...failureUpdate,
+        });
+      });
     },
     onDone: (data) => {
       const geospatialResult = parseGeospatialResult(data.geospatial_result);
       const toolResult = parseToolResult(data.tool_result);
       const finishReason = typeof data.finish_reason === "string" ? data.finish_reason : undefined;
       const failed = finishReason === "error";
-      setTurns((prev) =>
-        completeThinkingSummary(
+      setTurns((prev) => {
+        const taskFailure = "task_failure" in data
+          ? parseTaskFailure(data.task_failure)
+          : prev.find(turn => turn.id === assistantId)?.taskFailure;
+        return completeThinkingSummary(
           updateTurn(prev, assistantId, {
           analysisStatus: failed ? "answering" : "complete",
-          analysisLabel: failed ? "回答生成失败" : "处理完成",
+          analysisLabel: failed ? "回答生成失败" : taskFailure?.label ?? "处理完成",
           error: failed,
           usage: data.usage as Usage | undefined,
           finishReason,
@@ -128,10 +155,11 @@ export function createStreamHandlers(
           selectedImageryId: typeof data.active_imagery_id === "string" ? data.active_imagery_id : undefined,
           geospatialResult,
           toolResult,
+          taskFailure,
           }),
           assistantId,
-        ),
-      );
+        );
+      });
     },
   };
 }
@@ -155,6 +183,7 @@ export function appendAssistantResponse(setTurns: SetTurns, data: ChatResponse) 
       selectedImageryId: typeof data.active_imagery_id === "string" ? data.active_imagery_id : undefined,
       geospatialResult,
       toolResult,
+      taskFailure: parseTaskFailure(data.task_failure),
     },
   ]);
 }
@@ -174,6 +203,7 @@ function normalizeAgentStatus(value: unknown): AgentStatus | null {
     value === "tool_requested" ||
     value === "child_agent_running" ||
     value === "tool_execution_started" ||
+    value === "tool_execution_progress" ||
     value === "tool_execution_completed" ||
     value === "tool_execution_failed" ||
     value === "tool_context_ready" ||
@@ -188,6 +218,38 @@ function normalizeAgentStatus(value: unknown): AgentStatus | null {
 export function parseGeospatialResult(value: unknown): GeospatialResult | undefined {
   if (!value || typeof value !== "object") return undefined;
   const candidate = value as Record<string, unknown>;
+  if (candidate.type === "ocr" || candidate.type === "clip_reproject") {
+    if (typeof candidate.imagery_id !== "string" || !candidate.stats || typeof candidate.stats !== "object") return undefined;
+    if (candidate.bounds != null && !isBounds(candidate.bounds)) return undefined;
+    const stats = candidate.stats as Record<string, unknown>;
+    const common = {
+      imagery_id: candidate.imagery_id,
+      bounds: candidate.bounds ?? null,
+      execution: isExecution(candidate.execution) ? candidate.execution : undefined,
+    };
+    if (candidate.type === "ocr") {
+      if (!isCount(stats.block_count) || !isCount(stats.char_count)) return undefined;
+      const download = candidate.download_url;
+      const download_url = isSafeSameOriginUrl(download) && download.startsWith(`/api/imagery/${candidate.imagery_id}/results/`) ? download : undefined;
+      return { type: "ocr", ...common, download_url, stats: {
+        block_count: stats.block_count, char_count: stats.char_count,
+        avg_confidence: numberOrNull(stats.avg_confidence),
+        min_confidence_seen: numberOrNull(stats.min_confidence_seen),
+        grayscale: stats.grayscale === true,
+      } };
+    }
+    if (!isSafeSameOriginUrl(candidate.result_url) || !isSafeSameOriginUrl(candidate.download_url)) return undefined;
+    if (["width", "height", "band_count"].some(key => stats[key] != null && (!isCount(stats[key]) || stats[key] === 0))) return undefined;
+    return { type: "clip_reproject", ...common,
+      result_url: candidate.result_url, download_url: candidate.download_url,
+      stats: {
+        src_crs: typeof stats.src_crs === "string" ? stats.src_crs : null,
+        dst_crs: typeof stats.dst_crs === "string" ? stats.dst_crs : null,
+        width: numberOrNull(stats.width), height: numberOrNull(stats.height), band_count: numberOrNull(stats.band_count),
+        clipped: stats.clipped === true, reprojected: stats.reprojected === true,
+      },
+    };
+  }
   // 报告结果形态独立（无 result_url/bounds，带 download_url），先于通用校验单独处理。
   if (candidate.type === "report") {
     if (typeof candidate.imagery_id !== "string") return undefined;
@@ -405,6 +467,15 @@ export function parseToolResult(value: unknown): ToolResult | undefined {
   };
 }
 
+export function parseTaskFailure(value: unknown): TaskFailure | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const { tool_name, error_code, label } = value as Record<string, unknown>;
+  if (typeof tool_name !== "string" || !tool_name.trim() ||
+      typeof error_code !== "string" || !error_code.trim() ||
+      typeof label !== "string" || !label.trim()) return undefined;
+  return { tool_name, error_code, label };
+}
+
 function parseRasterGrid(value: unknown) {
   if (!value || typeof value !== "object") return null;
   const grid = value as Record<string, unknown>;
@@ -416,6 +487,14 @@ function parseRasterGrid(value: unknown) {
 
 function isBounds(value: unknown): value is [number, number, number, number] {
   return Array.isArray(value) && value.length === 4 && value.every((item) => typeof item === "number" && Number.isFinite(item));
+}
+
+function numberOrNull(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function isCount(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
 
 function isPixelSize(value: unknown): value is [number, number] {

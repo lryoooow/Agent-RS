@@ -1,4 +1,4 @@
-import type { AgentStatus, ChatTurn } from "../types";
+import type { AgentStatus, ChatTurn, ToolRunStatus } from "../types";
 
 // 把后端 AutoGen 调度/工具事件映射成“工具调用气泡”的展示态。
 // 这是新 UI 的 ToolCallCard 视觉与真实后端事件的桥：running 转圈 / done 勾 / error 红。
@@ -9,11 +9,13 @@ export type ToolBubbleStatus = "running" | "done" | "error";
 export type ToolBubble = {
   status: ToolBubbleStatus;
   label: string;
+  progress?: { percent?: number };
 };
 
 const RUNNING: ReadonlySet<AgentStatus> = new Set<AgentStatus>([
   "child_agent_running",
   "tool_execution_started",
+  "tool_execution_progress",
 ]);
 
 const DONE: ReadonlySet<AgentStatus> = new Set<AgentStatus>([
@@ -41,6 +43,7 @@ const FALLBACK_LABEL: Record<string, string> = {
   tool_requested: "调用工具",
   child_agent_running: "子智能体执行中",
   tool_execution_started: "工具执行中",
+  tool_execution_progress: "工具执行中",
   tool_execution_completed: "工具执行完成",
   geospatial_result_ready: "结果已生成",
   tool_execution_failed: "工具执行失败",
@@ -48,21 +51,45 @@ const FALLBACK_LABEL: Record<string, string> = {
 
 /**
  * 由一条 assistant turn 推导是否要显示工具气泡及其状态。
- * 仅在该 turn 还没产出正文、且 agentStatus 落在 running/done/error 集合时显示。
+ * 最终任务失败随正文保留，包括重新打开的历史会话。
  */
 export function toolBubbleForTurn(turn: ChatTurn): ToolBubble | null {
+  if (turn.taskFailure) return { status: "error", label: turn.taskFailure.label };
   const status = turn.agentStatus;
   if (!status || HIDDEN.has(status)) return null;
 
   const label = turn.agentLabel?.trim() || FALLBACK_LABEL[status] || "处理中";
-  // 一旦 turn 完成（complete）且无 error，气泡收敛为 done。
-  if (turn.analysisStatus === "complete" && !turn.error) {
+  if (turn.error || ERROR.has(status)) return { status: "error", label };
+  if (turn.analysisStatus === "complete") {
     return { status: "done", label };
   }
-  if (turn.error || ERROR.has(status)) return { status: "error", label };
   if (DONE.has(status)) return { status: "done", label };
-  if (RUNNING.has(status)) return { status: "running", label };
   return { status: "running", label };
+}
+
+export function updateToolRuns(
+  runs: ToolRunStatus[] = [],
+  stage: AgentStatus,
+  runId: string,
+  label: string | undefined,
+  percent: unknown,
+): ToolRunStatus[] {
+  const previous = runs.find(run => run.runId === runId);
+  if (previous && previous.status !== "running") return runs;
+  const terminal = stage === "tool_execution_completed" || stage === "tool_execution_failed";
+  if (!terminal && stage !== "tool_execution_started" && stage !== "tool_execution_progress") return runs;
+  const next: ToolRunStatus = {
+    runId,
+    label: label?.trim() || previous?.label || FALLBACK_LABEL[stage] || "工具执行中",
+    status: terminal ? (stage === "tool_execution_failed" ? "error" : "done") : "running",
+  };
+  if (stage === "tool_execution_progress") {
+    const value = typeof percent === "number" && Number.isFinite(percent)
+      ? Math.max(0, Math.min(100, percent))
+      : undefined;
+    next.progress = { percent: value };
+  }
+  return previous ? runs.map(run => run.runId === runId ? next : run) : [...runs, next];
 }
 
 // 规划等内部步骤不展示给用户：顶部进度行也不应被它们的 label 覆盖（否则会闪现"正在判断是否需要联网"）。

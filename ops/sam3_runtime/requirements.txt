@@ -1,0 +1,11 @@
+# Install the cu128 PyTorch / torchvision pair from the official index first.
+sam3 @ git+https://github.com/facebookresearch/sam3.git@46957e47805eaa273f4aa7bbbd25a88bca9108ce
+setuptools>=70,<81
+einops>=0.8,<1
+pycocotools>=2.0.10,<3
+scipy>=1.13,<2
+psutil>=6,<8
+fastapi>=0.115,<1
+httpx>=0.27,<1
+uvicorn>=0.30,<1
+triton-windows==3.6.0.post26; sys_platform == "win32"

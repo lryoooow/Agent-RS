@@ -53,6 +53,7 @@ from app.agent.reasoning import (
     split_think_blocks,
 )
 from app.auth import user_scope
+from app.core.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -164,6 +165,7 @@ class Orchestration:
     stop: ExternalTermination | None
     model_client: ChatCompletionClient
     route: RouteResult
+    framework: str = "autogen"
 
 
 @dataclass(frozen=True)
@@ -172,6 +174,12 @@ class OrchestrationMetadata:
     strategy: str
     flow_name: str | None
     route_reason: str
+
+
+def _turn_backend() -> str:
+    from app.core.settings import runtime_choice
+    settings = get_settings()
+    return runtime_choice(settings.agent_engine_backend_file, settings.agent_engine_backend, {"autogen", "langgraph"})
 
 
 async def build_orchestration(
@@ -193,7 +201,12 @@ async def build_orchestration(
     """
     config = config or resolve_ai_config()
     route = await choose_route(turn, config)
-    model_client = build_model_client(config)
+    backend = _turn_backend()
+    if backend == "langgraph":
+        from app.agent.engine.langgraph_backend.model_client import LangGraphModelClient
+        model_client = LangGraphModelClient(config)
+    else:
+        model_client = build_model_client(config)
 
     try:
         memory: list[Memory] = []
@@ -202,7 +215,11 @@ async def build_orchestration(
         if use_memory and user_id:
             memory.append(PgVectorMemory(user_id=user_id))
 
-        if route.strategy == "graph" and route.flow_name:
+        if backend == "langgraph":
+            from app.agent.engine.langgraph_backend.main_graph import LangGraphTeam
+            team = LangGraphTeam(turn, route, model_client, memory)
+            stop = None
+        elif route.strategy == "graph" and route.flow_name:
             external = ExternalTermination()
             team: Union[Team, AssistantAgent] = build_flow(
                 route.flow_name,
@@ -227,6 +244,7 @@ async def build_orchestration(
         stop=stop,
         model_client=model_client,
         route=route,
+        framework=backend,
     )
 
 
@@ -313,12 +331,13 @@ async def stream_turn(
             config=config,
         )
         stream = None
+        events = None
         drained = False
         try:
             if token.is_cancelled():
                 raise asyncio.CancelledError()
             yield OrchestrationMetadata(
-                framework="autogen",
+                framework=orchestration.framework,
                 strategy=orchestration.route.strategy,
                 flow_name=orchestration.route.flow_name,
                 route_reason=orchestration.route.reason,
@@ -331,13 +350,15 @@ async def stream_turn(
                 output_task_messages=False,
             )
             with turn_scope(trusted_tool_arguments=turn.trusted_tool_arguments, ontology=turn.ontology) as state:
+                from app.agent.engine.progress import stream_with_progress
+                events = stream_with_progress(stream, state)
                 final: TaskResult | None = None
                 while True:
                     if token.is_cancelled():
                         raise asyncio.CancelledError()
                     reading_task = asyncio.current_task()
                     try:
-                        item = await anext(stream)
+                        item = await anext(events)
                     except StopAsyncIteration:
                         break
                     finally:
@@ -356,6 +377,8 @@ async def stream_turn(
                     orchestration.stop.set()
             try:
                 if stream is not None:
+                    if events is not None:
+                        await events.aclose()
                     await stream.aclose()
             finally:
                 await _close_quietly(orchestration.model_client)
@@ -434,7 +457,7 @@ def _to_result(
             _extract_usage(orchestration.model_client),
         ),
         map_target=(state.map_target if state else None),
-        framework="autogen",
+        framework=orchestration.framework,
         strategy=orchestration.route.strategy,
         flow_name=orchestration.route.flow_name,
         route_reason=orchestration.route.reason,

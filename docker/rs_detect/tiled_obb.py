@@ -39,7 +39,7 @@ def merge_rotated(detections: list[dict], iou_threshold: float = 0.45) -> list[d
     return kept
 
 
-def infer(rgb: np.ndarray, score_threshold: float, class_names: list[str]) -> tuple[list[dict], dict]:
+def infer(rgb: np.ndarray, score_threshold: float, class_names: list[str], *, progress=None) -> tuple[list[dict], dict]:
     import torch
     from ultralytics import YOLO
 
@@ -59,6 +59,7 @@ def infer(rgb: np.ndarray, score_threshold: float, class_names: list[str]) -> tu
     height, width = rgb.shape[:2]
     detections = []
     tile_count = 0
+    total_tiles = len(tile_starts(height)) * len(tile_starts(width))
     padded_tiles = 0
     with torch.inference_mode():
         for y in tile_starts(height):
@@ -81,6 +82,8 @@ def infer(rgb: np.ndarray, score_threshold: float, class_names: list[str]) -> tu
                     conf=score_threshold, iou=0.45, device=device, half=False,
                     verbose=False, save=False, max_det=1000)[0]
                 tile_count += 1
+                if progress:
+                    progress(95 * tile_count / total_tiles, 100, f"已推理 {tile_count}/{total_tiles} 个切片")
                 if result.obb is None:
                     continue
                 polygons = result.obb.xyxyxyxy.cpu().numpy()

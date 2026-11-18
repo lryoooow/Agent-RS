@@ -12,7 +12,7 @@ from app.agent.prompting.scenarios import latest_user_text
 from app.agent.request_builder import build_provider_request_context
 from app.agent.imagery_access import user_owns_imagery, get_user_imagery_metadata
 from app.agent.imagery_selection import use_current_selection, geo_roi_mismatch
-from app.agent.tool_registry import TOOLS
+from app.agent.tool_registry import TOOLS, effective_registry
 from app.agent.ontology.state import OntologySession, create_session
 from app.schemas.chat import ChatRequest
 
@@ -78,7 +78,7 @@ async def build_turn_input(request: ChatRequest, *, user_id: str | None) -> Turn
         initial.append(SystemMessage(content="用户已框选地图卫星底图区域。若要求对该选区提取、分类或检测，先调用 prepare_map_roi 获取选区影像，再用其 imagery_id 执行适用分析；无需上传、选择或搜索已有影像。用户只问概念时不取图；用户要求检索其他时相/传感器影像时使用 search_imagery。底图只有 RGB，没有 NIR/SWIR，原始分辨率和日期未知。"))
         trusted_tool_arguments["prepare_map_roi"] = {"bbox": list(request.analysis_roi.bbox)}
         if use_current_selection(query):
-            for name, tool in TOOLS.items():
+            for name, tool in effective_registry().items():
                 if "imagery_id" in tool.argument_model.model_fields and name != "generate_report":
                     trusted_tool_arguments[name] = {"imagery_id": "map_roi_pending"}
     if not map_source and "active_imagery_id" in (request.metadata or {}) and active_id is None:
@@ -87,7 +87,7 @@ async def build_turn_input(request: ChatRequest, *, user_id: str | None) -> Turn
         initial.append(SystemMessage(content=f"当前选中影像 ID: {active_id}（已核实归属）。用户说当前影像时使用此 ID；位置以影像清单或质检的 WGS84 四至为准，不能用地图视角替代。"))
         meta = await get_user_imagery_metadata(active_id, user_id)
         if use_current_selection(query):
-            for name, tool in TOOLS.items():
+            for name, tool in effective_registry().items():
                 if "imagery_id" in tool.argument_model.model_fields and name != "generate_report":
                     trusted_tool_arguments[name] = {"imagery_id": active_id}
         if meta and request.analysis_roi and request.analysis_roi.kind == "geo" and geo_roi_mismatch(meta.get("bounds"), request.analysis_roi.bbox):

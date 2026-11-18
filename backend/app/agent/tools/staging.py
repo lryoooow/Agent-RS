@@ -27,6 +27,7 @@ from typing import AsyncIterator
 
 from app.agent.imagery_access import IMAGERY_ID_PATTERN, read_imagery_metadata
 from app.auth import peek_current_user_id
+from app.core.paths import imagery_root
 from app.core.settings import get_settings
 from app.db.pool import fetch_optional_pool
 from app.db.repositories.imagery import get_imagery as db_get_imagery
@@ -165,7 +166,12 @@ async def stage_imagery(imagery_id: str, *, user_id: str | None = None) -> Async
         # 成功才 rmtree。改自 TemporaryDirectory——后者 GC/finally 会无条件抹掉，丢结果。
         # One tiny directory allocation has no cancellable await: an abandoned
         # to_thread(mkdtemp) result could otherwise leak an untracked directory.
-        tmp_root = Path(tempfile.mkdtemp(prefix=f"imagery_{imagery_id}_")).resolve()
+        root = imagery_root(create=True).resolve()
+        staging_root = root / ".staging"
+        if staging_root.is_symlink() or staging_root.resolve().parent != root:
+            raise ImageryStagingError("unsafe_staging_path", "影像暂存目录无效。")
+        staging_root.mkdir(exist_ok=True)
+        tmp_root = Path(tempfile.mkdtemp(prefix=f"imagery_{imagery_id}_", dir=staging_root)).resolve()
         results_dir = tmp_root / "results"
         runner_ok = False
         upload_ok = False

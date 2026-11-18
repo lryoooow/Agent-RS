@@ -7,7 +7,7 @@ Included:
 - streamed chat context, cancellation and recovery safeguards
 - spectral band semantics, nodata and calibrated index calculations
 - report context, screenshots and artifact downloads
-- official SAM3 inference and Hygon runtime compatibility
+- image segmentation service and geometry checks
 - satellite directory refresh, last-good cache and bundled fallback
 - frontend error recovery, result layers and account-scoped map state
 - platform regression tests, build checks, README and analysis workflow

@@ -26,6 +26,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import uuid
@@ -47,6 +48,7 @@ from app.agent.prompting.scenarios import (
     tool_running_label,
 )
 from app.agent.types import AgentEvent, AgentTrace
+from app.schemas.chat import TaskFailure
 
 logger = logging.getLogger(__name__)
 
@@ -59,8 +61,15 @@ class BridgeState:
     # 领域 Agent 名 -> 它的 run id。同一个 Agent 多次发言复用同一个 id，
     # 前端才能把它的多个工具气泡归到一组。
     agent_run_ids: dict[str, str] = field(default_factory=dict)
-    # 工具调用 id -> (工具名, child_run_id)。请求与结果分属两条消息，靠这个配对。
-    pending_calls: dict[str, tuple[str, str]] = field(default_factory=dict)
+    # 工具调用 id -> (工具名, child_run_id, 资源标识)。请求与结果分属两条消息，靠这个配对。
+    pending_calls: dict[str, tuple[str, str, str]] = field(default_factory=dict)
+    progress_agents: dict[str, str] = field(default_factory=dict)
+    successful_runs: dict[str, tuple[str, str]] = field(default_factory=dict)
+    failures: dict[tuple[str, str], TaskFailure] = field(default_factory=dict)
+
+    @property
+    def task_failure(self) -> TaskFailure | None:
+        return next(reversed(self.failures.values()), None)
 
     def run_id_for(self, agent_name: str) -> str:
         return self.agent_run_ids.setdefault(agent_name, uuid.uuid4().hex)
@@ -80,6 +89,20 @@ def translate(
 
     未知消息类型返回空列表——**不能**因为 AutoGen 加了新消息类型就让整条链路挂掉。
     """
+    from app.agent.engine.progress import ToolProgressEvent
+    if isinstance(message, ToolProgressEvent):
+        call = state.pending_calls.get(message.call_id)
+        if not call or call[0] != message.name:
+            return []
+        agent = state.progress_agents.get(message.call_id, "main_agent")
+        value = message.update
+        fields = {"progress": value.progress, "total": value.total}
+        if value.total:
+            fields["percent"] = round(value.progress / value.total * 100, 1)
+        return [trace.add("tool_execution_progress", value.message or tool_running_label(message.name),
+                          tool_name=message.name, agent_name=agent, domain=agent, domain_label=_agent_label(agent),
+                          parent_run_id=state.run_id_for(agent), child_run_id=call[1], execution_kind="tool",
+                          dispatch_kind="tool", **fields)]
     if isinstance(message, ModelClientStreamingChunkEvent):
         # 正文分片走 delta 通道，不是 agent_status；调用方单独处理。
         return []
@@ -114,7 +137,18 @@ def _on_tool_request(
 
     for call in message.content:
         child_run_id = uuid.uuid4().hex
-        state.pending_calls[call.id] = (call.name, child_run_id)
+        try:
+            arguments = json.loads(call.arguments)
+        except (ValueError, TypeError):
+            arguments = {}
+        if not isinstance(arguments, dict):
+            arguments = {}
+        # A retry on the same resource can recover. Completing a different
+        # image/region must not erase a failed task from this turn.
+        resource = json.dumps({key: arguments[key] for key in
+            ("imagery_id", "document_id", "scene_key", "bbox", "pixel_bbox") if key in arguments}, sort_keys=True)
+        state.progress_agents[call.id] = agent_name
+        state.pending_calls[call.id] = (call.name, child_run_id, resource)
         common = {
             "tool_name": call.name,
             "agent_name": agent_name,
@@ -142,8 +176,9 @@ def _on_tool_result(
     events: list[AgentEvent] = []
 
     for result in message.content:
-        tool_name, child_run_id = state.pending_calls.pop(
-            result.call_id, (result.name or "unknown", uuid.uuid4().hex)
+        state.progress_agents.pop(result.call_id, None)
+        tool_name, child_run_id, resource = state.pending_calls.pop(
+            result.call_id, (result.name or "unknown", uuid.uuid4().hex, "{}")
         )
         common = {
             "tool_name": tool_name,
@@ -162,9 +197,18 @@ def _on_tool_result(
         rejected = error_code in {"tool_unavailable", "invalid_arguments", "access_denied", "analysis_precondition", "tool_quota_exceeded"}
         common["execution_status"] = "rejected" if rejected else "failed" if result.is_error else "complete"
         if result.is_error:
+            state.failures[(tool_name, resource)] = TaskFailure(
+                tool_name=tool_name, error_code=error_code,
+                label=f"{_agent_label(agent_name)}工具执行失败",
+            )
             events.append(trace.add("tool_execution_failed", "工具未执行" if rejected else "工具执行失败", error_code=error_code, **common))
         else:
+            state.successful_runs[tool_name] = (agent_run_id, child_run_id)
+            state.failures.pop((tool_name, resource), None)
             events.append(trace.add("tool_execution_completed", "工具执行完成", **common))
+        # Explicit null clears a recovered failure in streaming clients.
+        failure = state.task_failure
+        events[-1].metadata["task_failure"] = failure.model_dump() if failure else None
         events.append(
             trace.add(
                 "tool_context_ready",
@@ -186,14 +230,15 @@ def emit_geospatial_ready(
     （`turn_context`）而不是工具返回值——AutoGen 的工具返回值只有给模型看的文本。
     调用方在回合结束时对比 turn_state 决定发不发。
     """
+    run = state.successful_runs.get(tool_name)
     return trace.add(
         "geospatial_result_ready",
         "地图图层结果已生成",
         tool_name=tool_name,
         result_type=result_type,
         agent_name="tool_child_agent",
-        parent_run_id=state.parent_run_id,
-        child_run_id=uuid.uuid4().hex,
+        parent_run_id=run[0] if run else state.parent_run_id,
+        child_run_id=run[1] if run else uuid.uuid4().hex,
         execution_kind="tool",
         dispatch_kind="tool",
     )

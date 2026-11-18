@@ -21,7 +21,7 @@ async def run_map_roi(args: MapROIArguments) -> ToolRunResult:
     try:
         imagery_id, meta = await import_map_roi(args.bbox, user_id=peek_current_user_id())
     except MapROIError as exc:
-        return ToolRunResult(tool_context=str(exc), error="map_image_unavailable")
+        return ToolRunResult(tool_context=str(exc), error="map_image_unavailable", metadata={"error_code": exc.code})
     return ToolRunResult(
         tool_context=(f"当前地图选区影像已就绪，imagery_id={imagery_id}，RGB 波段为 1/2/3，4 为 Alpha。"
                       "继续执行用户要求的适用分析，无需再次要求用户上传、搜索或确认影像。"

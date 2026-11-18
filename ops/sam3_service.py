@@ -1,34 +1,23 @@
-"""Loopback-only SAM3 image inference service for the Hygon DCU host.
-
-The systemd unit supplies the validated SAM3 lab paths and Hygon runtime library
-environment. Agent-RS sends only RGB PNGs created from imagery the current user
-already owns; this process never reads arbitrary client paths.
-"""
+"""Loopback HTTP inference for the Agent-RS image segmentation tool."""
 from __future__ import annotations
 
 import asyncio
 import json
 import os
 from pathlib import Path
-import sys
 import time
 from typing import Any
-
-LAB_ROOT = Path(os.environ.get("SAM3_LAB_ROOT", "/home/LRY/sam3-runtime-releases/20260922-meta-2345a4ad")).resolve()
-for entry in (LAB_ROOT / "source",):
-    sys.path.insert(0, str(entry))
 
 import numpy as np
 from fastapi import FastAPI, HTTPException, Response
 from pydantic import BaseModel, Field, field_validator
 from PIL import Image
 
+from ops.sam3_runtime import CHECKPOINT_SHA256, SOURCE_COMMIT, SOURCE_SHA256
 from ops.sam3_runtime.geometry import deduplicate, make_instance, tiles, union_mask
 from ops.sam3_runtime.runtime import Engine
 
-ALLOWED_ROOT = Path(
-    os.environ.get("SAM3_ALLOWED_ROOT", "/home/LRY/Agent-RS/storage/imagery")
-).resolve()
+ALLOWED_ROOT = Path(os.environ["SAM3_ALLOWED_ROOT"]).expanduser().resolve(strict=True)
 MAX_PIXELS = int(os.environ.get("SAM3_MAX_PIXELS", str(64 * 1024 * 1024)))
 TILE_SIZE = int(os.environ.get("SAM3_TILE_SIZE", "1024"))
 TILE_OVERLAP = int(os.environ.get("SAM3_TILE_OVERLAP", "256"))
@@ -42,9 +31,6 @@ CONFIDENCE_THRESHOLD = float(os.environ.get("SAM3_CONFIDENCE_THRESHOLD", "0.25")
 # 该阈值与 geometry.deduplicate 的跨切片碎片合并判据互补：后者只合并来自不同
 # 切片的视角对，不处理孤立噪声碎块。设为 0 可关闭过滤。
 MIN_INSTANCE_AREA = int(os.environ.get("SAM3_MIN_INSTANCE_AREA", "32"))
-SOURCE_COMMIT = "2345a4ad109ac29c569da749c91d84f10dc08c40"
-SOURCE_SHA256 = "26a4f92919756ad412e111b20868f4bc1f2b2d7170214ab5cdae1669d6051f1a"
-CHECKPOINT_SHA256 = "9999e2341ceef5e136daa386eecb55cb414446a00ac2b55eb2dfd2f7c3cf8c9e"
 if not 0.0 <= CONFIDENCE_THRESHOLD <= 1.0:
     raise RuntimeError("SAM3 confidence threshold must be within [0, 1]")
 if TILE_SIZE < 64 or not 0 <= TILE_OVERLAP < TILE_SIZE or MAX_PIXELS < 1:
@@ -95,16 +81,23 @@ async def load_model() -> None:
     loaded_at = time.time()
 
 
+def _runtime_info() -> dict[str, Any]:
+    return {
+        "provider": "meta_official_sam3",
+        "source_commit": SOURCE_COMMIT,
+        "source_sha256": SOURCE_SHA256,
+        "checkpoint_sha256": CHECKPOINT_SHA256,
+        "device": getattr(engine, "device", None),
+        "gpu": getattr(engine, "gpu", None),
+    }
+
+
 @app.get("/health")
 async def health() -> dict[str, Any]:
     return {
         "status": "ok" if engine is not None else "loading",
         "model": "SAM3",
-        "device": "hygon-dcu",
-        "provider": "meta_official_sam3",
-        "source_commit": SOURCE_COMMIT,
-        "source_sha256": SOURCE_SHA256,
-        "checkpoint_sha256": CHECKPOINT_SHA256,
+        **_runtime_info(),
         "confidence_threshold": CONFIDENCE_THRESHOLD,
         "tile_size": TILE_SIZE,
         "tile_overlap": TILE_OVERLAP,
@@ -234,13 +227,10 @@ def _infer(request: InferRequest, input_path: Path, output_dir: Path) -> dict[st
     (output_dir / instances_name).write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8")
     metrics = {
         "model": "SAM3",
-        "provider": "meta_official_sam3",
-        "source_commit": SOURCE_COMMIT,
-        "checkpoint_sha256": CHECKPOINT_SHA256,
+        **_runtime_info(),
         "confidence_threshold": CONFIDENCE_THRESHOLD,
         "min_instance_area": MIN_INSTANCE_AREA,
         "dropped_fragments": dropped_fragments,
-        "device": "hygon-dcu",
         "input_size": list(image.size),
         "tile_size": TILE_SIZE,
         "tile_overlap": TILE_OVERLAP,

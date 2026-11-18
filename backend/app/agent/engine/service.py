@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import logging
+from contextlib import aclosing
 from dataclasses import dataclass
 from typing import Any, AsyncIterator
 
@@ -31,7 +32,7 @@ from app.agent.engine.turn_context import current_turn_state
 from app.agent.config import ResolvedAIConfig
 from app.agent.search.credentials import tavily_key_scope
 from app.agent.types import AgentEvent, AgentTrace
-from app.schemas.chat import ChatRequest
+from app.schemas.chat import ChatRequest, TaskFailure
 from app.agent.roi_buildings import is_direct_building_request, direct_building_events
 
 logger = logging.getLogger(__name__)
@@ -56,6 +57,7 @@ class AutogenTurnOutput:
     strategy: str = "main"
     flow_name: str | None = None
     route_reason: str = ""
+    task_failure: TaskFailure | None = None
 
 
 async def complete_turn(
@@ -67,9 +69,10 @@ async def complete_turn(
 ) -> AutogenTurnOutput:
     """非流式：跑完一个回合。"""
     if is_direct_building_request(request):
-        async for kind, payload in direct_building_events(request, user_id=user_id):
-            if kind == 'final':
-                return payload
+        async with aclosing(direct_building_events(request, user_id=user_id)) as events:
+            async for kind, payload in events:
+                if kind == 'final':
+                    return payload
         raise RuntimeError('ROI building execution did not produce a result')
     trace = AgentTrace(enabled=True)
     state = BridgeState()
@@ -123,7 +126,6 @@ async def stream_turn_events(
     立刻发生，而不是等下一次 GC。
     """
     if is_direct_building_request(request):
-        from contextlib import aclosing
         async with aclosing(direct_building_events(request, user_id=user_id)) as events:
             async for item in events:
                 yield item
@@ -174,7 +176,7 @@ async def stream_turn_events(
             if isinstance(item, OrchestrationMetadata):
                 yield "status", trace.add(
                     "routing_selected",
-                    "已选择 AutoGen 编排策略",
+                    f"已选择 {item.framework} 编排策略",
                     framework=item.framework,
                     strategy=item.strategy,
                     flow_name=item.flow_name,
@@ -244,6 +246,7 @@ def _to_output(
     result: OrchestrationResult, *, trace: AgentTrace, state: BridgeState
 ) -> AutogenTurnOutput:
     return AutogenTurnOutput(
+        task_failure=state.task_failure,
         content=result.content,
         active_imagery_id=result.turn_state.latest_imported_imagery_id() if result.turn_state else None,
         trace=trace,
@@ -267,7 +270,7 @@ def _emit_strategy(
 ) -> AgentEvent:
     return trace.add(
         "routing_selected",
-        "已选择 AutoGen 编排策略",
+        f"已选择 {result.framework} 编排策略",
         framework=result.framework,
         strategy=result.strategy,
         flow_name=result.flow_name,

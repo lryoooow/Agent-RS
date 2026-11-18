@@ -7,6 +7,7 @@ build/
 !.env.example
 !**/.env.example
 .venv/
+.venv-sam3/
 __pycache__/
 .pytest_cache/
 .coverage
@@ -108,6 +109,7 @@ backend/tests/ai/eval/reports/*predictions*.jsonl
 /Agent-frontend/src/**/*.test.tsx
 /Agent-frontend/tests/
 /docs/test-results/
+/docs-local/
 /docs/test-remediation-*.md
 /docs/next-plan-*.md
 /docs/bugfix-plan-*.md

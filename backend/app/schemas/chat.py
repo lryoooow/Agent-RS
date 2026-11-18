@@ -309,6 +309,62 @@ class GeospatialReportResult(BaseModel):
     download_url: str
 
 
+class SceneCard(BaseModel):
+    key: str
+    satellite: str
+    item_id: str
+    datetime: str
+    cloud_cover: float | None
+    bbox: list[float]
+    resolution_m: float | None
+    display_name: str
+    preview_url: str
+    download_url: str
+
+
+class GeospatialSceneSearchResult(BaseModel):
+    type: Literal["scene_search"]
+    scenes: list[SceneCard]
+    notes: list[str] = Field(default_factory=list)
+
+
+class OCRStats(BaseModel):
+    block_count: int = Field(ge=0)
+    char_count: int = Field(ge=0)
+    avg_confidence: float | None = None
+    min_confidence_seen: float | None = None
+    grayscale: bool = False
+
+
+class GeospatialOCRResult(BaseModel):
+    type: Literal["ocr"]
+    download_url: str | None = None
+    imagery_id: str
+    bounds: tuple[float, float, float, float] | None = None
+    stats: OCRStats
+    execution: ToolExecutionInfo | None = None
+
+
+class ClipReprojectStats(BaseModel):
+    src_crs: str | None = None
+    dst_crs: str | None = None
+    width: int | None = Field(default=None, ge=1)
+    height: int | None = Field(default=None, ge=1)
+    band_count: int | None = Field(default=None, ge=1)
+    clipped: bool = False
+    reprojected: bool = False
+
+
+class GeospatialClipReprojectResult(BaseModel):
+    type: Literal["clip_reproject"]
+    imagery_id: str
+    result_url: str
+    download_url: str
+    bounds: tuple[float, float, float, float] | None = None
+    stats: ClipReprojectStats
+    execution: ToolExecutionInfo | None = None
+
+
 class GeospatialMaskResult(BaseModel):
     type: Literal["water_mask", "cloud_mask"]
     imagery_id: str
@@ -329,8 +385,18 @@ GeospatialResult = (
     | GeospatialSegmentationResult
     | GeospatialInstanceSegmentationResult
     | GeospatialReportResult
+    | GeospatialSceneSearchResult
+    | GeospatialOCRResult
+    | GeospatialClipReprojectResult
 )
 ToolResult = RasterInspectResult
+
+
+class TaskFailure(BaseModel):
+    """An attempted task ended unsuccessfully, with a completed assistant reply."""
+    tool_name: str
+    error_code: str
+    label: str
 
 
 class ChatResponse(BaseModel):
@@ -348,3 +414,4 @@ class ChatResponse(BaseModel):
     agent_trace: dict | None = None
     geospatial_result: GeospatialResult | None = None
     tool_result: ToolResult | None = None
+    task_failure: TaskFailure | None = None

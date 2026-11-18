@@ -33,6 +33,14 @@ class PersistenceUnavailableError(AIError):
         super().__init__("聊天持久化暂时不可用，请稍后重试。")
 
 
+class ResponsePersistenceError(AIError):
+    code = "RESPONSE_NOT_SAVED"
+    status_code = 503
+
+    def __init__(self) -> None:
+        super().__init__("回复保存到历史会话失败。请保留当前页面内容，稍后重新打开会话核对记录。")
+
+
 class ContextBudgetError(AIError):
     code = "CONTEXT_BUDGET_EXCEEDED"
     status_code = 413

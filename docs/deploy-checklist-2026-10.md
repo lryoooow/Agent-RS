@@ -39,7 +39,7 @@ DELETE FROM agent_rs.schema_migrations WHERE version = '0014';
 | `AUTH_ADMIN_USER_IDS`（`auth_admin_user_ids`） | 空 | 运维负责人的用户 UUID（逗号分隔） | 管理端点按它判定管理员；留空则无人可管理 |
 | `AUTH_HASH_MAX_CONCURRENCY`（`auth_hash_max_concurrency`） | 4（1–16） | 默认 4；小内存主机降 2 | Argon2 密码哈希并发，防登录风暴拖垮 CPU |
 | `IMAGERY_MAX_BAND_COUNT`（`imagery_max_band_count`） | 64（1–512） | 默认 64 | GeoTIFF 波段数上限（G2），超限 413；配套 `IMAGERY_MAX_WORKING_BYTES`（默认 1 GiB，工作图字节数上限） |
-| `SAM3_MAX_PIXELS`（`sam3_max_pixels`） | 67108864（64M 像元） | 与 GPU 侧一致：67108864（`ops/sam3_runtime/runtime-manifest.json` 的 `inference.max_pixels` 同值） | SAM3 输入像元预算（G3），超过先降采样再推理；配套 `SAM3_PREPROCESS_MAX_BYTES`（默认 256 MiB） |
+| `SAM3_MAX_PIXELS`（`sam3_max_pixels`） | 67108864（64M 像元） | 与 GPU 侧一致：67108864（推理服务使用相同的 `SAM3_MAX_PIXELS` 设置） | SAM3 输入像元预算（G3），超过先降采样再推理；配套 `SAM3_PREPROCESS_MAX_BYTES`（默认 256 MiB） |
 | `DOCUMENT_OFFICE_MAX_TOTAL_UNCOMPRESSED_BYTES` | 100 MiB | 默认 | Office zip 解压总量上限（G1），超限 413 |
 | `DOCUMENT_OFFICE_MAX_ENTRY_COMPRESSION_RATIO` | 100 | 默认 | 单条目压缩比上限 |
 | `DOCUMENT_OFFICE_MAX_ENTRIES` | 10000（≤100000） | 默认 | 条目数上限 |

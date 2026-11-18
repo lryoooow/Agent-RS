@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+from collections.abc import Awaitable, Callable
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -36,6 +37,14 @@ class OntologySession:
     router: OntologyRouter
     request: dict = field(default_factory=dict)
     entities: list[dict] = field(default_factory=list)
+    user_id: str | None = None
+    notify_observers: Callable[[], Awaitable[None]] | None = field(default=None, repr=False, compare=False)
+
+    def refresh_scenes(self):
+        from app.agent.stac_search.cache import get_scene
+        for entity in self.entities:
+            if entity["entity_type"] == "satellite_scene":
+                entity["cached"] = get_scene(self.user_id, entity.get("key", "")) is not None
 
     def add(self, fact: dict):
         key = (fact["entity_type"], fact["id"])
@@ -52,7 +61,9 @@ class OntologySession:
             identifier = payload.get("imagery_id")
             if kind == "scene_search":
                 for scene in payload.get("scenes", []):
-                    self.add({**scene, "id": scene["key"], "entity_type": "satellite_scene", "cached": True})
+                    if isinstance(scene, dict) and isinstance(scene.get("key"), str):
+                        self.add({**scene, "id": scene["key"], "entity_type": "satellite_scene", "cached": False})
+                self.refresh_scenes()
             elif kind == "preview" and identifier and name in {"fetch_scene", "prepare_map_roi"}:
                 meta = {"band_roles": result.metadata.get("band_roles") or {}}
                 if name == "prepare_map_roi":
@@ -78,6 +89,7 @@ class OntologySession:
             self.add({"id": f"execution:{name}:{len(self.entities)}", "entity_type": "tool_execution", "tool_name": name, "status": "complete"})
 
     def reject(self, tool_name: str, arguments: dict) -> str | None:
+        self.refresh_scenes()
         bindings = [a for a in self.router.schema.bindings.action_bindings if a.tool_name == tool_name]
         identity = arguments.get("imagery_id") or arguments.get("document_id") or arguments.get("scene_key")
         # Personal topology cannot move a built-in requirement onto an unrelated entity.
@@ -105,6 +117,7 @@ class OntologySession:
         return None
 
     def context(self, enabled: set[str]):
+        self.refresh_scenes()
         active = self.request.get("active_imagery_id")
         ordered = sorted(self.entities, key=lambda e: (e.get("imagery_id") != active, e["entity_type"] != "request"))
         return self.router.context(ordered, self.request, enabled)
@@ -136,7 +149,8 @@ async def create_session(request, user_id: str | None) -> OntologySession | None
         logger.warning("Personal ontology references changed; using platform definitions")
         schema = base
     session = OntologySession(OntologyRouter(schema, mandatory=load_schema()),
-        {"active_imagery_id": (request.metadata or {}).get("active_imagery_id"), "conversation_id": request.conversation_id})
+        {"active_imagery_id": (request.metadata or {}).get("active_imagery_id"), "conversation_id": request.conversation_id},
+        user_id=user_id)
     session.add({"id": "current_request", "entity_type": "request"})
     if request.analysis_roi:
         session.add({"id": "current_region", "entity_type": "region", **request.analysis_roi.model_dump(exclude_none=True)})
